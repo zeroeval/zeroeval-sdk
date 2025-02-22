@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "zeroeval"
+version = "0.1.0"
+description = "ZeroEval SDK"
+authors = ["Your Name <you@example.org>"]
+readme = "README.md"
+
+# This is important so Poetry can find your package in the src/ folder.
+packages = [
+    { include = "zeroeval", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+rich = "^13.9.4"
+
+[tool.poetry.scripts]
+zeroeval = "zeroeval.cli:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
