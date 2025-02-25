@@ -4,7 +4,7 @@ import functools
 # This global registry will store metadata about each decorated function.
 registered_experiments = []
 
-def exp(dataset=None, model=None):
+def experiment(dataset=None, model=None):
     """
     A decorator that attaches the specified dataset and model to the function.
     Also optionally copies the function globals if needed.
