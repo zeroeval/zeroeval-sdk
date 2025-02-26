@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, List, Dict, Any
-from .writer import DatasetConsoleWriter
-
+from .writer import DatasetBackendWriter
+import requests
+from .init import _validate_init
 if TYPE_CHECKING:
     from .writer import DatasetWriter
 
@@ -12,6 +13,9 @@ class Dataset:
         name (str): The name of the dataset
         data (list): A list of dictionaries containing the data
         description (str): A description of the dataset
+        backend_id (str): The ID of the dataset in the backend (after pushing)
+        version_id (str): The ID of the dataset version in the backend
+        version_number (int): The version number in the backend
     """
     
     def __init__(self, name, data, description=None):
@@ -38,11 +42,87 @@ class Dataset:
         self._name = name
         self._data = data.copy()  # Create a copy to avoid external modifications
         self._description = description
-        self._writer = DatasetConsoleWriter()
+        self._writer = DatasetBackendWriter()
+        
+        # Backend properties (set after pushing to backend)
+        self._backend_id = None
+        self._version_id = None
+        self._version_number = None
     
-    def push(self):
-        """Push dataset to a remote storage."""
-        self._writer.write(self)
+    def push(self, writer=None):
+        """
+        Push dataset to a storage destination.
+        
+        Args:
+            writer: Optional writer to use. If None, uses the default writer.
+            
+        Returns:
+            self: Returns self for method chaining
+        """
+        _validate_init()
+        if writer:
+            writer.write(self)
+        else:
+            self._writer.write(self)
+        return self
+
+    @classmethod
+    def pull(cls, dataset_id: str, api_url: str, version_number: int = None):
+        """
+        Pull dataset from the ZeroEval backend.
+        
+        Args:
+            dataset_id: ID of the dataset to pull
+            api_url: Base URL for the ZeroEval API
+            version_number: Optional specific version to pull (defaults to latest)
+            
+        Returns:
+            Dataset: A new Dataset instance with the pulled data
+        """
+        _validate_init()
+        api_url = api_url.rstrip('/')
+        url = f"{api_url}/datasets/{dataset_id}/data"
+        
+        params = {}
+        if version_number is not None:
+            params["version_number"] = version_number
+            
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Get dataset info
+            dataset_response = requests.get(f"{api_url}/datasets/{dataset_id}")
+            dataset_response.raise_for_status()
+            dataset_info = dataset_response.json()
+            
+            # Create the dataset
+            dataset = cls(
+                name=dataset_info["name"],
+                data=data["rows"],
+                description=dataset_info.get("description")
+            )
+            
+            # Set backend properties
+            dataset._backend_id = dataset_id
+            dataset._version_id = data["version"]["id"]
+            dataset._version_number = data["version"]["version_number"]
+            
+            return dataset
+            
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to pull dataset from backend: {str(e)}")
+    
+    @property
+    def version_id(self):
+        """Get the backend version ID (if pushed)."""
+        return self._version_id
+    
+    @property
+    def version_number(self):
+        """Get the backend version number (if pushed)."""
+        return self._version_number
     
     @property
     def name(self):
@@ -53,7 +133,7 @@ class Dataset:
     def description(self):
         """Get the dataset description."""
         return self._description
-    
+
     @property
     def data(self):
         """Get a copy of the dataset data."""
