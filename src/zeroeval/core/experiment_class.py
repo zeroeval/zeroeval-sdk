@@ -2,7 +2,6 @@ from typing import List, Callable, Any
 from .dataset_class import Dataset
 from .writer import ExperimentResultConsoleWriter
 
-
 class Experiment:
     def __init__(self, dataset: Dataset, task: Callable, evaluators: List[Callable]):
         self.dataset = dataset
