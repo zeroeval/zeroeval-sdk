@@ -5,7 +5,7 @@ import requests
 import os
 if TYPE_CHECKING:
     from .dataset_class import Dataset
-    from .experiment_class import Experiment, ExperimentResult, Task
+    from .experiment_class import Experiment, ExperimentResult
 
 API_URL = "http://localhost:8000"
 
@@ -48,8 +48,10 @@ class ExperimentResultConsoleWriter(ExperimentResultWriter):
         if isinstance(experiment_or_result, Experiment):
             # Writing the experiment itself
             exp = experiment_or_result
-            print(f"[ConsoleWriter] Experiment created with dataset={exp.dataset.name}")
-            print(f" - Task Name: {exp.task.name}")
+            print(f"[ConsoleWriter] Creating experiment for dataset='{exp.dataset.name}'")
+            print(f" - Name: {exp.name}")
+            print(f" - Code snippet:\n{exp.code or '[no code]'}")
+            print(f" - Description: {exp.description}")
             print(f" - Evaluators: {[e.__name__ for e in exp.evaluators]}")
             # Return a dummy experiment ID for demonstration
             dummy_experiment_id = "console_experiment_id_123"
@@ -60,8 +62,8 @@ class ExperimentResultConsoleWriter(ExperimentResultWriter):
             # Writing the experiment result
             res = experiment_or_result
             print(f"[ConsoleWriter] Writing result for experiment_id={res.experiment_id}")
-            print(f" - Result content: {res.result}")
-            # No return value needed for a result
+            print(f"  row_id={res.row_id}, result={res.result}")
+            print(f"  evaluations={json.dumps(res.evaluations, indent=2)}")
             return None
 
 
@@ -106,7 +108,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             return None
 
     def _write(self, experiment_or_result: Union["Experiment", "ExperimentResult"]) -> Union[str, None]:
-        from .experiment_class import Experiment, ExperimentResult, Task
+        from .experiment_class import Experiment, ExperimentResult
 
         if isinstance(experiment_or_result, Experiment):
             experiment = experiment_or_result
@@ -121,7 +123,9 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             exp_payload = {
                 "workspace_id": workspace_id,
                 "dataset_version_id": dataset_version_id,
-                "name": f"Experiment_for_{experiment.dataset.name}"
+                "name": experiment.name,
+                "code": experiment.code or "",
+                "description": experiment.description or ""
             }
             try:
                 exp_response = requests.post(f"{self.api_url}/experiments", json=exp_payload)
@@ -130,33 +134,10 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 backend_experiment_id = exp_data["id"]
                 print(f"[BackendWriter] Created experiment in backend with ID {backend_experiment_id}.")
                 experiment._backend_id = backend_experiment_id
+                return backend_experiment_id
             except requests.RequestException as exc:
                 print(f"[BackendWriter] Failed to create experiment: {exc}")
                 return None
-
-            # 2. Create the task - Updated payload to match TaskCreate schema
-            if hasattr(experiment, "task") and isinstance(experiment.task, Task):
-                task_payload = {
-                    "experiment_id": backend_experiment_id,  # Required by TaskBase schema
-                    "name": experiment.task.name,
-                    "code": experiment.task.code,
-                    "description": experiment.task.description or None  # Ensure None if empty
-                }
-                try:
-                    task_response = requests.post(
-                        f"{self.api_url}/experiments/{backend_experiment_id}/tasks",
-                        json=task_payload
-                    )
-                    task_response.raise_for_status()
-                    task_data = task_response.json()
-                    backend_task_id = task_data["id"]
-                    print(f"[BackendWriter] Created task in backend with ID {backend_task_id}.")
-                    experiment.task._backend_id = backend_task_id
-                except requests.RequestException as exc:
-                    print(f"[BackendWriter] Failed to create task for experiment {backend_experiment_id}: {exc}")
-                    return None
-
-            return backend_experiment_id
 
         elif isinstance(experiment_or_result, ExperimentResult):
             # 3. Send the result - Updated payload to match TaskResultCreate schema
@@ -166,14 +147,8 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 print("[BackendWriter] No experiment_id found in result. Cannot POST this result.")
                 return None
 
-            task = getattr(res, "task", None)  
-            if not task or not getattr(task, "_backend_id", None):
-                print("[BackendWriter] No valid task.backend_id found. Cannot POST this result.")
-                return None
-
-            endpoint = f"{self.api_url}/experiments/{res.experiment_id}/tasks/{task._backend_id}/results"
+            endpoint = f"{self.api_url}/experiments/{res.experiment_id}/results"
             payload = {
-                "task_id": task._backend_id,  # Required by TaskResultBase schema
                 "dataset_row_id": res.row_id or "",
                 "result": str(res.result),
                 "result_type": "text"  # Using text as default type
@@ -183,6 +158,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 response.raise_for_status()
                 print(f"[BackendWriter] Successfully posted result for row_id={res.row_id} to {endpoint}.")
             except requests.RequestException as exc:
+                print(json.dumps(payload, indent=2))
                 print(f"[BackendWriter] Failed to post result for row_id={res.row_id}: {exc}")
 
             return None
