@@ -43,11 +43,11 @@ class Dataset:
             raise ValueError("All items in data must be dictionaries")
             
         self._name = name
-        self._data = data.copy()  # Create a copy to avoid external modifications
         self._description = description
-        self._writer = DatasetBackendWriter()
+        # Keep the full rows (possibly including row_id, data, etc.)
+        self._data = data.copy()  # avoid external modifications
         
-        # Backend properties (set after pushing to backend)
+        self._writer = DatasetBackendWriter()
         self._backend_id = None
         self._version_id = None
         self._version_number = None
@@ -98,12 +98,11 @@ class Dataset:
         """
         self.__setitem__(index, new_data)
 
-    def push(self, writer=None, create_new_version: bool = False):
+    def push(self, create_new_version: bool = False):
         """
         Push the dataset to a storage destination.
         
         Args:
-            writer: Optional writer to use. If None, the default writer is used.
             create_new_version (bool): If True, and a dataset with this name already exists, 
                 a new version will be created instead of failing. Defaults to False.
                 
@@ -111,10 +110,7 @@ class Dataset:
             self: Returns self for method chaining
         """
         _validate_init()
-        if writer:
-            writer.write(self, create_new_version=create_new_version)
-        else:
-            self._writer.write(self, create_new_version=create_new_version)
+        self._writer.write(self, create_new_version=create_new_version)
         return self
 
     @classmethod
@@ -129,12 +125,11 @@ class Dataset:
         
         This uses the DatasetBackendReader to:
           1) Convert the workspace_name to a workspace_id
-          2) Fetch metadata from GET /workspaces/{workspace_id}/datasets/{dataset_name}
-          3) Fetch rows from GET /workspaces/{workspace_id}/datasets/{dataset_name}/data
+          2) Fetch metadata
+          3) Fetch rows from the backend
         """
         _validate_init()
         
-        # Fall back to environment variable if none given
         if not workspace_name:
             workspace_name = os.environ.get("WORKSPACE_NAME")
             if not workspace_name:
@@ -143,10 +138,8 @@ class Dataset:
                 )
 
         reader = DatasetBackendReader()
-        # 1) Convert from workspace_name -> workspace_id
         workspace_id = reader.get_workspace_id_by_name(workspace_name)
         
-        # 2) Use the existing pull-by-ID approach
         return reader.pull_by_name(workspace_id, dataset_name, version_number=version_number)
     
     @property
@@ -169,55 +162,80 @@ class Dataset:
         """Get the dataset description."""
         return self._description
 
-    @property
-    def data(self):
-        """Get a copy of the dataset data."""
-        return self._data.copy()
-    
-    @property
-    def columns(self):
-        """Derive columns from the first record keys, ignoring the backend's returned columns."""
-        if not self._data:
-            return set()
-        return set(self._data[0].keys())
-    
-    def write(self, writer: 'DatasetWriter'):
-        """Write the dataset using the provided writer."""
-        writer.write(self)
-    
-    def __len__(self):
-        """Return the number of records in the dataset."""
-        return len(self._data)
-    
-    def __getitem__(self, idx: int):
-        """Allow indexing to access records."""
-        return self._data[idx]
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        """
+        By design, return *only* the 'data' part to the user,
+        hiding row_id from direct indexing.
+        """
+        row = self._data[idx]
+        # Return the data portion if present, else the row as-is
+        return row["data"] if "data" in row else row
     
     def __setitem__(self, idx: int, value: Dict[str, Any]):
         """
-        Allow updating a row at the given index, e.g. dataset[idx] = {…}.
-        
-        Args:
-            idx (int): The index to update.
-            value (Dict[str, Any]): The new data for that index.
-            
-        Raises:
-            TypeError: If the new value is not a dictionary.
-            IndexError: If idx is out of range.
+        Updating a row at the given index. If the existing row has a row_id, preserve it.
+        For direct user usage, the caller is presumably passing the 'data' portion.
         """
         if not isinstance(value, dict):
             raise TypeError("Each row must be a dictionary.")
         try:
-            self._data[idx] = value
+            existing_row = self._data[idx]
+            # If the existing row has a row_id, keep it
+            if "row_id" in existing_row:
+                # Wrap the new user data in {"data": value} if needed
+                if "data" in value:
+                    # They might have used the same structure. We'll trust them.
+                    self._data[idx] = {"row_id": existing_row["row_id"], **value}
+                else:
+                    # They passed only data, so wrap it
+                    self._data[idx] = {"row_id": existing_row["row_id"], "data": value}
+            else:
+                # If there is no row_id, just replace the entire row
+                self._data[idx] = value
         except IndexError:
             raise IndexError(f"Cannot set row {idx}, index is out of range.")
+
+    def __iter__(self):
+        """
+        By design, yield only the 'data' portion for iteration,
+        so normal iteration does not expose row_id.
+        """
+        for row in self._data:
+            yield row["data"] if "data" in row else row
+
+    @property
+    def data(self) -> List[Dict[str, Any]]:
+        """
+        Returns a list of just the data portion for each row.
+        """
+        return [row["data"] if "data" in row else row for row in self._data]
+
+    @property
+    def columns(self):
+        """
+        Derive columns from the first record's data portion if present.
+        """
+        if not self._data:
+            return set()
+        first_row = self._data[0]
+        data_part = first_row["data"] if "data" in first_row else first_row
+        return set(data_part.keys())
+
+    # -------------------
+    # Internal API: methods that return full rows.
+    # Not intended for typical user usage, but for internal calls.
+    # -------------------
+    def _get_full_row(self, idx: int) -> Dict[str, Any]:
+        """Return the entire row dictionary, including row_id, data, etc."""
+        return self._data[idx]
+
+    def _get_all_full_rows(self) -> List[Dict[str, Any]]:
+        """Return all row dictionaries in their entirety."""
+        return self._data
 
     def __delitem__(self, idx: int):
         """
         Allow deleting a row at the given index with del dataset[idx].
-        
-        Args:
-            idx (int): The index of the row to delete.
         """
         self.delete_row(idx)
 
@@ -228,7 +246,3 @@ class Dataset:
     def __repr__(self):
         """Detailed representation of the dataset."""
         return f"Dataset(name='{self._name}', size={len(self._data)}, columns={self.columns})"
-
-    def __iter__(self):
-        """Return an iterator over the dataset."""
-        return iter(self._data)

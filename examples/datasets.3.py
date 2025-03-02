@@ -36,6 +36,8 @@ dataset.delete_row(0)
 
 dataset.push(create_new_version=True)
 
+print(dataset[0])
+
 dataset.update_row(
     0,
     {

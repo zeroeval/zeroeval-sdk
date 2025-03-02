@@ -15,8 +15,9 @@ dataset = ze.Dataset(
     ]
 )
 
+# dataset.push()
+
 dataset.push(create_new_version=True)
 dataset.push(create_new_version=True)
 dataset.push(create_new_version=True)
 
-# 3 versions should be created
