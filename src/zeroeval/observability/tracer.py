@@ -2,7 +2,7 @@ import threading
 import time
 from typing import List, Dict, Any, Optional, Type
 from .span import Span
-from .writer import SpanWriter, ConsoleWriter
+from .writer import SpanWriter, ConsoleWriter, SpanBackendWriter
 
 
 class Tracer:
@@ -24,7 +24,7 @@ class Tracer:
         self._spans: List[Dict[str, Any]] = []
         self._active_spans: Dict[int, List[Span]] = {}  # Thread ID -> stack of active spans
         self._last_flush_time = time.time()
-        self._writer: SpanWriter = ConsoleWriter()
+        self._writer: SpanWriter = SpanBackendWriter()
         self._flush_interval: float = 10.0  # Seconds
         self._max_spans: int = 100
         self._flush_lock = threading.Lock()
@@ -32,12 +32,9 @@ class Tracer:
         self._flush_thread.start()
     
     def configure(self, 
-                  writer: Optional[SpanWriter] = None, 
                   flush_interval: Optional[float] = None,
                   max_spans: Optional[int] = None) -> None:
         """Configure the tracer with custom settings."""
-        if writer is not None:
-            self._writer = writer
         if flush_interval is not None:
             self._flush_interval = flush_interval
         if max_spans is not None:
