@@ -1,6 +1,7 @@
 from typing import List, Callable, Any, Optional
 from .dataset_class import Dataset
 from .writer import ExperimentResultWriter, ExperimentResultBackendWriter
+from .evaluator_class import Evaluation, Evaluator
 import inspect
 
 class Experiment:
@@ -21,6 +22,7 @@ class Experiment:
         self.dataset = dataset
         self.task = task
         self.evaluators = evaluators or []
+        self._evaluator_objs = []
 
         # If user didn't provide a name, try using the function's __name__
         self.name = name or (task.__name__ if hasattr(task, "__name__") else "unnamed_experiment")
@@ -91,21 +93,25 @@ class Experiment:
         if results is None:
             results = self.results
 
-        for experiment_result in results:
-            experiment_result.evaluations = {}
+        
+        for evaluator in evaluators:
+            evaluator_obj = Evaluator(evaluator.__name__, evaluator.__doc__, inspect.getsource(evaluator), self._backend_id)
+            evaluator_obj._write()
 
-            # For convenience in the evaluator, pass the row's "data" portion only
-            row_data_for_eval = (
-                experiment_result.row_data["data"]
-                if isinstance(experiment_result.row_data, dict)
-                   and "data" in experiment_result.row_data
-                else experiment_result.row_data
-            )
+            for experiment_result in results:
 
-            for evaluator in evaluators:
+                row_data_for_eval = (
+                    experiment_result.row_data["data"]
+                    if isinstance(experiment_result.row_data, dict)
+                    and "data" in experiment_result.row_data
+                    else experiment_result.row_data
+                )
+
+                dataset_row_id = experiment_result.row_id
+
                 evaluation_output = evaluator(row_data_for_eval, experiment_result.result)
-                # Store evaluator's output under the function's __name__
-                experiment_result.evaluations[evaluator.__name__] = evaluation_output
+                evaluation = Evaluation(evaluator_obj, evaluation_output, experiment_result._backend_id, dataset_row_id)
+                evaluation._write()
 
         return results
 
@@ -143,9 +149,8 @@ class ExperimentResult:
         self.row_data = row_data
         self.row_id = row_id
         self.result = result
-        self.evaluations: dict = {}  # each evaluator's output
+        self._backend_id = None
 
     def _write(self, writer: 'ExperimentResultWriter'):
         """Write this ExperimentResult to the writer."""
-        writer._write(self)
-    
+        self._backend_id = writer._write(self)

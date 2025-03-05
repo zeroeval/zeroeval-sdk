@@ -6,6 +6,7 @@ import os
 if TYPE_CHECKING:
     from .dataset_class import Dataset
     from .experiment_class import Experiment, ExperimentResult
+    from .evaluator_class import Evaluator, Evaluation
 
 API_URL = "http://localhost:8000"
 
@@ -134,6 +135,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 backend_experiment_id = exp_data["id"]
                 print(f"[BackendWriter] Created experiment in backend with ID {backend_experiment_id}.")
                 experiment._backend_id = backend_experiment_id
+
                 return backend_experiment_id
             except requests.RequestException as exc:
                 print(f"[BackendWriter] Failed to create experiment: {exc}")
@@ -157,6 +159,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 response = requests.post(endpoint, json=payload)
                 response.raise_for_status()
                 print(f"[BackendWriter] Successfully posted result for row_id={res.row_id} to {endpoint}.")
+                return response.json()["id"]
             except requests.RequestException as exc:
                 print(json.dumps(payload, indent=2))
                 print(f"[BackendWriter] Failed to post result for row_id={res.row_id}: {exc}")
@@ -290,3 +293,105 @@ class DatasetBackendWriter(DatasetWriter):
                 raise ValueError(f"API error: {detail}")
             except:
                 raise ValueError(f"API error: {str(error)}")
+
+
+class EvaluatorWriter(ABC):
+    """Interface for writing evaluators and their evaluations."""
+    
+    @abstractmethod
+    def _write(self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]) -> Union[str, None]:
+        """
+        Write an evaluator or a single evaluation.
+        Return a str (evaluator_id) if writing an Evaluator,
+        or None if writing an Evaluation.
+        """
+        pass
+
+
+class EvaluatorConsoleWriter(EvaluatorWriter):
+    """Writes evaluators and evaluations to the console for debugging."""
+    
+    def _write(self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]) -> Union[str, None]:
+        from .evaluator_class import Evaluator, Evaluation
+        
+        if isinstance(evaluator_or_evaluation, Evaluator):
+            # Writing the evaluator itself
+            evaluator = evaluator_or_evaluation
+            print(f"[ConsoleWriter] Creating evaluator:")
+            print(f" - Name: {evaluator.name}")
+            print(f" - Code snippet:\n{evaluator.code or '[no code]'}")
+            print(f" - Description: {evaluator.description or '[no description]'}")
+            # Return a dummy evaluator ID for demonstration
+            dummy_evaluator_id = f"console_evaluator_id_{evaluator.name}"
+            print(f"Assigned evaluator_id = {dummy_evaluator_id}")
+            return dummy_evaluator_id
+            
+        elif isinstance(evaluator_or_evaluation, Evaluation):
+            # Writing the evaluation result
+            evaluation = evaluator_or_evaluation
+            print(f"[ConsoleWriter] Writing evaluation:")
+            print(f" - Evaluator: {evaluation.evaluator.name}")
+            print(f" - Result: {evaluation.result}")
+            print(f" - Experiment Result ID: {evaluation.experiment_result_id}")
+            print(f" - Dataset Row ID: {evaluation.dataset_row_id}")
+            return None
+
+
+class EvaluatorBackendWriter(EvaluatorWriter):
+    """Writes evaluators and evaluations to the ZeroEval backend."""
+    
+    def __init__(self):
+        self.api_url = API_URL.rstrip('/')
+    
+    def _write(self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]) -> Union[str, None]:
+        """Write an evaluator or evaluation to the backend."""
+        from .evaluator_class import Evaluator, Evaluation
+
+        if isinstance(evaluator_or_evaluation, Evaluator):
+            # Create evaluator
+            payload = {
+                "experiment_id": evaluator_or_evaluation.experiment_id,
+                "name": evaluator_or_evaluation.name,
+                "code": evaluator_or_evaluation.code,
+                "description": evaluator_or_evaluation.description
+            }
+            
+            try:
+                endpoint = f"{self.api_url}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
+                response = requests.post(endpoint, json=payload)
+                response.raise_for_status()
+                evaluator_data = response.json()
+                print(f"[BackendWriter] Created evaluator with ID {evaluator_data['id']}")
+                return evaluator_data["id"]
+            except requests.RequestException as exc:
+                print(f"[BackendWriter] Failed to create evaluator: {exc}")
+                return None
+
+        elif isinstance(evaluator_or_evaluation, Evaluation):
+            # Create evaluation
+            evaluation = evaluator_or_evaluation
+            experiment_id = evaluation.experiment_result_id.split("_")[0]  # Assuming ID format
+            evaluator_id = evaluation.evaluator._backend_id
+            
+            if not evaluator_id:
+                print("[BackendWriter] Evaluator has no backend ID. Cannot create evaluation.")
+                return None
+
+            payload = {
+                "evaluator_id": evaluator_id,
+                "dataset_row_id": evaluation.dataset_row_id or "",
+                "experiment_result_id": evaluation.experiment_result_id,
+                "evaluation_value": str(evaluation.result),
+                "evaluation_type": "text"  # Default to text type
+            }
+
+            try:
+                endpoint = f"{self.api_url}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"
+                response = requests.post(endpoint, json=payload)
+                response.raise_for_status()
+                evaluation_data = response.json()
+                print(f"[BackendWriter] Created evaluation with ID {evaluation_data['id']}")
+                return evaluation_data["id"]
+            except requests.RequestException as exc:
+                print(f"[BackendWriter] Failed to create evaluation: {exc}")
+                return None
