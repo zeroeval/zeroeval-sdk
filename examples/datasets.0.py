@@ -12,6 +12,26 @@ dataset = ze.Dataset(
         {"input": "Chile", "output": "Santiago"},
         {"input": "Ecuador", "output": "Quito"},
         {"input": "Venezuela", "output": "Caracas"},
+        {"input": "Brazil", "output": "Brasília"},
+        {"input": "France", "output": "Paris"},
+        {"input": "Germany", "output": "Berlin"},
+        {"input": "Italy", "output": "Rome"},
+        {"input": "Spain", "output": "Madrid"},
+        {"input": "United Kingdom", "output": "London"},
+        {"input": "Japan", "output": "Tokyo"},
+        {"input": "China", "output": "Beijing"},
+        {"input": "India", "output": "New Delhi"},
+        {"input": "Australia", "output": "Canberra"},
+        {"input": "Russia", "output": "Moscow"},
+        {"input": "Canada", "output": "Ottawa"},
+        {"input": "Mexico", "output": "Mexico City"},
+        {"input": "South Africa", "output": "Pretoria"},
+        {"input": "Egypt", "output": "Cairo"},
+        {"input": "Kenya", "output": "Nairobi"},
+        {"input": "Nigeria", "output": "Abuja"},
+        {"input": "Saudi Arabia", "output": "Riyadh"},
+        {"input": "South Korea", "output": "Seoul"},
+        {"input": "Thailand", "output": "Bangkok"}
     ]
 )
 
