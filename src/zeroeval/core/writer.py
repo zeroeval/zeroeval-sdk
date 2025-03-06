@@ -79,27 +79,21 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
 
     def __init__(self):
         self.api_url = API_URL.rstrip('/')
-        # If you were previously using WORKSPACE_ID, swap to WORKSPACE_NAME
         self.workspace_name = os.environ.get("WORKSPACE_NAME")
-        self._workspace_id = None  # We'll fetch once via the new route
+        self._workspace_id = None
 
     def _get_or_resolve_workspace_id(self) -> Union[str, None]:
-        """
-        If we haven't already, call the new route `/workspaces/resolve` with
-        the workspace_name to get the workspace ID (provided the user is a member).
-        """
-        if self._workspace_id:  # Already resolved
+        if self._workspace_id:
             return self._workspace_id
         
         if not self.workspace_name:
             print("[BackendWriter] No WORKSPACE_NAME was provided. Cannot resolve workspace ID.")
             return None
         
-        # Attempt to resolve workspace ID from name
         endpoint = f"{self.api_url}/workspaces/resolve"
         params = {"name": self.workspace_name}
         try:
-            resp = requests.get(endpoint, params=params)  # Provide auth as needed
+            resp = requests.get(endpoint, params=params)
             resp.raise_for_status()
             data = resp.json()
             self._workspace_id = data.get("id")
@@ -120,7 +114,6 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 print("[BackendWriter] Missing required workspace or dataset version info. Cannot create experiment.")
                 return None
 
-            # 1. Create the experiment
             exp_payload = {
                 "workspace_id": workspace_id,
                 "dataset_version_id": dataset_version_id,
@@ -142,7 +135,6 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 return None
 
         elif isinstance(experiment_or_result, ExperimentResult):
-            # 3. Send the result - Updated payload to match TaskResultCreate schema
             res = experiment_or_result
 
             if not getattr(res, "experiment_id", None):
@@ -153,7 +145,8 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             payload = {
                 "dataset_row_id": res.row_id or "",
                 "result": str(res.result),
-                "result_type": "text"  # Using text as default type
+                "result_type": "text",
+                "trace_id": res.trace_id if res.trace_id else ""
             }
             try:
                 response = requests.post(endpoint, json=payload)

@@ -46,6 +46,9 @@ class Experiment:
         # Will be set once the experiment is persisted to the backend
         self._backend_id: Optional[str] = None
 
+        # New attribute storing whether we should trace the task calls
+        self.trace_task = True
+
     def run_task(self, subset: Optional[List[dict]] = None) -> List['ExperimentResult']:
         """
         Run the task function on each row (either a given subset or the entire dataset).
@@ -66,13 +69,22 @@ class Experiment:
             # "data" sub-dict or entire row
             row_content = row_data["data"] if isinstance(row_data, dict) and "data" in row_data else row_data
 
-            task_output = self.task(row_content)
-            
+            # If tracing is enabled, wrap the task in a span. 
+            if self.trace_task:
+                from zeroeval.observability.decorators import span
+                with span(name=f"experiment:{self.name}") as current_span:
+                    task_output = self.task(row_content)
+                trace_id = current_span.trace_id
+            else:
+                task_output = self.task(row_content)
+                trace_id = None
+
             experiment_result = ExperimentResult(
                 experiment_id=experiment_id,
                 row_data=row_data,
                 row_id=row_id,
-                result=task_output
+                result=task_output,
+                trace_id=trace_id  # <-- Pass the captured trace ID along
             )
             experiment_result._write(self._writer)
             self.results.append(experiment_result)
@@ -95,7 +107,7 @@ class Experiment:
 
         
         for evaluator in evaluators:
-            evaluator_obj = Evaluator(evaluator.__name__, evaluator.__doc__, inspect.getsource(evaluator), self._backend_id)
+            evaluator_obj = Evaluator(evaluator.__name__, inspect.getsource(evaluator), evaluator.__doc__, self._backend_id)
             evaluator_obj._write()
 
             for experiment_result in results:
@@ -143,13 +155,17 @@ class ExperimentResult:
         experiment_id: str,
         row_data: Optional[dict],
         row_id: Optional[str],
-        result: Any
+        result: Any,
+        trace_id: Optional[str] = None  # <-- Store the trace ID
     ):
         self.experiment_id = experiment_id
         self.row_data = row_data
         self.row_id = row_id
         self.result = result
         self._backend_id = None
+
+        # New field to hold the trace ID if tracing was enabled
+        self.trace_id = trace_id
 
     def _write(self, writer: 'ExperimentResultWriter'):
         """Write this ExperimentResult to the writer."""
