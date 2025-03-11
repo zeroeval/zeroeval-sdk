@@ -3,6 +3,7 @@ from .dataset_class import Dataset
 from .writer import ExperimentResultWriter, ExperimentResultBackendWriter
 from .evaluator_class import Evaluation, Evaluator
 import inspect
+import traceback
 
 class Experiment:
     """
@@ -49,7 +50,7 @@ class Experiment:
         # New attribute storing whether we should trace the task calls
         self.trace_task = True
 
-    def run_task(self, subset: Optional[List[dict]] = None) -> List['ExperimentResult']:
+    def run_task(self, subset: Optional[List[dict]] = None, raise_on_error: bool = False) -> List['ExperimentResult']:
         """
         Run the task function on each row (either a given subset or the entire dataset).
         Store the output in self.results and automatically write each result to the backend.
@@ -73,7 +74,19 @@ class Experiment:
             if self.trace_task:
                 from zeroeval.observability.decorators import span
                 with span(name=f"experiment:{self.name}") as current_span:
-                    task_output = self.task(row_content)
+                    try:
+                        task_output = self.task(row_content)
+                    except Exception as e:
+                        if raise_on_error:
+                            raise e
+                        else:
+                            task_output = None
+                            # Properly capture error details
+                            current_span.set_error(
+                                code=e.__class__.__name__,
+                                message=str(e),
+                                stack=traceback.format_exc()
+                            )
                 trace_id = current_span.trace_id
             else:
                 task_output = self.task(row_content)

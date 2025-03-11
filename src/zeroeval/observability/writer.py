@@ -57,7 +57,6 @@ class SpanBackendWriter(SpanWriter):
 
         formatted_spans = []
         for span in spans:
-            # Convert timestamps to ISO strings
             started_at_iso = (
                 datetime.fromtimestamp(span["start_time"]).isoformat()
                 if span["start_time"]
@@ -70,7 +69,6 @@ class SpanBackendWriter(SpanWriter):
             )
 
             formatted_span = {
-                # Provide a valid, full UUID (from the Span class fix)
                 "id": span["span_id"],
                 "trace_id": span["trace_id"],
                 "parent_span_id": span["parent_id"],
@@ -78,10 +76,13 @@ class SpanBackendWriter(SpanWriter):
                 "started_at": started_at_iso,
                 "ended_at": ended_at_iso,
                 "duration_ms": span["duration_ms"],
-                # Pass attributes directly as a dict, not JSON-encoded
                 "attributes": span["attributes"],
-                # Provide a sensible default status if needed
-                "status": "ok",
+                "status": span["status"],
+                "input_data": span["input_data"],
+                "output_data": span["output_data"],
+                "error_code": span["error_code"],
+                "error_message": span["error_message"],
+                "error_stack": span["error_stack"],
                 "experiment_result_id": "ece6859c-4a35-4a5b-b2f5-7c6a5e3863c8"
             }
             formatted_spans.append(formatted_span)

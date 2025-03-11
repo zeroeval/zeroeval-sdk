@@ -22,9 +22,10 @@ def task(row):
     for step, func in [
         ("step1", step1),
         ("step2", step2),
-        ("step3", step3)
+        ("step3", step3),
+        ("step_risky", step_risky)
     ]:
-        choice = random.choices([0, 1, 2], weights=[0.2, 0.6, 0.2])[0]
+        choice = random.choices([0, 1, 2, 3], weights=[0.2, 0.5, 0.1, 0.2])[0]
         
         if choice >= 1:
             func(row)
@@ -33,12 +34,45 @@ def task(row):
 
     return {"something": "hey", "other": 4}
 
+def step_risky(row):
+    """
+    This is a step that returns the input with random sleep time.
+    """
+    time.sleep(random.uniform(0.5, 1.5))
+    if random.random() < 0.5:
+        error_step(row)
+    return "success"
+
+def error_step(row):
+    """
+    This is a step that returns the input with random sleep time.
+    """
+    raise Exception("This is an error step")
+
 @span(name="step1")
 def step1(row):
     """
     This is a step that returns the input with random sleep time.
     """
     time.sleep(random.uniform(0.5, 1.5))
+    step2(row)
+    return {"something": "hey", "other": 4}
+
+@span(name="deeper_step")
+def deeper_step(row):
+    """
+    This is a step that returns the input with random sleep time.
+    """
+    time.sleep(random.uniform(0.5, 1.5))
+    return {"something": "hey", "other": 4}
+
+@span(name="deep_step")
+def deep_step(row):
+    """
+    This is a step that returns the input with random sleep time.
+    """
+    time.sleep(random.uniform(0.5, 1.5))
+    deeper_step(row)
     return {"something": "hey", "other": 4}
 
 @span(name="step2")
@@ -47,6 +81,7 @@ def step2(row):
     This is a step that returns the input with random sleep time.
     """
     time.sleep(random.uniform(1.5, 2.5))
+    deep_step(row)
     return {"something": "hey", "other": 4}
 
 @span(name="step3")

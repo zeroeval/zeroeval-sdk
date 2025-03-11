@@ -16,7 +16,14 @@ class Span:
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
-    
+    # New fields
+    input_data: Optional[str] = None
+    output_data: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    error_stack: Optional[str] = None
+    status: str = "ok"
+
     def end(self) -> None:
         """Mark the span as completed with the current timestamp."""
         self.end_time = time.time()
@@ -28,6 +35,18 @@ class Span:
             return None
         return (self.end_time - self.start_time) * 1000
     
+    def set_error(self, code: str, message: str, stack: Optional[str] = None) -> None:
+        """Set error information for the span."""
+        self.error_code = code
+        self.error_message = message
+        self.error_stack = stack
+        self.status = 'error'
+
+    def set_io(self, input_data: Optional[str] = None, output_data: Optional[str] = None) -> None:
+        """Set input/output data for the span."""
+        self.input_data = input_data
+        self.output_data = output_data
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert the span to a dictionary representation."""
         return {
@@ -38,5 +57,11 @@ class Span:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "duration_ms": self.duration_ms,
-            "attributes": self.attributes
+            "attributes": self.attributes,
+            "input_data": self.input_data,
+            "output_data": self.output_data,
+            "error_code": self.error_code,
+            "error_message": self.error_message,
+            "error_stack": self.error_stack,
+            "status": self.status
         }
