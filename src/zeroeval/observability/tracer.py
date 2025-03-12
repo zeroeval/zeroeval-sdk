@@ -22,14 +22,50 @@ class Tracer:
     def _initialize(self) -> None:
         """Initialize the tracer's internal state."""
         self._spans: List[Dict[str, Any]] = []
-        self._active_spans: Dict[int, List[Span]] = {}  # Thread ID -> stack of active spans
+        self._active_spans: Dict[int, List[Span]] = {}
         self._last_flush_time = time.time()
         self._writer: SpanWriter = SpanBackendWriter()
-        self._flush_interval: float = 10.0  # Seconds
+        self._flush_interval: float = 10.0
         self._max_spans: int = 100
         self._flush_lock = threading.Lock()
+        self._integrations: Dict[str, Any] = {}
+        
+        # Start flush thread
         self._flush_thread = threading.Thread(target=self._flush_periodically, daemon=True)
         self._flush_thread.start()
+        
+        # Auto-setup available integrations
+        self._setup_available_integrations()
+    
+    def _setup_available_integrations(self) -> None:
+        """Automatically set up all available integrations."""
+        # Import here to avoid circular imports
+        from .integrations.openai.integration import OpenAIIntegration
+        
+        # List of all integration classes
+        integration_classes = [
+            OpenAIIntegration,
+            # Add new integration classes here
+        ]
+        
+        # Setup each available integration
+        for integration_class in integration_classes:
+            if integration_class.is_available():
+                try:
+                    integration = integration_class(self)
+                    integration.setup()
+                    self._integrations[integration_class.__name__] = integration
+                except Exception:
+                    # Silently fail if integration setup fails
+                    pass
+
+    def __del__(self):
+        """Cleanup integrations when tracer is destroyed."""
+        for integration in self._integrations.values():
+            try:
+                integration.teardown()
+            except:
+                pass
     
     def configure(self, 
                   flush_interval: Optional[float] = None,
@@ -100,6 +136,8 @@ class Tracer:
             if not self._spans:
                 return
             
+            print(f"Flushing {len(self._spans)} spans")
+            print(self._spans)
             spans_to_flush = self._spans.copy()
             self._spans.clear()
             self._last_flush_time = time.time()

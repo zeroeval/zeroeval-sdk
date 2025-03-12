@@ -3,7 +3,7 @@ import time
 from zeroeval.observability.decorators import span
 from zeroeval.observability.tracer import tracer
 import random
-
+import openai
 tracer.configure(
     flush_interval=5.0,   
     max_spans=50         
@@ -27,8 +27,13 @@ def normal_step(row):
     """
     This is a step that returns the input with random sleep time.
     """
+    client = openai.OpenAI(api_key="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")
+    response = client.chat.completions.create(
+    model="gpt-4o-mini",
+      messages=[{"role": "user", "content": "Say a random animal name"}]
+    )
     time.sleep(random.uniform(0.5, 1.5))
-    return "success"
+    return response.choices[0].message.content
 
 @span(name="step_risky")
 def step_risky(row):
@@ -56,7 +61,7 @@ def eval1(row, output):
     Eval number one
     """
     print(row)
-    return True
+    return random.random()
 
 experiment = ze.Experiment(
     dataset=dataset,
