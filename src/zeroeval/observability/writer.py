@@ -57,37 +57,35 @@ class SpanBackendWriter(SpanWriter):
 
         formatted_spans = []
         for span in spans:
-            started_at_iso = (
-                datetime.fromtimestamp(span["start_time"]).isoformat()
-                if span["start_time"]
-                else None
-            )
-            ended_at_iso = (
-                datetime.fromtimestamp(span["end_time"]).isoformat()
-                if span["end_time"]
-                else None
-            )
+            try:
+                # Convert traceback object to string if present
+                error_stack = str(span.get("error_stack")) if span.get("error_stack") else None
+                
+                formatted_span = {
+                    "id": span["span_id"],
+                    "trace_id": span["trace_id"],
+                    "parent_span_id": span["parent_id"],
+                    "name": span["name"],
+                    "started_at": datetime.fromtimestamp(span["start_time"]).isoformat() if span.get("start_time") else None,
+                    "ended_at": datetime.fromtimestamp(span["end_time"]).isoformat() if span.get("end_time") else None,
+                    "duration_ms": span["duration_ms"],
+                    "attributes": span.get("attributes", {}),
+                    "status": span.get("status", "unset"),
+                    "input_data": json.dumps(span["input_data"]) if isinstance(span["input_data"], (dict, list)) else span["input_data"],
+                    "output_data": json.dumps(span["output_data"]) if isinstance(span["output_data"], (dict, list)) else span["output_data"],
+                    "code": span.get("code"),
+                    "error_code": span.get("error_code"),
+                    "error_message": span.get("error_message"),
+                    "error_stack": error_stack,
+                    "experiment_result_id": span.get("experiment_result_id")
+                }
+                formatted_spans.append(formatted_span)
+            except Exception as e:
+                print(f"[SpanBackendWriter] Error formatting span: {e}")
+                print(f"Problematic span: {span}")
+                continue
 
-            formatted_span = {
-                "id": span["span_id"],
-                "trace_id": span["trace_id"],
-                "parent_span_id": span["parent_id"],
-                "name": span["name"],
-                "started_at": started_at_iso,
-                "ended_at": ended_at_iso,
-                "duration_ms": span["duration_ms"],
-                "attributes": span["attributes"],
-                "status": span["status"],
-                "input_data": span["input_data"],
-                "output_data": span["output_data"],
-                "error_code": span["error_code"],
-                "error_message": span["error_message"],
-                "error_stack": span["error_stack"],
-                "experiment_result_id": "ece6859c-4a35-4a5b-b2f5-7c6a5e3863c8"
-            }
-            formatted_spans.append(formatted_span)
-
-        endpoint = f"{self.api_url}/spans"
+        endpoint = f"{self.api_url}/spans/"
         headers = {
             "Content-Type": "application/json",
         }
@@ -95,9 +93,17 @@ class SpanBackendWriter(SpanWriter):
             headers["X-API-KEY"] = self.api_key
 
         try:
-            # Debug print in case you want to inspect the final payload
             print(formatted_spans)
             response = requests.post(endpoint, headers=headers, json=formatted_spans, timeout=10)
+            if not response.ok:
+                print(f"[SpanBackendWriter] Error posting spans: Status {response.status_code}")
+                print(f"Response: {response.text}")
+                return
             response.raise_for_status()
         except requests.RequestException as exc:
             print(f"[SpanBackendWriter] Error posting spans: {exc}")
+            print(f"Request URL: {endpoint}")
+            print(f"Headers: {headers}")
+            if hasattr(exc, 'response') and exc.response:
+                print(f"Response status: {exc.response.status_code}")
+                print(f"Response body: {exc.response.text}")

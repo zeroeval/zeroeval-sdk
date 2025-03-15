@@ -16,9 +16,10 @@ class Span:
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
-    # New fields
+    # Fields for tracking execution
     input_data: Optional[str] = None
     output_data: Optional[str] = None
+    code: Optional[str] = None  # Added code field
     error_code: Optional[str] = None
     error_message: Optional[str] = None
     error_stack: Optional[str] = None
@@ -47,6 +48,10 @@ class Span:
         self.input_data = input_data
         self.output_data = output_data
 
+    def set_code(self, code: str) -> None:
+        """Set the code that was executed in this span."""
+        self.code = code
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert the span to a dictionary representation."""
         return {
@@ -60,6 +65,7 @@ class Span:
             "attributes": self.attributes,
             "input_data": self.input_data,
             "output_data": self.output_data,
+            "code": self.code,  # Added code field
             "error_code": self.error_code,
             "error_message": self.error_message,
             "error_stack": self.error_stack,

@@ -13,7 +13,7 @@ THEME = Theme({
     "warning": "yellow",
     "error": "red",
     "success": "green",
-    "brand": "#6C5CE7",  # Adjust this to match your brand color
+    "brand": "#BAEd00",  # Adjust this to match your brand color
 })
 
 console = Console(theme=THEME)
@@ -47,8 +47,8 @@ def show_welcome_box() -> None:
 def spinner(message: str) -> Progress:
     """Create a spinner with message."""
     return Progress(
-        SpinnerColumn("dots"),
+        SpinnerColumn("dots", style="brand"),
         *Progress.get_default_columns(),
         console=console,
-        transient=True
+        transient=True,
     )

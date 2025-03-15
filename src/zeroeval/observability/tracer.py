@@ -136,8 +136,6 @@ class Tracer:
             if not self._spans:
                 return
             
-            print(f"Flushing {len(self._spans)} spans")
-            print(self._spans)
             spans_to_flush = self._spans.copy()
             self._spans.clear()
             self._last_flush_time = time.time()

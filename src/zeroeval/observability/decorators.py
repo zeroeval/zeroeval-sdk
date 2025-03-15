@@ -70,6 +70,12 @@ class span:
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 with self as current_span:
+                    # Capture function source code
+                    try:
+                        current_span.set_code(inspect.getsource(func))
+                    except (OSError, TypeError):
+                        pass  # Couldn't get source code
+                    
                     # Capture input parameters if no manual input provided
                     if self.manual_input is None:
                         current_span.set_io(
@@ -93,6 +99,12 @@ class span:
             @functools.wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 with self as current_span:
+                    # Capture function source code
+                    try:
+                        current_span.set_code(inspect.getsource(func))
+                    except (OSError, TypeError):
+                        pass  # Couldn't get source code
+                    
                     # Capture input parameters if no manual input provided
                     if self.manual_input is None:
                         current_span.set_io(

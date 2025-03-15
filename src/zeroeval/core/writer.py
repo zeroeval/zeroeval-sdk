@@ -3,10 +3,14 @@ from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 import json
 import requests
 import os
+import logging
 if TYPE_CHECKING:
     from .dataset_class import Dataset
     from .experiment_class import Experiment, ExperimentResult
     from .evaluator_class import Evaluator, Evaluation
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 API_URL = "http://localhost:8000"
 
@@ -49,22 +53,21 @@ class ExperimentResultConsoleWriter(ExperimentResultWriter):
         if isinstance(experiment_or_result, Experiment):
             # Writing the experiment itself
             exp = experiment_or_result
-            print(f"[ConsoleWriter] Creating experiment for dataset='{exp.dataset.name}'")
-            print(f" - Name: {exp.name}")
-            print(f" - Code snippet:\n{exp.code or '[no code]'}")
-            print(f" - Description: {exp.description}")
-            print(f" - Evaluators: {[e.__name__ for e in exp.evaluators]}")
+            logger.info(f"Creating experiment for dataset='{exp.dataset.name}'")
+            logger.info(f"Name: {exp.name}")
+            logger.info(f"Description: {exp.description}")
+            logger.info(f"Evaluators: {[e.__name__ for e in exp.evaluators]}")
             # Return a dummy experiment ID for demonstration
             dummy_experiment_id = "console_experiment_id_123"
-            print(f"Assigned experiment_id = {dummy_experiment_id}")
+            logger.info(f"Assigned experiment_id = {dummy_experiment_id}")
             return dummy_experiment_id
 
         elif isinstance(experiment_or_result, ExperimentResult):
             # Writing the experiment result
             res = experiment_or_result
-            print(f"[ConsoleWriter] Writing result for experiment_id={res.experiment_id}")
-            print(f"  row_id={res.row_id}, result={res.result}")
-            print(f"  evaluations={json.dumps(res.evaluations, indent=2)}")
+            logger.info(f"Writing result for experiment_id={res.experiment_id}")
+            logger.info(f"row_id={res.row_id}, result={res.result}")
+            logger.info(f"evaluations={json.dumps(res.evaluations, indent=2)}")
             return None
 
 
@@ -87,7 +90,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             return self._workspace_id
         
         if not self.workspace_name:
-            print("[BackendWriter] No WORKSPACE_NAME was provided. Cannot resolve workspace ID.")
+            logger.warning("No WORKSPACE_NAME was provided. Cannot resolve workspace ID.")
             return None
         
         endpoint = f"{self.api_url}/workspaces/resolve"
@@ -99,7 +102,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             self._workspace_id = data.get("id")
             return self._workspace_id
         except requests.RequestException as exc:
-            print(f"[BackendWriter] Failed to resolve workspace ID from name '{self.workspace_name}': {exc}")
+            logger.error(f"Failed to resolve workspace ID from name '{self.workspace_name}': {exc}")
             return None
 
     def _write(self, experiment_or_result: Union["Experiment", "ExperimentResult"]) -> Union[str, None]:
@@ -111,14 +114,13 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             dataset_version_id = getattr(experiment.dataset, "_version_id", None)
 
             if not workspace_id or not dataset_version_id:
-                print("[BackendWriter] Missing required workspace or dataset version info. Cannot create experiment.")
+                logger.error("Missing required workspace or dataset version info. Cannot create experiment.")
                 return None
 
             exp_payload = {
                 "workspace_id": workspace_id,
                 "dataset_version_id": dataset_version_id,
                 "name": experiment.name,
-                "code": experiment.code or "",
                 "description": experiment.description or ""
             }
             try:
@@ -126,19 +128,19 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 exp_response.raise_for_status()
                 exp_data = exp_response.json()
                 backend_experiment_id = exp_data["id"]
-                print(f"[BackendWriter] Created experiment in backend with ID {backend_experiment_id}.")
+                logger.info(f"Created experiment in backend with ID {backend_experiment_id}.")
                 experiment._backend_id = backend_experiment_id
 
                 return backend_experiment_id
             except requests.RequestException as exc:
-                print(f"[BackendWriter] Failed to create experiment: {exc}")
+                logger.error(f"Failed to create experiment: {exc}")
                 return None
 
         elif isinstance(experiment_or_result, ExperimentResult):
             res = experiment_or_result
 
             if not getattr(res, "experiment_id", None):
-                print("[BackendWriter] No experiment_id found in result. Cannot POST this result.")
+                logger.error("No experiment_id found in result. Cannot POST this result.")
                 return None
 
             endpoint = f"{self.api_url}/experiments/{res.experiment_id}/results"
@@ -151,11 +153,11 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             try:
                 response = requests.post(endpoint, json=payload)
                 response.raise_for_status()
-                print(f"[BackendWriter] Successfully posted result for row_id={res.row_id} to {endpoint}.")
+                logger.info(f"Successfully posted result for row_id={res.row_id} to {endpoint}.")
                 return response.json()["id"]
             except requests.RequestException as exc:
-                print(json.dumps(payload, indent=2))
-                print(f"[BackendWriter] Failed to post result for row_id={res.row_id}: {exc}")
+                logger.error(f"Failed to post result for row_id={res.row_id}: {exc}")
+                logger.debug(json.dumps(payload, indent=2))
 
             return None
 
@@ -168,24 +170,24 @@ class DatasetConsoleWriter(DatasetWriter):
         Print dataset to the console, but hide the row_id field 
         so it's never displayed to the user.
         """
-        print(f"Dataset: {dataset.name}")
+        logger.info(f"Dataset: {dataset.name}")
         if dataset.description:
-            print(f"Description: {dataset.description}")
-        print(f"Records: {len(dataset)}")
-        print(f"Columns: {', '.join(dataset.columns)}")
-        print("\nSample data:")
+            logger.info(f"Description: {dataset.description}")
+        logger.info(f"Records: {len(dataset)}")
+        logger.info(f"Columns: {', '.join(dataset.columns)}")
+        logger.info("\nSample data:")
         for i, record in enumerate(dataset):
             if i >= 5:  # Show at most 5 records
-                print("...")
+                logger.info("...")
                 break
             # If the record has 'row_id', remove or mask it from display
             if isinstance(record, dict) and "row_id" in record:
                 display_record = {
                     key: val for key, val in record.items() if key != "row_id"
                 }
-                print(f"  {i+1}: {display_record}")
+                logger.info(f"  {i+1}: {display_record}")
             else:
-                print(f"  {i+1}: {record}")
+                logger.info(f"  {i+1}: {record}")
 
 
 class DatasetBackendWriter(DatasetWriter):
@@ -233,9 +235,9 @@ class DatasetBackendWriter(DatasetWriter):
                 dataset._backend_id = dataset_info["id"]
                 self._post_data_to_existing_dataset(dataset._backend_id, dataset)
 
-            print(f"Dataset '{dataset.name}' successfully pushed to ZeroEval.")
+            logger.info(f"Dataset '{dataset.name}' successfully pushed to ZeroEval.")
             if dataset.version_number:
-                print(f"New version number is {dataset.version_number}.")
+                logger.info(f"New version number is {dataset.version_number}.")
 
         except requests.HTTPError as e:
             self._handle_http_error(e)
@@ -310,23 +312,22 @@ class EvaluatorConsoleWriter(EvaluatorWriter):
         if isinstance(evaluator_or_evaluation, Evaluator):
             # Writing the evaluator itself
             evaluator = evaluator_or_evaluation
-            print(f"[ConsoleWriter] Creating evaluator:")
-            print(f" - Name: {evaluator.name}")
-            print(f" - Code snippet:\n{evaluator.code or '[no code]'}")
-            print(f" - Description: {evaluator.description or '[no description]'}")
-            # Return a dummy evaluator ID for demonstration
+            logger.info(f"Creating evaluator:")
+            logger.info(f"Name: {evaluator.name}")
+            logger.info(f"Description: {evaluator.description or '[no description]'}")
+            logger.info(f"Evaluation Type: {evaluator.evaluation_type}")
             dummy_evaluator_id = f"console_evaluator_id_{evaluator.name}"
-            print(f"Assigned evaluator_id = {dummy_evaluator_id}")
+            logger.info(f"Assigned evaluator_id = {dummy_evaluator_id}")
             return dummy_evaluator_id
             
         elif isinstance(evaluator_or_evaluation, Evaluation):
             # Writing the evaluation result
             evaluation = evaluator_or_evaluation
-            print(f"[ConsoleWriter] Writing evaluation:")
-            print(f" - Evaluator: {evaluation.evaluator.name}")
-            print(f" - Result: {evaluation.result}")
-            print(f" - Experiment Result ID: {evaluation.experiment_result_id}")
-            print(f" - Dataset Row ID: {evaluation.dataset_row_id}")
+            logger.info(f"Writing evaluation:")
+            logger.info(f"Evaluator: {evaluation.evaluator.name}")
+            logger.info(f"Result: {evaluation.result}")
+            logger.info(f"Experiment Result ID: {evaluation.experiment_result_id}")
+            logger.info(f"Dataset Row ID: {evaluation.dataset_row_id}")
             return None
 
 
@@ -345,7 +346,6 @@ class EvaluatorBackendWriter(EvaluatorWriter):
             payload = {
                 "experiment_id": evaluator_or_evaluation.experiment_id,
                 "name": evaluator_or_evaluation.name,
-                "code": evaluator_or_evaluation.code,
                 "description": evaluator_or_evaluation.description
             }
             
@@ -383,8 +383,8 @@ class EvaluatorBackendWriter(EvaluatorWriter):
                 response = requests.post(endpoint, json=payload)
                 response.raise_for_status()
                 evaluation_data = response.json()
-                print(f"[BackendWriter] Created evaluation with ID {evaluation_data['id']}")
+                logger.info(f"Created evaluation with ID {evaluation_data['id']}")
                 return evaluation_data["id"]
             except requests.RequestException as exc:
-                print(f"[BackendWriter] Failed to create evaluation: {exc}")
+                logger.error(f"Failed to create evaluation: {exc}")
                 return None
