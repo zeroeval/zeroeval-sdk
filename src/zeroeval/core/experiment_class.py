@@ -5,6 +5,7 @@ from .evaluator_class import Evaluation, Evaluator
 import inspect
 import traceback
 from zeroeval.observability.tracer import tracer
+
 class Experiment:
     """
     Represents an experiment that can run a 'task' (the user's function)
@@ -17,7 +18,8 @@ class Experiment:
         task: Callable[[Any], Any], 
         evaluators: Optional[List[Callable[[Any, Any], Any]]] = None,
         name: Optional[str] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        parameters: Optional[dict] = None
     ):
         self.dataset = dataset
         self.task = task
@@ -29,6 +31,9 @@ class Experiment:
 
         # If user didn't provide a description, fall back to docstring of task (if any)
         self.description = description or (task.__doc__ or "")
+
+        # Store experiment parameters
+        self.parameters = parameters or {}
 
         # We'll treat the default writer as a backend writer.
         self._writer: ExperimentResultWriter = ExperimentResultBackendWriter()

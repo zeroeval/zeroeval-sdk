@@ -1,15 +1,16 @@
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
-import json
-import requests
-import os
-import logging
+from typing import TYPE_CHECKING, Union, Optional
+
 if TYPE_CHECKING:
     from .dataset_class import Dataset
     from .experiment_class import Experiment, ExperimentResult
     from .evaluator_class import Evaluator, Evaluation
 
-# Configure logging
+import json
+import requests
+import os
+import logging
+
 logger = logging.getLogger(__name__)
 
 API_URL = "http://localhost:8000"
@@ -53,21 +54,21 @@ class ExperimentResultConsoleWriter(ExperimentResultWriter):
         if isinstance(experiment_or_result, Experiment):
             # Writing the experiment itself
             exp = experiment_or_result
-            logger.info(f"Creating experiment for dataset='{exp.dataset.name}'")
-            logger.info(f"Name: {exp.name}")
-            logger.info(f"Description: {exp.description}")
-            logger.info(f"Evaluators: {[e.__name__ for e in exp.evaluators]}")
+            logger.info("Creating experiment for dataset='%s'", exp.dataset.name)
+            logger.info("Name: %s", exp.name)
+            logger.info("Description: %s", exp.description)
+            logger.info("Evaluators: %s", [e.__name__ for e in exp.evaluators])
             # Return a dummy experiment ID for demonstration
             dummy_experiment_id = "console_experiment_id_123"
-            logger.info(f"Assigned experiment_id = {dummy_experiment_id}")
+            logger.info("Assigned experiment_id = %s", dummy_experiment_id)
             return dummy_experiment_id
 
         elif isinstance(experiment_or_result, ExperimentResult):
             # Writing the experiment result
             res = experiment_or_result
-            logger.info(f"Writing result for experiment_id={res.experiment_id}")
-            logger.info(f"row_id={res.row_id}, result={res.result}")
-            logger.info(f"evaluations={json.dumps(res.evaluations, indent=2)}")
+            logger.info("Writing result for experiment_id=%s", res.experiment_id)
+            logger.info("row_id=%s, result=%s", res.row_id, res.result)
+            logger.info("evaluations=%s", json.dumps(res.evaluations, indent=2))
             return None
 
 
@@ -80,7 +81,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
     4. Sends results to the backend.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.api_url = API_URL.rstrip('/')
         self.workspace_name = os.environ.get("WORKSPACE_NAME")
         self._workspace_id = None
@@ -102,7 +103,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             self._workspace_id = data.get("id")
             return self._workspace_id
         except requests.RequestException as exc:
-            logger.error(f"Failed to resolve workspace ID from name '{self.workspace_name}': {exc}")
+            logger.error("Failed to resolve workspace ID from name '%s': %s", self.workspace_name, exc)
             return None
 
     def _write(self, experiment_or_result: Union["Experiment", "ExperimentResult"]) -> Union[str, None]:
@@ -121,19 +122,20 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 "workspace_id": workspace_id,
                 "dataset_version_id": dataset_version_id,
                 "name": experiment.name,
-                "description": experiment.description or ""
+                "description": experiment.description or "",
+                "parameters": experiment.parameters
             }
             try:
                 exp_response = requests.post(f"{self.api_url}/experiments", json=exp_payload)
                 exp_response.raise_for_status()
                 exp_data = exp_response.json()
                 backend_experiment_id = exp_data["id"]
-                logger.info(f"Created experiment in backend with ID {backend_experiment_id}.")
+                logger.info("Created experiment in backend with ID %s.", backend_experiment_id)
                 experiment._backend_id = backend_experiment_id
 
                 return backend_experiment_id
             except requests.RequestException as exc:
-                logger.error(f"Failed to create experiment: {exc}")
+                logger.error("Failed to create experiment: %s", exc)
                 return None
 
         elif isinstance(experiment_or_result, ExperimentResult):
@@ -153,10 +155,10 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
             try:
                 response = requests.post(endpoint, json=payload)
                 response.raise_for_status()
-                logger.info(f"Successfully posted result for row_id={res.row_id} to {endpoint}.")
+                logger.info("Successfully posted result for row_id=%s to %s.", res.row_id, endpoint)
                 return response.json()["id"]
             except requests.RequestException as exc:
-                logger.error(f"Failed to post result for row_id={res.row_id}: {exc}")
+                logger.error("Failed to post result for row_id=%s: %s", res.row_id, exc)
                 logger.debug(json.dumps(payload, indent=2))
 
             return None
@@ -166,83 +168,59 @@ class DatasetConsoleWriter(DatasetWriter):
     """Writes datasets to the console for debugging, without showing row_id."""
     
     def write(self, dataset: 'Dataset', create_new_version: bool = False) -> None:
-        """
-        Print dataset to the console, but hide the row_id field 
-        so it's never displayed to the user.
-        """
-        logger.info(f"Dataset: {dataset.name}")
-        if dataset.description:
-            logger.info(f"Description: {dataset.description}")
-        logger.info(f"Records: {len(dataset)}")
-        logger.info(f"Columns: {', '.join(dataset.columns)}")
-        logger.info("\nSample data:")
-        for i, record in enumerate(dataset):
-            if i >= 5:  # Show at most 5 records
-                logger.info("...")
-                break
-            # If the record has 'row_id', remove or mask it from display
-            if isinstance(record, dict) and "row_id" in record:
-                display_record = {
-                    key: val for key, val in record.items() if key != "row_id"
-                }
-                logger.info(f"  {i+1}: {display_record}")
-            else:
-                logger.info(f"  {i+1}: {record}")
+        """Print dataset to the console, but hide the row_id field."""
+        try:
+            logger.info("Dataset: %s", dataset.name)
+            logger.info("Rows:")
+            for row in dataset.rows:
+                if isinstance(row, dict):
+                    # Hide row_id from display
+                    display_row = {k: v for k, v in row.items() if k != "row_id"}
+                    logger.info(json.dumps(display_row, indent=2))
+                else:
+                    logger.info(row)
+        except Exception as e:
+            logger.error("Error writing dataset to console: %s", e)
+            raise
 
 
 class DatasetBackendWriter(DatasetWriter):
     """Writes datasets to the ZeroEval backend API."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.api_url = API_URL.rstrip('/')
+        self.workspace_name = os.environ.get("WORKSPACE_NAME")
     
     def write(self, dataset: 'Dataset', create_new_version: bool = False) -> None:
-        """
-        Write a dataset to the ZeroEval backend.
-        
-        Args:
-            dataset: The Dataset object to write
-            create_new_version: If True, create a new version if dataset exists
-        
-        Raises:
-            ValueError: If dataset already exists or workspace issues
-            RuntimeError: If API request fails
-        """
-        create_url = f"{self.api_url}/datasets/"
-        create_payload = {
-            "workspace_name": os.environ.get("WORKSPACE_NAME"),
-            "name": dataset.name,
-            "description": dataset.description or ""
-        }
-
+        """Write a dataset to the ZeroEval backend."""
         try:
-            response = requests.post(create_url, json=create_payload)
+            if not self.workspace_name:
+                raise ValueError("WORKSPACE_NAME environment variable must be set")
             
-            if response.status_code == 409 and create_new_version:
-                # Dataset exists - create new version
-                existing_id = self._find_existing_dataset_id(dataset.name)
-                if not existing_id:
-                    raise ValueError("Dataset conflict but not found. Check workspace name.")
-                self._post_data_to_existing_dataset(existing_id, dataset)
-                dataset._backend_id = existing_id
-            elif response.status_code == 409:
-                raise ValueError(f"Dataset '{dataset.name}' already exists")
-            elif response.status_code == 404:
-                raise ValueError("Workspace not found or no access")
-            else:
+            if create_new_version:
+                dataset_id = self._find_existing_dataset_id(dataset.name)
+                if dataset_id:
+                    self._post_data_to_existing_dataset(dataset_id, dataset)
+                    return
+            
+            # Create a new dataset
+            payload = {
+                "name": dataset.name,
+                "description": dataset.description or "",
+                "workspace_name": self.workspace_name
+            }
+            try:
+                response = requests.post(f"{self.api_url}/datasets", json=payload)
                 response.raise_for_status()
-                dataset_info = response.json()
-                dataset._backend_id = dataset_info["id"]
-                self._post_data_to_existing_dataset(dataset._backend_id, dataset)
-
-            logger.info(f"Dataset '{dataset.name}' successfully pushed to ZeroEval.")
-            if dataset.version_number:
-                logger.info(f"New version number is {dataset.version_number}.")
-
-        except requests.HTTPError as e:
-            self._handle_http_error(e)
-        except requests.RequestException as e:
-            raise RuntimeError(f"Connection error: {str(e)}")
+                dataset_data = response.json()
+                dataset_id = dataset_data["id"]
+                self._post_data_to_existing_dataset(dataset_id, dataset)
+            except requests.RequestException as e:
+                self._handle_http_error(e)
+                raise RuntimeError("Failed to create dataset") from e
+        except Exception as e:
+            logger.error("Error writing dataset: %s", e)
+            raise
 
     def _find_existing_dataset_id(self, dataset_name: str) -> Optional[str]:
         """Find dataset ID by name in the workspace."""
@@ -256,7 +234,7 @@ class DatasetBackendWriter(DatasetWriter):
                 None
             )
         except requests.RequestException as e:
-            raise RuntimeError(f"Failed to lookup existing dataset: {str(e)}")
+            raise RuntimeError("Failed to lookup existing dataset: %s" % e)
 
     def _post_data_to_existing_dataset(self, dataset_id: str, dataset: 'Dataset') -> None:
         """Create a new version of the dataset with the given data."""
@@ -281,13 +259,13 @@ class DatasetBackendWriter(DatasetWriter):
         if error.response.status_code in (401, 403):
             raise ValueError("Authentication error: Check API key/permissions")
         elif error.response.status_code >= 500:
-            raise RuntimeError(f"Backend server error: {str(error)}")
+            raise RuntimeError("Backend server error: %s" % error)
         else:
             try:
                 detail = error.response.json().get("detail", str(error))
-                raise ValueError(f"API error: {detail}")
-            except:
-                raise ValueError(f"API error: {str(error)}")
+                raise ValueError("API error: %s" % detail)
+            except json.JSONDecodeError as e:
+                raise ValueError("API error: %s" % error) from e
 
 
 class EvaluatorWriter(ABC):
@@ -312,29 +290,29 @@ class EvaluatorConsoleWriter(EvaluatorWriter):
         if isinstance(evaluator_or_evaluation, Evaluator):
             # Writing the evaluator itself
             evaluator = evaluator_or_evaluation
-            logger.info(f"Creating evaluator:")
-            logger.info(f"Name: {evaluator.name}")
-            logger.info(f"Description: {evaluator.description or '[no description]'}")
-            logger.info(f"Evaluation Type: {evaluator.evaluation_type}")
+            logger.info("Creating evaluator:")
+            logger.info("Name: %s", evaluator.name)
+            logger.info("Description: %s", evaluator.description or '[no description]')
+            logger.info("Evaluation Type: %s", evaluator.evaluation_type)
             dummy_evaluator_id = f"console_evaluator_id_{evaluator.name}"
-            logger.info(f"Assigned evaluator_id = {dummy_evaluator_id}")
+            logger.info("Assigned evaluator_id = %s", dummy_evaluator_id)
             return dummy_evaluator_id
             
         elif isinstance(evaluator_or_evaluation, Evaluation):
             # Writing the evaluation result
             evaluation = evaluator_or_evaluation
-            logger.info(f"Writing evaluation:")
-            logger.info(f"Evaluator: {evaluation.evaluator.name}")
-            logger.info(f"Result: {evaluation.result}")
-            logger.info(f"Experiment Result ID: {evaluation.experiment_result_id}")
-            logger.info(f"Dataset Row ID: {evaluation.dataset_row_id}")
+            logger.info("Writing evaluation:")
+            logger.info("Evaluator: %s", evaluation.evaluator.name)
+            logger.info("Result: %s", evaluation.result)
+            logger.info("Experiment Result ID: %s", evaluation.experiment_result_id)
+            logger.info("Dataset Row ID: %s", evaluation.dataset_row_id)
             return None
 
 
 class EvaluatorBackendWriter(EvaluatorWriter):
     """Writes evaluators and evaluations to the ZeroEval backend."""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.api_url = API_URL.rstrip('/')
     
     def _write(self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]) -> Union[str, None]:
@@ -342,32 +320,47 @@ class EvaluatorBackendWriter(EvaluatorWriter):
         from .evaluator_class import Evaluator, Evaluation
 
         if isinstance(evaluator_or_evaluation, Evaluator):
-            # Create evaluator
+            evaluator = evaluator_or_evaluation
+            if not evaluator.experiment_id:
+                logger.warning("No experiment_id found in evaluator. Cannot create.")
+                return None
+
             payload = {
-                "experiment_id": evaluator_or_evaluation.experiment_id,
-                "name": evaluator_or_evaluation.name,
-                "description": evaluator_or_evaluation.description
+                "experiment_id": evaluator.experiment_id,  # Required by schema
+                "name": evaluator.name,
+                "description": evaluator.description or "",
+                "code": evaluator.code or ""  # Required by schema, use code instead of evaluator_type
             }
             
             try:
-                endpoint = f"{self.api_url}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
+                endpoint = f"{self.api_url}/experiments/{evaluator.experiment_id}/evaluators"
+                print(endpoint)
+                print(payload)
                 response = requests.post(endpoint, json=payload)
                 response.raise_for_status()
                 evaluator_data = response.json()
-                print(f"[BackendWriter] Created evaluator with ID {evaluator_data['id']}")
+                logger.info("Created evaluator with ID %s", evaluator_data['id'])
                 return evaluator_data["id"]
             except requests.RequestException as exc:
-                print(f"[BackendWriter] Failed to create evaluator: {exc}")
+                logger.error("Failed to create evaluator: %s", exc)
                 return None
 
         elif isinstance(evaluator_or_evaluation, Evaluation):
             # Create evaluation
             evaluation = evaluator_or_evaluation
-            experiment_id = evaluation.experiment_result_id.split("_")[0]  # Assuming ID format
+            if not evaluation.experiment_result_id:
+                logger.warning("Missing experiment_result_id. Cannot create evaluation.")
+                return None
+            
+            experiment_id = evaluation.experiment_result_id.split("_")[0] if evaluation.experiment_result_id else None
             evaluator_id = evaluation.evaluator._backend_id
+
+            if not experiment_id:
+                logger.warning("Could not extract experiment_id from result ID. Cannot create evaluation.")
+                return None
             
             if not evaluator_id:
-                print("[BackendWriter] Evaluator has no backend ID. Cannot create evaluation.")
+                logger.warning("Evaluator has no backend ID. Cannot create evaluation.")
                 return None
 
             payload = {
@@ -383,8 +376,8 @@ class EvaluatorBackendWriter(EvaluatorWriter):
                 response = requests.post(endpoint, json=payload)
                 response.raise_for_status()
                 evaluation_data = response.json()
-                logger.info(f"Created evaluation with ID {evaluation_data['id']}")
+                logger.info("Created evaluation with ID %s", evaluation_data['id'])
                 return evaluation_data["id"]
             except requests.RequestException as exc:
-                logger.error(f"Failed to create evaluation: {exc}")
+                logger.error("Failed to create evaluation: %s", exc)
                 return None

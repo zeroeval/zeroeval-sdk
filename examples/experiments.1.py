@@ -26,8 +26,8 @@ experiment = ze.Experiment(
 
 
 # test_results = experiment.run(dataset[:1])
-# all_results = experiment.run()
+all_results = experiment.run()
 
-results = experiment.run_task()
-results = experiment.run_evaluators([exact_match])
+# results = experiment.run_task()
+# results = experiment.run_evaluators([exact_match])
 
