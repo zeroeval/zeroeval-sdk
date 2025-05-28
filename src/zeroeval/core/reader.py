@@ -22,9 +22,10 @@ class DatasetReader(ABC):
         pass
 
     @abstractmethod
-    def pull_by_name(self, workspace_id: str, dataset_name: str, version_number: Optional[int] = None) -> "Dataset":
+    def pull_by_name(self, workspace_id: Optional[str], dataset_name: str, version_number: Optional[int] = None) -> "Dataset":
         """
-        Pull a dataset from a destination using its workspace ID and dataset name.
+        Pull a dataset from a destination using its dataset name.
+        Note: workspace_id may be ignored if resolved from API key.
         """
         pass
 
@@ -38,14 +39,52 @@ class DatasetBackendReader(DatasetReader):
         Initialize with a base URL, falling back to localhost if not set.
         """
         self.base_url = os.environ.get("BACKEND_URL", "http://localhost:8000")
+        self._api_key = None
+        self._workspace_id = None
+        self._headers = None
+    
+    def _ensure_auth_setup(self):
+        """Ensure API key and workspace ID are resolved and headers are set."""
+        if self._api_key is None:
+            self._api_key = os.environ.get("API_KEY")
+            if not self._api_key:
+                raise ValueError("API_KEY environment variable not set")
+        
+        if self._workspace_id is None:
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api-keys/resolve", 
+                    json={"api_key": self._api_key}
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                
+                if "workspace_id" not in response_data:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                
+                self._workspace_id = response_data["workspace_id"]
+                
+            except requests.HTTPError as e:
+                if e.response.status_code == 401:
+                    raise ValueError(f"Invalid API key")
+                elif e.response.status_code == 404:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                else:
+                    raise ValueError(f"Failed to resolve API key (HTTP {e.response.status_code})")
+            except requests.RequestException as e:
+                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
+        
+        if self._headers is None:
+            self._headers = {"Authorization": f"Bearer {self._api_key}"}
     
     def get_workspace_id_by_name(self, workspace_name: str) -> str:
         """
         Query the backend for the workspace by its name, returning the workspace ID.
         """
+        self._ensure_auth_setup()
         url = f"{self.base_url}/workspaces/by_name/{workspace_name}"
         try:
-            resp = requests.get(url)
+            resp = requests.get(url, headers=self._headers)
             resp.raise_for_status()
             workspace = resp.json()
             return workspace["id"]
@@ -64,27 +103,28 @@ class DatasetBackendReader(DatasetReader):
             A Dataset instance populated with the fetched data.
         """
         _validate_init()
+        self._ensure_auth_setup()
         
         # Import here to avoid circular import
         from .dataset_class import Dataset
         
         # 1) Fetch dataset metadata
-        dataset_info_url = f"{self.base_url}/datasets/{dataset_id}"
+        dataset_info_url = f"{self.base_url}/workspaces/{self._workspace_id}/datasets/{dataset_id}"
         try:
-            dataset_info_resp = requests.get(dataset_info_url)
+            dataset_info_resp = requests.get(dataset_info_url, headers=self._headers)
             dataset_info_resp.raise_for_status()
             dataset_info = dataset_info_resp.json()
         except requests.RequestException as e:
             raise RuntimeError(f"Failed to fetch dataset info by ID: {str(e)}")
         
         # 2) Fetch stored rows
-        data_url = f"{self.base_url}/datasets/{dataset_id}/data"
+        data_url = f"{self.base_url}/workspaces/{self._workspace_id}/datasets/{dataset_id}/data"
         params = {}
         if version_number is not None:
             params["version_number"] = version_number
         
         try:
-            data_resp = requests.get(data_url, params=params)
+            data_resp = requests.get(data_url, params=params, headers=self._headers)
             data_resp.raise_for_status()
             data_json = data_resp.json()
         except requests.RequestException as e:
@@ -104,25 +144,27 @@ class DatasetBackendReader(DatasetReader):
         
         return dataset
 
-    def pull_by_name(self, workspace_id: str, dataset_name: str, version_number: Optional[int] = None) -> "Dataset":
+    def pull_by_name(self, workspace_id: Optional[str], dataset_name: str, version_number: Optional[int] = None) -> "Dataset":
         """
-        Pull a dataset by workspace ID and dataset name.
+        Pull a dataset by dataset name.
+        Note: workspace_id parameter is ignored as workspace is resolved from API key.
         """
         _validate_init()
+        self._ensure_auth_setup()
 
         from .dataset_class import Dataset
 
-        info_url = f"{self.base_url}/workspaces/{workspace_id}/datasets/{dataset_name}"
+        info_url = f"{self.base_url}/workspaces/{self._workspace_id}/datasets/{dataset_name}"
         try:
-            info_resp = requests.get(info_url)
+            info_resp = requests.get(info_url, headers=self._headers)
             info_resp.raise_for_status()
             dataset_info = info_resp.json()
         except requests.RequestException as e:
             # If we received a 404, raise a more friendly error indicating that the dataset was not found
             if e.response is not None and e.response.status_code == 404:
                 raise ValueError(
-                    f"Dataset '{dataset_name}' not found for workspace '{os.environ.get('WORKSPACE_NAME')}'."
-                    "Verify that the dataset name and workspace are correct."
+                    f"Dataset '{dataset_name}' not found in your workspace. "
+                    "Verify that the dataset name is correct."
                 ) from e
             # Otherwise, raise a generic runtime error
             raise RuntimeError(f"Failed to fetch dataset info by name: {e}") from e
@@ -130,19 +172,19 @@ class DatasetBackendReader(DatasetReader):
         dataset_id = dataset_info["id"]
 
         # 2) Fetch rows + version
-        data_url = f"{self.base_url}/workspaces/{workspace_id}/datasets/{dataset_name}/data"
+        data_url = f"{self.base_url}/workspaces/{self._workspace_id}/datasets/{dataset_name}/data"
         params = {}
         if version_number is not None:
             params["version_number"] = version_number
         
         try:
-            data_resp = requests.get(data_url, params=params)
+            data_resp = requests.get(data_url, params=params, headers=self._headers)
             data_resp.raise_for_status()
             data_json = data_resp.json()
         except requests.RequestException as e:
             if e.response is not None and e.response.status_code == 404:
                 raise ValueError(
-                    f"No data found for dataset '{dataset_name}' in workspace '{workspace_id}' "
+                    f"No data found for dataset '{dataset_name}' in your workspace "
                     f"(version: {version_number if version_number else 'latest'})."
                 ) from e
             raise RuntimeError(f"Failed to fetch dataset rows by name: {e}") from e

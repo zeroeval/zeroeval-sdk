@@ -121,26 +121,17 @@ class Dataset:
         workspace_name: Optional[str] = None
     ) -> "Dataset":
         """
-        Pull a dataset by workspace *name* + dataset name, optionally specifying version_number.
+        Pull a dataset by dataset name, optionally specifying version_number.
         
         This uses the DatasetBackendReader to:
-          1) Convert the workspace_name to a workspace_id
-          2) Fetch metadata
-          3) Fetch rows from the backend
+          1) Resolve workspace ID from API key
+          2) Fetch metadata and rows from the backend
         """
         _validate_init()
-        
-        if not workspace_name:
-            workspace_name = os.environ.get("WORKSPACE_NAME")
-            if not workspace_name:
-                raise ValueError(
-                    "No workspace_name provided, and WORKSPACE_NAME env var is not set."
-                )
 
         reader = DatasetBackendReader()
-        workspace_id = reader.get_workspace_id_by_name(workspace_name)
-        
-        return reader.pull_by_name(workspace_id, dataset_name, version_number=version_number)
+        # The reader will handle workspace resolution from API key internally
+        return reader.pull_by_name(None, dataset_name, version_number=version_number)
     
     @property
     def version_id(self):
