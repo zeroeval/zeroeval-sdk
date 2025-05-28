@@ -401,6 +401,43 @@ class EvaluatorBackendWriter(EvaluatorWriter):
     
     def __init__(self):
         self.api_url = API_URL.rstrip('/')
+        self._api_key = None
+        self._workspace_id = None
+        self._headers = None
+    
+    def _ensure_auth_setup(self):
+        """Ensure API key and workspace ID are resolved and headers are set."""
+        if self._api_key is None:
+            self._api_key = os.environ.get("API_KEY")
+            if not self._api_key:
+                raise ValueError("API_KEY environment variable not set")
+        
+        if self._workspace_id is None:
+            try:
+                response = requests.post(
+                    f"{self.api_url}/api-keys/resolve", 
+                    json={"api_key": self._api_key}
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                
+                if "workspace_id" not in response_data:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                
+                self._workspace_id = response_data["workspace_id"]
+                
+            except requests.HTTPError as e:
+                if e.response.status_code == 401:
+                    raise ValueError(f"Invalid API key")
+                elif e.response.status_code == 404:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                else:
+                    raise ValueError(f"Failed to resolve API key (HTTP {e.response.status_code})")
+            except requests.RequestException as e:
+                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
+        
+        if self._headers is None:
+            self._headers = {"Authorization": f"Bearer {self._api_key}"}
     
     def _write(self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]) -> Union[str, None]:
         """Write an evaluator or evaluation to the backend."""
@@ -408,6 +445,7 @@ class EvaluatorBackendWriter(EvaluatorWriter):
 
         if isinstance(evaluator_or_evaluation, Evaluator):
             # Create evaluator
+            self._ensure_auth_setup()
             payload = {
                 "experiment_id": evaluator_or_evaluation.experiment_id,
                 "name": evaluator_or_evaluation.name,
@@ -415,8 +453,8 @@ class EvaluatorBackendWriter(EvaluatorWriter):
             }
             
             try:
-                endpoint = f"{self.api_url}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
-                response = requests.post(endpoint, json=payload)
+                endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
+                response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 evaluator_data = response.json()
                 print(f"[BackendWriter] Created evaluator with ID {evaluator_data['id']}")
@@ -427,9 +465,17 @@ class EvaluatorBackendWriter(EvaluatorWriter):
 
         elif isinstance(evaluator_or_evaluation, Evaluation):
             # Create evaluation
+            self._ensure_auth_setup()
             evaluation = evaluator_or_evaluation
-            experiment_id = evaluation.experiment_result_id.split("_")[0]  # Assuming ID format
+            experiment_id = evaluation.evaluator.experiment_id  # Get experiment ID from evaluator
             evaluator_id = evaluation.evaluator._backend_id
+
+            print(f"[BackendWriter] Evaluation: {evaluation.experiment_result_id}")
+
+            print(f"[BackendWriter] Evaluator ID: {evaluator_id}")
+            print(f"[BackendWriter] Experiment ID: {experiment_id}")
+            print(f"[BackendWriter] Workspace ID: {self._workspace_id}")
+            print(f"[BackendWriter] Authorization: {self._headers}")
             
             if not evaluator_id:
                 print("[BackendWriter] Evaluator has no backend ID. Cannot create evaluation.")
@@ -443,9 +489,10 @@ class EvaluatorBackendWriter(EvaluatorWriter):
                 "evaluation_type": "text"  # Default to text type
             }
 
+
             try:
-                endpoint = f"{self.api_url}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"
-                response = requests.post(endpoint, json=payload)
+                endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"
+                response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 evaluation_data = response.json()
                 logger.info(f"Created evaluation with ID {evaluation_data['id']}")
