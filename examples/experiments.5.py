@@ -31,7 +31,7 @@ def predict_sentiment(email_text):
     """
     Uses OpenAI to predict the sentiment of an email.
     """
-    client = openai.OpenAI(api_key="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")
+    client = openai.OpenAI(api_key="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")
     
     prompt = f"""
     Analyze the sentiment of the following email and classify it as either 'positive', 'neutral', or 'negative'.

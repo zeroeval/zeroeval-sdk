@@ -9,7 +9,7 @@ tracer.configure(
     max_spans=50         
 )
 
-ze.init(api_key="zeval_kRpse4itiDRECw6XLExpN3wbEI1LrylTlP23KzZjA1A")
+ze.init(api_key="sk_ze_YYP_c-VAd909JUr3cwrKXtYCYO8ppOgUP4CTGPeiij0")
 
 dataset = ze.Dataset.pull("Capitals")
 
@@ -27,7 +27,7 @@ def normal_step(row):
     """
     This is a step that returns the input with random sleep time.
     """
-    client = openai.OpenAI(api_key="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")
+    client = openai.OpenAI(api_key="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")
     response = client.chat.completions.create(
     model="gpt-4o-mini",
       messages=[{"role": "user", "content": "Tell a 1 line story about a bear"}]
