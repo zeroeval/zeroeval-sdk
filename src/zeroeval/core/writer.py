@@ -74,7 +74,7 @@ class ExperimentResultConsoleWriter(ExperimentResultWriter):
 class ExperimentResultBackendWriter(ExperimentResultWriter):
     """
     A refined backend writer that:
-    1. Resolves workspace name -> workspace ID,
+    1. Resolves workspace ID from API key,
     2. Creates the Experiment,
     3. Creates the Task,
     4. Sends results to the backend.
@@ -82,49 +82,68 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
 
     def __init__(self):
         self.api_url = API_URL.rstrip('/')
-        self.workspace_name = os.environ.get("WORKSPACE_NAME")
+        self._api_key = None
         self._workspace_id = None
+        self._headers = None
 
-    def _get_or_resolve_workspace_id(self) -> Union[str, None]:
-        if self._workspace_id:
-            return self._workspace_id
+    def _ensure_auth_setup(self):
+        """Ensure API key and workspace ID are resolved and headers are set."""
+        if self._api_key is None:
+            self._api_key = os.environ.get("API_KEY")
+            if not self._api_key:
+                raise ValueError("API_KEY environment variable not set")
         
-        if not self.workspace_name:
-            logger.warning("No WORKSPACE_NAME was provided. Cannot resolve workspace ID.")
-            return None
+        if self._workspace_id is None:
+            try:
+                response = requests.post(
+                    f"{self.api_url}/api-keys/resolve", 
+                    json={"api_key": self._api_key}
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                
+                if "workspace_id" not in response_data:
+                    raise ValueError(f"API key does not resolve to a workspace. Invalid API key: {self._api_key}")
+                
+                self._workspace_id = response_data["workspace_id"]
+                
+            except requests.HTTPError as e:
+                if e.response.status_code == 401:
+                    raise ValueError(f"Invalid API key: {self._api_key}")
+                elif e.response.status_code == 404:
+                    raise ValueError(f"API key does not resolve to a workspace: {self._api_key}")
+                else:
+                    raise ValueError(f"Failed to resolve API key (HTTP {e.response.status_code}): {self._api_key}")
+            except requests.RequestException as e:
+                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
         
-        endpoint = f"{self.api_url}/workspaces/resolve"
-        params = {"name": self.workspace_name}
-        try:
-            resp = requests.get(endpoint, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            self._workspace_id = data.get("id")
-            return self._workspace_id
-        except requests.RequestException as exc:
-            logger.error(f"Failed to resolve workspace ID from name '{self.workspace_name}': {exc}")
-            return None
+        if self._headers is None:
+            self._headers = {"Authorization": f"Bearer {self._api_key}"}
 
     def _write(self, experiment_or_result: Union["Experiment", "ExperimentResult"]) -> Union[str, None]:
         from .experiment_class import Experiment, ExperimentResult
 
         if isinstance(experiment_or_result, Experiment):
             experiment = experiment_or_result
-            workspace_id = self._get_or_resolve_workspace_id()
+            self._ensure_auth_setup()
             dataset_version_id = getattr(experiment.dataset, "_version_id", None)
 
-            if not workspace_id or not dataset_version_id:
+            if not self._workspace_id or not dataset_version_id:
                 logger.error("Missing required workspace or dataset version info. Cannot create experiment.")
                 return None
 
             exp_payload = {
-                "workspace_id": workspace_id,
+                "workspace_id": self._workspace_id,
                 "dataset_version_id": dataset_version_id,
                 "name": experiment.name,
                 "description": experiment.description or ""
             }
             try:
-                exp_response = requests.post(f"{self.api_url}/experiments", json=exp_payload)
+                exp_response = requests.post(
+                    f"{self.api_url}/workspaces/{self._workspace_id}/experiments", 
+                    json=exp_payload, 
+                    headers=self._headers
+                )
                 exp_response.raise_for_status()
                 exp_data = exp_response.json()
                 backend_experiment_id = exp_data["id"]
@@ -138,12 +157,13 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
 
         elif isinstance(experiment_or_result, ExperimentResult):
             res = experiment_or_result
+            self._ensure_auth_setup()
 
             if not getattr(res, "experiment_id", None):
                 logger.error("No experiment_id found in result. Cannot POST this result.")
                 return None
 
-            endpoint = f"{self.api_url}/experiments/{res.experiment_id}/results"
+            endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{res.experiment_id}/results"
             payload = {
                 "dataset_row_id": res.row_id or "",
                 "result": str(res.result),
@@ -151,7 +171,7 @@ class ExperimentResultBackendWriter(ExperimentResultWriter):
                 "trace_id": res.trace_id if res.trace_id else ""
             }
             try:
-                response = requests.post(endpoint, json=payload)
+                response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 logger.info(f"Successfully posted result for row_id={res.row_id} to {endpoint}.")
                 return response.json()["id"]
@@ -195,6 +215,43 @@ class DatasetBackendWriter(DatasetWriter):
     
     def __init__(self):
         self.api_url = API_URL.rstrip('/')
+        self._api_key = None
+        self._workspace_id = None
+        self._headers = None
+    
+    def _ensure_auth_setup(self):
+        """Ensure API key and workspace ID are resolved and headers are set."""
+        if self._api_key is None:
+            self._api_key = os.environ.get("API_KEY")
+            if not self._api_key:
+                raise ValueError("API_KEY environment variable not set")
+        
+        if self._workspace_id is None:
+            try:
+                response = requests.post(
+                    f"{self.api_url}/api-keys/resolve", 
+                    json={"api_key": self._api_key}
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                
+                if "workspace_id" not in response_data:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                
+                self._workspace_id = response_data["workspace_id"]
+                
+            except requests.HTTPError as e:
+                if e.response.status_code == 401:
+                    raise ValueError(f"Invalid API key")
+                elif e.response.status_code == 404:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                else:
+                    raise ValueError(f"Failed to resolve API key (HTTP {e.response.status_code})")
+            except requests.RequestException as e:
+                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
+        
+        if self._headers is None:
+            self._headers = {"Authorization": f"Bearer {self._api_key}"}
     
     def write(self, dataset: 'Dataset', create_new_version: bool = False) -> None:
         """
@@ -208,7 +265,9 @@ class DatasetBackendWriter(DatasetWriter):
             ValueError: If dataset already exists or workspace issues
             RuntimeError: If API request fails
         """
-        create_url = f"{self.api_url}/datasets/"
+        self._ensure_auth_setup()
+
+        create_url = f"{self.api_url}/workspaces/{self._workspace_id}/datasets/"
         create_payload = {
             "workspace_name": os.environ.get("WORKSPACE_NAME"),
             "name": dataset.name,
@@ -216,7 +275,7 @@ class DatasetBackendWriter(DatasetWriter):
         }
 
         try:
-            response = requests.post(create_url, json=create_payload)
+            response = requests.post(create_url, json=create_payload, headers=self._headers)
             
             if response.status_code == 409 and create_new_version:
                 # Dataset exists - create new version
@@ -246,8 +305,12 @@ class DatasetBackendWriter(DatasetWriter):
 
     def _find_existing_dataset_id(self, dataset_name: str) -> Optional[str]:
         """Find dataset ID by name in the workspace."""
+        self._ensure_auth_setup()
         try:
-            response = requests.get(f"{self.api_url}/datasets")
+            response = requests.get(
+                f"{self.api_url}/workspaces/{self._workspace_id}/datasets", 
+                headers=self._headers
+            )
             response.raise_for_status()
             datasets = response.json()
             
@@ -260,6 +323,7 @@ class DatasetBackendWriter(DatasetWriter):
 
     def _post_data_to_existing_dataset(self, dataset_id: str, dataset: 'Dataset') -> None:
         """Create a new version of the dataset with the given data."""
+        self._ensure_auth_setup()
         data_as_strings = [
             {k: json.dumps(v) if not isinstance(v, str) else v 
              for k, v in row.items()}
@@ -267,8 +331,9 @@ class DatasetBackendWriter(DatasetWriter):
         ]
 
         response = requests.post(
-            f"{self.api_url}/datasets/{dataset_id}/data",
-            json={"data": data_as_strings}
+            f"{self.api_url}/workspaces/{self._workspace_id}/datasets/{dataset_id}/data",
+            json={"data": data_as_strings},
+            headers=self._headers
         )
         response.raise_for_status()
         
@@ -336,6 +401,43 @@ class EvaluatorBackendWriter(EvaluatorWriter):
     
     def __init__(self):
         self.api_url = API_URL.rstrip('/')
+        self._api_key = None
+        self._workspace_id = None
+        self._headers = None
+    
+    def _ensure_auth_setup(self):
+        """Ensure API key and workspace ID are resolved and headers are set."""
+        if self._api_key is None:
+            self._api_key = os.environ.get("API_KEY")
+            if not self._api_key:
+                raise ValueError("API_KEY environment variable not set")
+        
+        if self._workspace_id is None:
+            try:
+                response = requests.post(
+                    f"{self.api_url}/api-keys/resolve", 
+                    json={"api_key": self._api_key}
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                
+                if "workspace_id" not in response_data:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                
+                self._workspace_id = response_data["workspace_id"]
+                
+            except requests.HTTPError as e:
+                if e.response.status_code == 401:
+                    raise ValueError(f"Invalid API key")
+                elif e.response.status_code == 404:
+                    raise ValueError(f"API key does not resolve to a workspace")
+                else:
+                    raise ValueError(f"Failed to resolve API key (HTTP {e.response.status_code})")
+            except requests.RequestException as e:
+                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
+        
+        if self._headers is None:
+            self._headers = {"Authorization": f"Bearer {self._api_key}"}
     
     def _write(self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]) -> Union[str, None]:
         """Write an evaluator or evaluation to the backend."""
@@ -343,6 +445,7 @@ class EvaluatorBackendWriter(EvaluatorWriter):
 
         if isinstance(evaluator_or_evaluation, Evaluator):
             # Create evaluator
+            self._ensure_auth_setup()
             payload = {
                 "experiment_id": evaluator_or_evaluation.experiment_id,
                 "name": evaluator_or_evaluation.name,
@@ -350,8 +453,8 @@ class EvaluatorBackendWriter(EvaluatorWriter):
             }
             
             try:
-                endpoint = f"{self.api_url}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
-                response = requests.post(endpoint, json=payload)
+                endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
+                response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 evaluator_data = response.json()
                 print(f"[BackendWriter] Created evaluator with ID {evaluator_data['id']}")
@@ -362,9 +465,17 @@ class EvaluatorBackendWriter(EvaluatorWriter):
 
         elif isinstance(evaluator_or_evaluation, Evaluation):
             # Create evaluation
+            self._ensure_auth_setup()
             evaluation = evaluator_or_evaluation
-            experiment_id = evaluation.experiment_result_id.split("_")[0]  # Assuming ID format
+            experiment_id = evaluation.evaluator.experiment_id  # Get experiment ID from evaluator
             evaluator_id = evaluation.evaluator._backend_id
+
+            print(f"[BackendWriter] Evaluation: {evaluation.experiment_result_id}")
+
+            print(f"[BackendWriter] Evaluator ID: {evaluator_id}")
+            print(f"[BackendWriter] Experiment ID: {experiment_id}")
+            print(f"[BackendWriter] Workspace ID: {self._workspace_id}")
+            print(f"[BackendWriter] Authorization: {self._headers}")
             
             if not evaluator_id:
                 print("[BackendWriter] Evaluator has no backend ID. Cannot create evaluation.")
@@ -378,9 +489,10 @@ class EvaluatorBackendWriter(EvaluatorWriter):
                 "evaluation_type": "text"  # Default to text type
             }
 
+
             try:
-                endpoint = f"{self.api_url}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"
-                response = requests.post(endpoint, json=payload)
+                endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"
+                response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 evaluation_data = response.json()
                 logger.info(f"Created evaluation with ID {evaluation_data['id']}")

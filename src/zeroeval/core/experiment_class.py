@@ -47,6 +47,7 @@ class Experiment:
         """
         # Write (or ensure writing) of the Experiment to the backend, retrieving an experiment_id
         experiment_id = self._write(self._writer)  # sets self._backend_id internally
+        print(f"[Experiment] Experiment ID: {experiment_id}")
         if not experiment_id:
             print("[Experiment] Could not create or retrieve experiment ID from writer.")
             return []
@@ -136,6 +137,8 @@ class Experiment:
         """
         # Write experiment to backend first
         experiment_id = self._write(self._writer)
+        print(f"[Experiment] Experiment ID: {experiment_id}")
+
         if not experiment_id:
             print("[Experiment] Could not create or retrieve experiment ID from writer.")
             return []
