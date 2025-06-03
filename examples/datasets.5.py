@@ -6,7 +6,7 @@ import zeroeval as ze
 # Input: Email body text
 # Output: Sentiment classification (positive, neutral, negative)
 
-ze.init(api_key="sk_ze_YYP_c-VAd909JUr3cwrKXtYCYO8ppOgUP4CTGPeiij0")
+ze.init(api_key="sk_ze_rDMKmDkyHuc_OXykkWUuwqUtlGNx2auUgNifP5THobw")
 
 dataset = ze.Dataset(
     name="Email-Sentiment",
