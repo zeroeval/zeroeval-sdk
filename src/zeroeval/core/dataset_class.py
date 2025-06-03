@@ -1,9 +1,13 @@
-from typing import TYPE_CHECKING, List, Dict, Any, Optional
+from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 from .writer import DatasetBackendWriter
 from .reader import DatasetBackendReader
 
 from .init import _validate_init
 import os
+import base64
+from pathlib import Path
+import mimetypes
+import uuid
 if TYPE_CHECKING:
     from .writer import DatasetWriter
 
@@ -152,6 +156,154 @@ class Dataset:
     def description(self):
         """Get the dataset description."""
         return self._description
+        
+    @staticmethod
+    def _encode_file_to_base64(file_path: str) -> str:
+        """Convert a file to base64 encoding.
+        
+        Args:
+            file_path: Path to the file to encode
+            
+        Returns:
+            Base64 encoded string with appropriate data URI prefix
+        """
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type:
+            # Default to octet-stream if can't determine type
+            mime_type = 'application/octet-stream'
+            
+        with open(file_path, 'rb') as file:
+            encoded = base64.b64encode(file.read()).decode('utf-8')
+            return f'data:{mime_type};base64,{encoded}'
+    
+    def add_image(self, row_index: int, column_name: str, image_path: str) -> None:
+        """Add an image to a specific cell in the dataset.
+        
+        Args:
+            row_index: Index of the row to update
+            column_name: Name of the column to add the image to
+            image_path: Path to the image file
+            
+        Raises:
+            IndexError: If row_index is out of range
+            FileNotFoundError: If image file does not exist
+        """
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+            
+        # Check if image path has valid extension
+        valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+        ext = Path(image_path).suffix.lower()
+        if ext not in valid_extensions:
+            raise ValueError(f"Invalid image file extension: {ext}. Must be one of {valid_extensions}")
+            
+        # Encode image as base64
+        encoded_image = self._encode_file_to_base64(image_path)
+        
+        # Update cell with the encoded image
+        try:
+            row = self._data[row_index]
+            if "data" in row:
+                row["data"][column_name] = encoded_image
+            else:
+                row[column_name] = encoded_image
+        except IndexError:
+            raise IndexError(f"Row index {row_index} is out of range")
+    
+    def add_audio(self, row_index: int, column_name: str, audio_path: str) -> None:
+        """Add an audio file to a specific cell in the dataset.
+        
+        Args:
+            row_index: Index of the row to update
+            column_name: Name of the column to add the audio to
+            audio_path: Path to the audio file
+            
+        Raises:
+            IndexError: If row_index is out of range
+            FileNotFoundError: If audio file does not exist
+        """
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+            
+        # Check if audio path has valid extension
+        valid_extensions = ['.mp3', '.wav', '.ogg', '.m4a']
+        ext = Path(audio_path).suffix.lower()
+        if ext not in valid_extensions:
+            raise ValueError(f"Invalid audio file extension: {ext}. Must be one of {valid_extensions}")
+            
+        # Encode audio as base64
+        encoded_audio = self._encode_file_to_base64(audio_path)
+        
+        # Update cell with the encoded audio
+        try:
+            row = self._data[row_index]
+            if "data" in row:
+                row["data"][column_name] = encoded_audio
+            else:
+                row[column_name] = encoded_audio
+        except IndexError:
+            raise IndexError(f"Row index {row_index} is out of range")
+    
+    def add_video(self, row_index: int, column_name: str, video_path: str) -> None:
+        """Add a video file to a specific cell in the dataset.
+        
+        Args:
+            row_index: Index of the row to update
+            column_name: Name of the column to add the video to
+            video_path: Path to the video file
+            
+        Raises:
+            IndexError: If row_index is out of range
+            FileNotFoundError: If video file does not exist
+        """
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+            
+        # Check if video path has valid extension
+        valid_extensions = ['.mp4', '.webm', '.mov']
+        ext = Path(video_path).suffix.lower()
+        if ext not in valid_extensions:
+            raise ValueError(f"Invalid video file extension: {ext}. Must be one of {valid_extensions}")
+            
+        # Encode video as base64
+        encoded_video = self._encode_file_to_base64(video_path)
+        
+        # Update cell with the encoded video
+        try:
+            row = self._data[row_index]
+            if "data" in row:
+                row["data"][column_name] = encoded_video
+            else:
+                row[column_name] = encoded_video
+        except IndexError:
+            raise IndexError(f"Row index {row_index} is out of range")
+            
+    def add_media_url(self, row_index: int, column_name: str, media_url: str, media_type: str) -> None:
+        """Add a media URL to a specific cell in the dataset.
+        
+        Args:
+            row_index: Index of the row to update
+            column_name: Name of the column to add the media URL to
+            media_url: URL pointing to the media file
+            media_type: Type of media ('image', 'audio', or 'video')
+            
+        Raises:
+            IndexError: If row_index is out of range
+            ValueError: If media_type is invalid
+        """
+        valid_types = ['image', 'audio', 'video']
+        if media_type not in valid_types:
+            raise ValueError(f"Invalid media type: {media_type}. Must be one of {valid_types}")
+            
+        # Update cell with the media URL
+        try:
+            row = self._data[row_index]
+            if "data" in row:
+                row["data"][column_name] = media_url
+            else:
+                row[column_name] = media_url
+        except IndexError:
+            raise IndexError(f"Row index {row_index} is out of range")
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         """
@@ -193,6 +345,12 @@ class Dataset:
         """
         for row in self._data:
             yield row["data"] if "data" in row else row
+            
+    def __len__(self):
+        """
+        Returns the number of rows in the dataset.
+        """
+        return len(self._data)
 
     @property
     def data(self) -> List[Dict[str, Any]]:
@@ -200,17 +358,27 @@ class Dataset:
         Returns a list of just the data portion for each row.
         """
         return [row["data"] if "data" in row else row for row in self._data]
-
+        
     @property
-    def columns(self):
+    def columns(self) -> List[str]:
         """
-        Derive columns from the first record's data portion if present.
+        Returns a list of column names in the dataset.
         """
-        if not self._data:
-            return set()
-        first_row = self._data[0]
-        data_part = first_row["data"] if "data" in first_row else first_row
-        return set(data_part.keys())
+        # Collect all unique keys from all rows
+        columns = set()
+        for row in self._data:
+            if "data" in row and isinstance(row["data"], dict):
+                columns.update(row["data"].keys())
+            else:
+                columns.update(row.keys())
+                
+        # Remove internal keys like 'row_id' if present
+        if "row_id" in columns:
+            columns.remove("row_id")
+        
+        return sorted(list(columns))
+
+
 
     # -------------------
     # Internal API: methods that return full rows.
