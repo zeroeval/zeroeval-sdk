@@ -3,6 +3,7 @@ import time
 from typing import List, Dict, Any, Optional, Type
 from .span import Span
 from .writer import SpanWriter, ConsoleWriter, SpanBackendWriter
+import uuid
 
 
 class Tracer:
@@ -76,8 +77,13 @@ class Tracer:
         if max_spans is not None:
             self._max_spans = max_spans
     
-    def start_span(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> Span:
-        """Start a new span with the given name and attributes."""
+    def start_span(
+        self,
+        name: str,
+        attributes: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None
+    ) -> Span:
+        """Start a new span; roots may create a session automatically."""
         thread_id = threading.get_ident()
         
         # Initialize span stack for this thread if it doesn't exist
@@ -85,15 +91,23 @@ class Tracer:
             self._active_spans[thread_id] = []
         
         # Get parent span if available
-        parent_span = None
-        if self._active_spans[thread_id]:
-            parent_span = self._active_spans[thread_id][-1]
+        parent_span = self._active_spans[thread_id][-1] if self._active_spans[thread_id] else None
+        
+        # --- decide final session id -------------------------------------
+        if session_id:
+            final_session_id = session_id
+        elif parent_span:
+            final_session_id = parent_span.session_id
+        else:
+            final_session_id = str(uuid.uuid4())    # new session for root
+        # -----------------------------------------------------------------
         
         # Create new span
         span = Span(
             name=name,
             parent_id=parent_span.span_id if parent_span else None,
-            attributes=attributes or {}
+            attributes=attributes or {},
+            session_id=final_session_id
         )
         
         # If there's a parent span, both spans should share the same trace ID

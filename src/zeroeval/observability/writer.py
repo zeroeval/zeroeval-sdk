@@ -27,6 +27,7 @@ class ConsoleWriter(SpanWriter):
             )
             formatted_span = {
                 "name": span["name"],
+                "session_id": span.get("session_id"),
                 "trace_id": short_trace,
                 "span_id": short_span,
                 "parent_id": short_parent,
@@ -45,7 +46,10 @@ class SpanBackendWriter(SpanWriter):
     def __init__(self) -> None:
         """Initialize the writer with an API URL and optional API key."""
         self.api_url = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
-        self.api_key = os.environ.get("API_KEY", "")
+
+    def _get_api_key(self) -> str:
+        """Get the API key from environment, supporting lazy loading after ze.init()."""
+        return os.environ.get("API_KEY", "")
 
     def write(self, spans: List[Dict[str, Any]]) -> None:
         """
@@ -55,6 +59,17 @@ class SpanBackendWriter(SpanWriter):
         if not spans:
             return
 
+        # Get API key at write time (after ze.init() has been called)
+        api_key = self._get_api_key()
+        
+        # Debug logging
+        print(f"[SpanBackendWriter] API_URL: {self.api_url}")
+        print(f"[SpanBackendWriter] API_KEY present: {bool(api_key)}")
+        if api_key:
+            print(f"[SpanBackendWriter] API_KEY (first 8 chars): {api_key[:8]}...")
+        else:
+            print(f"[SpanBackendWriter] WARNING: No API_KEY found in environment!")
+
         formatted_spans = []
         for span in spans:
             try:
@@ -63,6 +78,7 @@ class SpanBackendWriter(SpanWriter):
                 
                 formatted_span = {
                     "id": span["span_id"],
+                    "session_id": span.get("session_id"),
                     "trace_id": span["trace_id"],
                     "parent_span_id": span["parent_id"],
                     "name": span["name"],
@@ -89,17 +105,25 @@ class SpanBackendWriter(SpanWriter):
         headers = {
             "Content-Type": "application/json",
         }
-        if self.api_key:
-            headers["X-API-KEY"] = self.api_key
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+            print(f"[SpanBackendWriter] Using Bearer token authentication")
+        else:
+            print(f"[SpanBackendWriter] WARNING: No API key available, sending unauthenticated request")
+
+        print(f"[SpanBackendWriter] Sending {len(formatted_spans)} spans to {endpoint}")
+        print(f"[SpanBackendWriter] Headers: {dict(headers)}")
 
         try:
             print(formatted_spans)
             response = requests.post(endpoint, headers=headers, json=formatted_spans, timeout=10)
+            print(f"[SpanBackendWriter] Response status: {response.status_code}")
             if not response.ok:
                 print(f"[SpanBackendWriter] Error posting spans: Status {response.status_code}")
                 print(f"Response: {response.text}")
                 return
             response.raise_for_status()
+            print(f"[SpanBackendWriter] Successfully posted {len(formatted_spans)} spans")
         except requests.RequestException as exc:
             print(f"[SpanBackendWriter] Error posting spans: {exc}")
             print(f"Request URL: {endpoint}")
