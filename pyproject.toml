@@ -17,6 +17,7 @@ opentelemetry-api = "^1.30.0"
 opentelemetry-sdk = "^1.30.0"
 requests = "^2.32.3"
 openai = "^1.82.0"
+pillow = "^9.5.0"
 
 [tool.poetry.scripts]
 zeroeval = "zeroeval.cli:main"
