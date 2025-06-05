@@ -19,7 +19,7 @@ from io import BytesIO
 from PIL import Image
 import json
 
-ze.init(api_key="sk_ze_rDMKmDkyHuc_OXykkWUuwqUtlGNx2auUgNifP5THobw")
+ze.init(api_key="sk_ze_4OxO2q-uR6beq32qxV-zPkq0uONq4CIjtS_Bc7P9idM")
 
 # Check if the dataset exists or pull it from the backend
 try:
