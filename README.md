@@ -1,8 +1,6 @@
 # ZeroEval SDK
 
-All-in-one toolkit for **creating datasets, running AI/LLM experiments, and tracing multimodal workloads**.
-
-> Build, measure, and iterate on LLM-powered products with just a few lines of code.
+[ZeroEval](https://zeroeval.com) is an evaluations, a/b testing and monitoring platform for AI products. This SDK lets you **create datasets, run AI/LLM experiments, and trace multimodal workloads**.
 
 ---
 
@@ -50,7 +48,7 @@ import zeroeval as ze
 
 ze.init()  # uses key from `zeroeval setup`
 
-# 1⃣  create & push a tiny dataset
+# 1. create & push a tiny dataset
 capitals = ze.Dataset(
     name="Capitals",
     description="Country → capital mapping",
@@ -61,10 +59,10 @@ capitals = ze.Dataset(
 )
 capitals.push()  # version 1
 
-# 2⃣  pull it back anytime
+# 2. pull it back anytime
 capitals = ze.Dataset.pull("Capitals")
 
-# 3⃣  define a trivial task & run an experiment
+# 3. define a trivial task & run an experiment
 exp = ze.Experiment(
     dataset=capitals,
     task=lambda row: row["input"],
@@ -94,18 +92,7 @@ cities = ze.Dataset(
 cities.push(create_new_version=True)  # v2
 ```
 
-### 2. From a CSV / pandas DataFrame
-
-```python
-import pandas as pd
-from pathlib import Path
-
-df = pd.read_csv(Path("data/iris.csv"))
-iris = ze.Dataset.from_dataframe("Iris", df)
-iris.push()
-```
-
-### 3. Multimodal (images, audio, URLs)
+### 2. Multimodal (images, audio, URLs)
 
 ```python
 mm = ze.Dataset(
@@ -118,8 +105,6 @@ mm.add_audio(row_index=0, column_name="verbal_notes", audio_path="notes/p001.wav
 mm.add_media_url(row_index=0, column_name="external_scan", media_url="https://example.com/scan.jpg", media_type="image")
 mm.push()
 ```
-
-> See full script in `examples/datasets.1.multimodal.py` for a richer walkthrough.
 
 ---
 
@@ -204,18 +189,10 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 
 ```bash
 zeroeval setup              # one-time API key config (prompts in terminal)
-zeroeval run my_script.py   # run a script & auto-discover @registered_experiments
 ```
 
 ---
 
-## Contributing
+## Issues?
 
-Pull requests welcome!  
-Run `pre-commit install` after cloning to enable formatting & lint checks.
-
----
-
-## License
-
-MIT
+Email us at [founders@zeroeval.com](mailto:founders@zeroeval.com)
