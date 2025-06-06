@@ -1,12 +1,11 @@
 [tool.poetry]
 name = "zeroeval"
-version = "0.1.3"
+version = "0.1.4"
 description = "ZeroEval SDK"
 repository = "https://github.com/zeroeval"
 keywords = ["evaluation", "LLM", "observability"]
 authors = [
-    "Sebastian Crossa <seb@zeroeval.com>",
-    "Jonathan Chavez <jona@zeroeval.com>"
+    "Sebastian Crossa <seb@zeroeval.com>"
 ]
 readme = "README.md"
 
