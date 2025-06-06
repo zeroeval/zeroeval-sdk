@@ -102,7 +102,7 @@ class SpanBackendWriter(SpanWriter):
                 print(f"Problematic span: {span}")
                 continue
 
-        endpoint = f"{self.api_url}/spans/"
+        endpoint = f"{self.api_url}/spans"
         headers = {
             "Content-Type": "application/json",
         }

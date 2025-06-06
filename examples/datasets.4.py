@@ -1,6 +1,6 @@
 import zeroeval as ze
 
-ze.init(api_key="sk_ze_IkVj3VgWcOqMTfyHCfO-3JaizB6SZJgNlvjEDPPHF3c")
+ze.init(api_key="sk_ze_sDaLKEbmov2O0eFML2ZNwIt40yvBJEIgFHyHXMmquPY")
 
 dataset = ze.Dataset(
     name="Capitals (Complete)",
