@@ -45,7 +45,8 @@ class SpanBackendWriter(SpanWriter):
 
     def __init__(self) -> None:
         """Initialize the writer with an API URL and optional API key."""
-        self.api_url = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+        # Default to production API; override in dev with API_URL env var (e.g., "https://api.zeroeval.com")
+        self.api_url = os.environ.get("API_URL", "https://api.zeroeval.com").rstrip("/")
 
     def _get_api_key(self) -> str:
         """Get the API key from environment, supporting lazy loading after ze.init()."""

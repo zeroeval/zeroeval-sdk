@@ -16,7 +16,7 @@ tracer.configure(
 )
 
 # Initialise SDKs (replace the keys below with your own for real usage)
-ze.init(api_key="sk_ze_4OxO2q-uR6beq32qxV-zPkq0uONq4CIjtS_Bc7P9idM")
+ze.init(api_key="sk_ze_IkVj3VgWcOqMTfyHCfO-3JaizB6SZJgNlvjEDPPHF3c")
 openai_client = openai.OpenAI(
     api_key="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"
 )

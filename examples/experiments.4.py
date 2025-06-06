@@ -9,7 +9,7 @@ tracer.configure(
     max_spans=50         
 )
 
-ze.init(api_key="sk_ze_4OxO2q-uR6beq32qxV-zPkq0uONq4CIjtS_Bc7P9idM")
+ze.init(api_key="sk_ze_IkVj3VgWcOqMTfyHCfO-3JaizB6SZJgNlvjEDPPHF3c")
 
 dataset = ze.Dataset.pull("Capitals")
 

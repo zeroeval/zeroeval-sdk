@@ -1,0 +1,6 @@
+#!/Users/sebastiancrossa/dev/zeroeval/zeroeval-sdk/.venv-test/bin/python
+import sys
+from zeroeval.cli import main
+
+if __name__ == '__main__':
+    sys.exit(main())

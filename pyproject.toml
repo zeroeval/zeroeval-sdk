@@ -1,8 +1,13 @@
 [tool.poetry]
 name = "zeroeval"
-version = "0.1.0"
+version = "0.1.3"
 description = "ZeroEval SDK"
-authors = ["Your Name <you@example.org>"]
+repository = "https://github.com/zeroeval"
+keywords = ["evaluation", "LLM", "observability"]
+authors = [
+    "Sebastian Crossa <seb@zeroeval.com>",
+    "Jonathan Chavez <jona@zeroeval.com>"
+]
 readme = "README.md"
 
 # This is important so Poetry can find your package in the src/ folder.
