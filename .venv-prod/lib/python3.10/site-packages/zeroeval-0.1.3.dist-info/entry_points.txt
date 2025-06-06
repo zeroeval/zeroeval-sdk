@@ -1,0 +1,3 @@
+[console_scripts]
+zeroeval=zeroeval.cli:main
+
