@@ -2,6 +2,8 @@
 
 [ZeroEval](https://zeroeval.com) is an evaluations, a/b testing and monitoring platform for AI products. This SDK lets you **create datasets, run AI/LLM experiments, and trace multimodal workloads**.
 
+Issues? Email us at [founders@zeroeval.com](mailto:founders@zeroeval.com)
+
 ---
 
 ## Features
@@ -190,9 +192,3 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 ```bash
 zeroeval setup              # one-time API key config (prompts in terminal)
 ```
-
----
-
-## Issues?
-
-Email us at [founders@zeroeval.com](mailto:founders@zeroeval.com)
