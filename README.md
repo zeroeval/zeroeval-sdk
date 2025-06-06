@@ -42,7 +42,7 @@ poetry add zeroeval
 
 ---
 
-## Quick-start (Hello World)
+## Quick-start
 
 ```python
 # quickstart.py  # save this anywhere in your project
@@ -74,7 +74,7 @@ results = exp.run()
 print(results.head())
 ```
 
-For a fully-worked multimodal example, visit the docs: https://docs.zeroeval.com/multimodal-datasets
+For a fully-worked multimodal example, visit the docs: https://docs.zeroeval.com/multimodal-datasets (coming soon)
 
 ---
 
@@ -182,8 +182,8 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 
 ## Streaming & tracing
 
-• **Streaming responses** – streaming guide: https://docs.zeroeval.com/streaming  
-• **Deep observability** – tracing guide: https://docs.zeroeval.com/tracing
+• **Streaming responses** – streaming guide: https://docs.zeroeval.com/streaming (coming soon)
+• **Deep observability** – tracing guide: https://docs.zeroeval.com/tracing (coming soon)
 
 ---
 
@@ -191,4 +191,5 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 
 ```bash
 zeroeval setup              # one-time API key config (prompts in terminal)
+zeroeval run my_script.py   # run a script & auto-discover @registered_experiments
 ```
