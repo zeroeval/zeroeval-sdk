@@ -17,7 +17,7 @@ import sys
 import zeroeval as ze
 from pathlib import Path
 
-ze.init(api_key="sk_ze_rDMKmDkyHuc_OXykkWUuwqUtlGNx2auUgNifP5THobw")
+ze.init(api_key="sk_ze_f7mb9PQNbQEfOVSurY4S29B9YiUwrvO96Vi6QeicThU")
 
 # Get the path to the sample images directory 
 current_dir = Path(__file__).parent.absolute()
