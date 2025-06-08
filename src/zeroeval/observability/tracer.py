@@ -1,5 +1,6 @@
 import threading
 import time
+import atexit
 from typing import List, Dict, Any, Optional, Type
 from .span import Span
 from .writer import SpanWriter, ConsoleWriter, SpanBackendWriter
@@ -37,16 +38,22 @@ class Tracer:
         
         # Auto-setup available integrations
         self._setup_available_integrations()
+        
+        # Ensure buffered spans are flushed when the interpreter exits.
+        # This is crucial for short-lived scripts where the background flush
+        # thread may not get a chance to run before process termination.
+        atexit.register(self.flush)
     
     def _setup_available_integrations(self) -> None:
         """Automatically set up all available integrations."""
         # Import here to avoid circular imports
         from .integrations.openai.integration import OpenAIIntegration
+        from .integrations.langchain.integration import LangChainIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
-            # Add new integration classes here
+            LangChainIntegration,  # Auto-instrument LangChain
         ]
         
         # Setup each available integration

@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
-API_URL = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
+# Default to production API; for local dev set BACKEND_URL env var to "http://localhost:8000" (or another URL)
+API_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
 
 class DatasetWriter(ABC):

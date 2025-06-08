@@ -8,8 +8,8 @@ from .init import _validate_init
 if TYPE_CHECKING:
     from .dataset_class import Dataset
 
-# Default to production API; override in development by setting the BACKEND_URL env var to e.g., "https://api.zeroeval.com".
-API_URL = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
+# Default to production API; override in development by setting the BACKEND_URL env var to e.g., "http://localhost:8000".
+API_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
 
 class DatasetReader(ABC):
@@ -41,7 +41,7 @@ class DatasetBackendReader(DatasetReader):
         """
         # Allow local development to override the production URL while making the
         # published package point to the public API by default.
-        self.base_url = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
+        self.base_url = os.environ.get("BACKEND_URL", "http://localhost:8000")
         self._api_key = None
         self._workspace_id = None
         self._headers = None
