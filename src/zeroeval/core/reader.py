@@ -8,7 +8,6 @@ from .init import _validate_init
 if TYPE_CHECKING:
     from .dataset_class import Dataset
 
-API_URL = "http://localhost:8000"
 
 
 class DatasetReader(ABC):
@@ -38,7 +37,7 @@ class DatasetBackendReader(DatasetReader):
         """
         Initialize with a base URL, falling back to localhost if not set.
         """
-        self.base_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000")
+        self.base_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com")
         self._api_key = None
         self._workspace_id = None
         self._headers = None

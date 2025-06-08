@@ -12,7 +12,7 @@ tracer.configure(
 )
 
 # Initialize ZeroEval
-ze.init(api_key="sk_ze_rDMKmDkyHuc_OXykkWUuwqUtlGNx2auUgNifP5THobw")
+ze.init(api_key="sk_ze_sDaLKEbmov2O0eFML2ZNwIt40yvBJEIgFHyHXMmquPY")
 
 # Pull the Email-Sentiment dataset
 dataset = ze.Dataset.pull("Email-Sentiment")

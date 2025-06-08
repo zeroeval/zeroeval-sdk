@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from .evaluator_class import Evaluator, Evaluation
 
 
-API_URL = "http://localhost:8000"
+# Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
+API_URL = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
 
 
 class DatasetWriter(ABC):
@@ -171,7 +172,7 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
     def write(self, dataset: "Dataset", create_new_version: bool = False) -> None:
         self._ensure_auth_setup()
 
-        create_url = f"{self.api_url}/workspaces/{self._workspace_id}/datasets/"
+        create_url = f"{self.api_url}/workspaces/{self._workspace_id}/datasets"
         create_payload = {
             "workspace_name": os.environ.get("ZEROEVAL_WORKSPACE_NAME"),
             "name": dataset.name,

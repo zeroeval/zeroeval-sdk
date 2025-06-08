@@ -77,7 +77,7 @@ def setup():
     # Launch browser with animation
     brand_print("Opening secure token generation page...")
     animate_dots("Launching browser", 1.5)
-    webbrowser.open("https://zeroeval.com/tokens")
+    webbrowser.open("https://app.zeroeval.com/settings?section=api-keys")
 
     # Final message
     console.print("\n✨ [success]Browser opened! Complete the setup in your browser[/success]")
