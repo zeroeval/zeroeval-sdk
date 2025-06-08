@@ -1,3 +1,4 @@
+import json
 from functools import wraps
 from typing import Any, Callable
 from ..base import Integration
@@ -6,6 +7,25 @@ class OpenAIIntegration(Integration):
     """Integration for OpenAI's API client."""
     
     PACKAGE_NAME = "openai"
+
+    def _serialize_messages(self, messages: Any) -> Any:
+        if not messages:
+            return messages
+        
+        serializable_messages = []
+        for message in messages:
+            if hasattr(message, "model_dump"):
+                # For Pydantic models (openai>=1.0)
+                serializable_messages.append(message.model_dump())
+            elif isinstance(message, dict):
+                serializable_messages.append(message)
+            else:
+                # Fallback for other types
+                try:
+                    serializable_messages.append(str(message))
+                except:
+                    serializable_messages.append("<unserializable_message>")
+        return serializable_messages
 
     def setup(self) -> None:
         try:
@@ -54,7 +74,7 @@ class OpenAIIntegration(Integration):
                     "kind": "llm",
                     "provider": "openai",
                     "model": kwargs.get("model"),
-                    "messages": kwargs.get("messages"),
+                    "messages": self._serialize_messages(kwargs.get("messages")),
                     "streaming": is_streaming,
                 }
             )
@@ -98,7 +118,7 @@ class OpenAIIntegration(Integration):
                         })
                         
                         span.set_io(
-                            input_data=str(kwargs.get("messages")),
+                            input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
                             output_data=full_response
                         )
 
@@ -125,7 +145,7 @@ class OpenAIIntegration(Integration):
                         })
                         
                         span.set_io(
-                            input_data=str(kwargs.get("messages")),
+                            input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
                             output_data=output
                         )
                     

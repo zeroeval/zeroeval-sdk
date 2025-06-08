@@ -38,7 +38,7 @@ class DatasetBackendReader(DatasetReader):
         """
         Initialize with a base URL, falling back to localhost if not set.
         """
-        self.base_url = os.environ.get("BACKEND_URL", "http://localhost:8000")
+        self.base_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000")
         self._api_key = None
         self._workspace_id = None
         self._headers = None
@@ -46,9 +46,9 @@ class DatasetBackendReader(DatasetReader):
     def _ensure_auth_setup(self):
         """Ensure API key and workspace ID are resolved and headers are set."""
         if self._api_key is None:
-            self._api_key = os.environ.get("API_KEY")
+            self._api_key = os.environ.get("ZEROEVAL_API_KEY")
             if not self._api_key:
-                raise ValueError("API_KEY environment variable not set")
+                raise ValueError("ZEROEVAL_API_KEY environment variable not set")
         
         if self._workspace_id is None:
             try:

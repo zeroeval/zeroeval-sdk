@@ -36,35 +36,3 @@ def experiment(dataset=None, model=None):
         registered_experiments.append(new_fn)
         return new_fn
     return decorator
-
-def span(
-    name: Optional[str] = None,
-    session_id: Optional[str] = None,
-    attributes: Optional[Dict[str, Any]] = None,
-):
-    """
-    Simple tracing decorator.
-
-    Example:
-        @span(session_id="abc123")
-        def my_fn(): ...
-    """
-    def decorator(fn):
-        span_name = name or fn.__name__
-
-        @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
-            _span = tracer.start_span(span_name, attributes, session_id)
-
-            try:
-                result = fn(*args, **kwargs)
-                return result
-            except Exception as exc:
-                _span.set_error(type(exc).__name__, str(exc))
-                raise
-            finally:
-                tracer.end_span(_span)
-
-        return wrapper
-
-    return decorator

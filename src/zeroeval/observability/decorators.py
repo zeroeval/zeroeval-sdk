@@ -72,11 +72,16 @@ class span:
             @functools.wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 with self as current_span:
-                    # Capture function source code
-                    try:
-                        current_span.set_code(inspect.getsource(func))
-                    except (OSError, TypeError):
-                        pass  # Couldn't get source code
+                    # Capture function source code and context if enabled
+                    if tracer.collect_code_details:
+                        try:
+                            current_span.set_code(inspect.getsource(func))
+                            # Get the source file and line number of the decorated function
+                            filepath = inspect.getsourcefile(func)
+                            lineno = inspect.getsourcelines(func)[1]
+                            current_span.set_code_context(filepath=filepath, lineno=lineno)
+                        except (OSError, TypeError):
+                            pass  # Fail silently if introspection fails
                     
                     # Capture input parameters if no manual input provided
                     if self.manual_input is None:
@@ -101,11 +106,16 @@ class span:
             @functools.wraps(func)
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 with self as current_span:
-                    # Capture function source code
-                    try:
-                        current_span.set_code(inspect.getsource(func))
-                    except (OSError, TypeError):
-                        pass  # Couldn't get source code
+                    # Capture function source code and context if enabled
+                    if tracer.collect_code_details:
+                        try:
+                            current_span.set_code(inspect.getsource(func))
+                            # Get the source file and line number of the decorated function
+                            filepath = inspect.getsourcefile(func)
+                            lineno = inspect.getsourcelines(func)[1]
+                            current_span.set_code_context(filepath=filepath, lineno=lineno)
+                        except (OSError, TypeError):
+                            pass  # Fail silently if introspection fails
                     
                     # Capture input parameters if no manual input provided
                     if self.manual_input is None:
@@ -134,6 +144,19 @@ class span:
             attributes=self.attributes,
             session_id=self.session_id
         )
+        
+        # If code collection is enabled, capture the calling context.
+        if tracer.collect_code_details:
+            try:
+                # Go up 2 frames to get the caller of the 'with span(...)' statement
+                frame = inspect.currentframe().f_back.f_back
+                self._span.set_code_context(
+                    filepath=frame.f_code.co_filename,
+                    lineno=frame.f_lineno
+                )
+            except:
+                pass # Fail silently if introspection fails
+        
         if self.manual_input is not None or self.manual_output is not None:
             self._span.set_io(self.manual_input, self.manual_output)
         return self._span
