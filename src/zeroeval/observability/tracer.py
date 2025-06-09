@@ -1,5 +1,6 @@
 import threading
 import time
+import atexit
 from typing import List, Dict, Any, Optional, Type
 from .span import Span
 from .writer import SpanWriter, SpanBackendWriter
@@ -55,11 +56,12 @@ class Tracer:
         """Automatically set up all available integrations."""
         # Import here to avoid circular imports
         from .integrations.openai.integration import OpenAIIntegration
+        from .integrations.langchain.integration import LangChainIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
-            # Add new integration classes here
+            LangChainIntegration,  # Auto-instrument LangChain
         ]
         
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")

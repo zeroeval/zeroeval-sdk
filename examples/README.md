@@ -222,7 +222,7 @@ tracer.configure(
 ### Environment Variables
 
 ```bash
-# Backend URL (default: http://localhost:8000)
+# Backend URL (default: https://api.zeroeval.com)
 export API_URL="https://your-backend.com"
 
 # API Key for authentication (optional)

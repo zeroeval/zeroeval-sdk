@@ -42,8 +42,24 @@ class Integration(ABC):
     def _patch_method(self, target_object: Any, method_name: str, wrapper: Callable) -> None:
         """Helper method to patch an object's method."""
         original = getattr(target_object, method_name)
-        self._original_functions[f"{target_object.__class__.__name__}.{method_name}"] = original
-        setattr(target_object, method_name, wrapper(original))
+
+        # Skip if already patched by ZeroEval
+        if getattr(original, "__ze_patched__", False):
+            return
+
+        # Identify the patched object name in a readable / unique way.
+        if isinstance(target_object, type):
+            obj_name = target_object.__name__  # class name
+        else:
+            obj_name = target_object.__class__.__name__  # instance name
+
+        self._original_functions[f"{obj_name}.{method_name}"] = original
+
+        patched = wrapper(original)
+        # Mark so we can recognise it later and avoid double wrapping
+        setattr(patched, "__ze_patched__", True)
+
+        setattr(target_object, method_name, patched)
 
     def _unpatch_method(self, target_object: Any, method_name: str) -> None:
         """Helper method to restore an object's original method."""
