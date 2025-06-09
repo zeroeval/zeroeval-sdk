@@ -24,6 +24,8 @@ class Span:
     input_data: Optional[str] = None
     output_data: Optional[str] = None
     code: Optional[str] = None  # Added code field
+    code_filepath: Optional[str] = None
+    code_lineno: Optional[int] = None
     error_code: Optional[str] = None
     error_message: Optional[str] = None
     error_stack: Optional[str] = None
@@ -56,6 +58,11 @@ class Span:
         """Set the code that was executed in this span."""
         self.code = code
 
+    def set_code_context(self, filepath: str, lineno: int) -> None:
+        """Set the file path and line number for the span's execution context."""
+        self.code_filepath = filepath
+        self.code_lineno = lineno
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert the span to a dictionary representation."""
         return {
@@ -71,6 +78,8 @@ class Span:
             "input_data": self.input_data,
             "output_data": self.output_data,
             "code": self.code,  # Added code field
+            "code_filepath": self.code_filepath,
+            "code_lineno": self.code_lineno,
             "error_code": self.error_code,
             "error_message": self.error_message,
             "error_stack": self.error_stack,

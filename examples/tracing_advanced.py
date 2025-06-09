@@ -1,8 +1,12 @@
+import zeroeval as ze
 from zeroeval.observability.decorators import span
 from zeroeval.observability.tracer import tracer
 import time
 import uuid
 import random
+
+ze.init(api_key="sk_ze_f7mb9PQNbQEfOVSurY4S29B9YiUwrvO96Vi6QeicThU")
+
 
 # Configure tracer  
 tracer.configure(flush_interval=3.0, max_spans=100)
