@@ -59,21 +59,28 @@ class LangChainIntegration(Integration):
 
         runnable_classes = [Runnable, *_iter_all_subclasses(Runnable)]
 
-        for method_name in (
+        # ------------------------------------------------------------------
+        # Exhaustive instrumentation for Runnable entrypoints
+        # ------------------------------------------------------------------
+        runnable_method_names = (
             "invoke",
             "stream",
             "batch",
             "ainvoke",
             "astream",
             "abatch",
-        ):
+        )
+
+        for method_name in runnable_method_names:
             for cls in runnable_classes:
-                try:
-                    self._patch_method(cls, method_name, self._build_runnable_wrapper)
-                except Exception as exc:  # pragma: no cover – continue patching others
-                    print(
-                        f"[ZeroEval] Failed patching {cls.__name__}.{method_name}: {exc}"
-                    )
+                # Only patch if the attribute exists on the target class.
+                if hasattr(cls, method_name):
+                    try:
+                        self._patch_method(cls, method_name, self._build_runnable_wrapper)
+                    except Exception as exc:  # pragma: no cover – best-effort
+                        print(
+                            f"[ZeroEval] Failed patching {cls.__name__}.{method_name}: {exc}"
+                        )
 
         # ------------------------------------------------------------------
         # Patch *future* subclasses created after this point by hooking
@@ -103,18 +110,64 @@ class LangChainIntegration(Integration):
                 "astream",
                 "abatch",
             ):
-                try:
-                    integration_self._patch_method(
-                        cls, method_name, integration_self._build_runnable_wrapper
-                    )
-                except Exception:
-                    # Ignore – best effort instrumentation
-                    pass
+                # Only patch if the attribute exists on the target class.
+                if hasattr(cls, method_name):
+                    try:
+                        integration_self._patch_method(
+                            cls, method_name, integration_self._build_runnable_wrapper
+                        )
+                    except Exception:
+                        # Ignore – best effort instrumentation
+                        pass
 
         # Avoid double-hooking if someone else already replaced it
         if getattr(Runnable.__init_subclass__, "__ze_patched__", False) is False:
             setattr(_ze_init_subclass, "__ze_patched__", True)
             Runnable.__init_subclass__ = _ze_init_subclass
+
+        # ------------------------------------------------------------------
+        # Instrument additional LangChain abstractions (Tools, LLMs, Retrievers)
+        # ------------------------------------------------------------------
+
+        try:
+            from langchain_core.tools import BaseTool  # pylint: disable=import-error
+
+            self._instrument_class_methods(
+                BaseTool,
+                (
+                    "run",
+                    "arun",
+                ),
+            )
+        except Exception:  # pragma: no cover – missing module / version mismatch
+            pass
+
+        try:
+            from langchain_core.language_models.base import BaseLanguageModel  # pylint: disable=import-error
+
+            self._instrument_class_methods(
+                BaseLanguageModel,
+                (
+                    "generate",
+                    "agenerate",
+                ),
+            )
+        except Exception:  # pragma: no cover
+            pass
+
+        try:
+            from langchain_core.retrievers import BaseRetriever  # pylint: disable=import-error
+
+            self._instrument_class_methods(
+                BaseRetriever,
+                (
+                    "get_relevant_documents",
+                    "aget_relevant_documents",
+                    "__call__",
+                ),
+            )
+        except Exception:  # pragma: no cover
+            pass
 
     # ------------------------------------------------------------------
     # Wrapper factory
@@ -219,9 +272,25 @@ class LangChainIntegration(Integration):
     # ------------------------------------------------------------------
     def _start_runnable_span(self, runnable_self, method_name: str, kwargs: dict):  # noqa: ANN001
         """Create + return a Span for a Runnable invocation."""
+        # Determine a suitable kind based on the LangChain abstraction
+        kind: str = "runnable"
+        try:
+            from langchain_core.tools import BaseTool  # pylint: disable=import-error
+            from langchain_core.language_models.base import BaseLanguageModel  # pylint: disable=import-error
+            from langchain_core.retrievers import BaseRetriever  # pylint: disable=import-error
+
+            if isinstance(runnable_self, BaseTool):
+                kind = "tool"
+            elif isinstance(runnable_self, BaseLanguageModel):
+                kind = "llm"
+            elif isinstance(runnable_self, BaseRetriever):
+                kind = "retriever"
+        except Exception:  # pragma: no cover – optional deps may be missing
+            pass
+
         attributes = {
             "service.name": "langchain",
-            "kind": "runnable",
+            "kind": kind,
             "class": runnable_self.__class__.__name__,
             "method": method_name,
         }
@@ -257,4 +326,60 @@ class LangChainIntegration(Integration):
             code=exc.__class__.__name__,
             message=str(exc),
             stack=getattr(exc, "__traceback__", None),
-        ) 
+        )
+
+    # ------------------------------------------------------------------
+    # Generic helper for patching class hierarchies
+    # ------------------------------------------------------------------
+    def _instrument_class_methods(self, base_cls: type, method_names: tuple[str, ...]):
+        """Patch *method_names* on *base_cls* and all its current + future subclasses."""
+
+        # Gather existing subclasses recursively
+        def _iter_all_subclasses(cls):
+            for sub in cls.__subclasses__():
+                yield sub
+                yield from _iter_all_subclasses(sub)
+
+        target_classes = [base_cls, *_iter_all_subclasses(base_cls)]
+
+        for method_name in method_names:
+            for cls in target_classes:
+                # Only patch if the attribute exists on the target class.
+                if hasattr(cls, method_name):
+                    try:
+                        self._patch_method(cls, method_name, self._build_runnable_wrapper)
+                    except Exception as exc:  # pragma: no cover – best-effort
+                        print(
+                            f"[ZeroEval] Failed patching {cls.__name__}.{method_name}: {exc}"
+                        )
+
+        # ------------------------------------------------------------------
+        # Ensure *future* subclasses are instrumented via __init_subclass__
+        # ------------------------------------------------------------------
+        original_init_subclass = base_cls.__init_subclass__
+
+        integration_self = self  # capture for closure
+
+        @classmethod  # type: ignore[misc]
+        def _ze_init_subclass(cls, **kwargs):  # noqa: D401, ANN001
+            # Call the original hook first
+            try:
+                bound_init = original_init_subclass.__get__(cls, cls)
+                bound_init(**kwargs)  # type: ignore[misc]
+            except TypeError:
+                bound_init()
+
+            # Patch the new subclass's methods
+            for method in method_names:
+                # Only patch if the attribute exists on the target class.
+                if hasattr(cls, method):
+                    try:
+                        integration_self._patch_method(
+                            cls, method, integration_self._build_runnable_wrapper
+                        )
+                    except Exception:
+                        pass  # silently ignore – best-effort
+
+        if getattr(base_cls.__init_subclass__, "__ze_patched__", False) is False:
+            setattr(_ze_init_subclass, "__ze_patched__", True)
+            base_cls.__init_subclass__ = _ze_init_subclass 
