@@ -57,11 +57,13 @@ class Tracer:
         # Import here to avoid circular imports
         from .integrations.openai.integration import OpenAIIntegration
         from .integrations.langchain.integration import LangChainIntegration
+        from .integrations.langgraph.integration import LangGraphIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
             LangChainIntegration,  # Auto-instrument LangChain
+            LangGraphIntegration,  # Auto-instrument LangGraph
         ]
         
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
