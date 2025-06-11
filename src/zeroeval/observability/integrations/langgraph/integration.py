@@ -6,6 +6,7 @@ import json
 import threading
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, Union
+import logging
 
 
 class LangGraphIntegration(Integration):
@@ -39,24 +40,61 @@ class LangGraphIntegration(Integration):
         """Patch Graph.compile / StateGraph.compile so we can instrument the
         returned compiled graph instances. Also patch node execution and edges.
         """
+        logger = logging.getLogger(__name__)
+        
         try:
             from langgraph.graph.graph import Graph  # type: ignore
             from langgraph.graph.state import StateGraph  # type: ignore
-
+            
+            logger.info("[LangGraph] Successfully imported Graph and StateGraph")
+            
+            # Debug: Check what we're about to patch
+            logger.info(f"[LangGraph] Graph.compile exists: {hasattr(Graph, 'compile')}")
+            logger.info(f"[LangGraph] StateGraph.compile exists: {hasattr(StateGraph, 'compile')}")
+            
             # Patch *both* compile methods (Graph + StateGraph inherit separate
             # compile implementations).
-            self._patch_method(Graph, "compile", self._wrap_compile)
-            self._patch_method(StateGraph, "compile", self._wrap_compile)
+            try:
+                self._patch_method(Graph, "compile", self._wrap_compile)
+                logger.info("[LangGraph] Successfully patched Graph.compile")
+            except Exception as e:
+                logger.error(f"[LangGraph] Failed to patch Graph.compile: {e}")
+                
+            try:
+                self._patch_method(StateGraph, "compile", self._wrap_compile)
+                logger.info("[LangGraph] Successfully patched StateGraph.compile")
+            except Exception as e:
+                logger.error(f"[LangGraph] Failed to patch StateGraph.compile: {e}")
             
             # Try to patch node execution if available
             try:
                 from langgraph.pregel import Pregel  # type: ignore
+                logger.info("[LangGraph] Pregel module imported")
+                
+                # List all Pregel methods for debugging
+                pregel_methods = [attr for attr in dir(Pregel) if not attr.startswith('__')]
+                logger.info(f"[LangGraph] Pregel methods available: {pregel_methods}")
+                
                 # Patch the internal node execution method
                 if hasattr(Pregel, "_run_node"):
                     self._patch_method(Pregel, "_run_node", self._wrap_node_execution)
+                    logger.info("[LangGraph] Patched Pregel._run_node")
+                else:
+                    logger.warning("[LangGraph] Pregel._run_node not found")
+                    
                 if hasattr(Pregel, "_arun_node"):
                     self._patch_method(Pregel, "_arun_node", self._wrap_node_execution)
-            except ImportError:
+                    logger.info("[LangGraph] Patched Pregel._arun_node")
+                else:
+                    logger.warning("[LangGraph] Pregel._arun_node not found")
+                    
+                # Try other potential node execution methods
+                for method_name in ["run", "arun", "_exec", "_aexec", "execute", "aexecute"]:
+                    if hasattr(Pregel, method_name):
+                        logger.info(f"[LangGraph] Found Pregel.{method_name} - considering for patching")
+                        
+            except ImportError as e:
+                logger.warning(f"[LangGraph] Could not import Pregel: {e}")
                 pass  # Older versions might not have these internals
                 
             # Try to patch checkpointing if available
@@ -64,12 +102,16 @@ class LangGraphIntegration(Integration):
                 from langgraph.checkpoint.base import BaseCheckpointSaver  # type: ignore
                 if hasattr(BaseCheckpointSaver, "put"):
                     self._patch_method(BaseCheckpointSaver, "put", self._wrap_checkpoint_put)
+                    logger.info("[LangGraph] Patched BaseCheckpointSaver.put")
                 if hasattr(BaseCheckpointSaver, "get"):
                     self._patch_method(BaseCheckpointSaver, "get", self._wrap_checkpoint_get)
+                    logger.info("[LangGraph] Patched BaseCheckpointSaver.get")
             except ImportError:
+                logger.warning("[LangGraph] Could not import checkpoint module")
                 pass  # Checkpointing might not be used
                 
         except Exception as exc:  # pragma: no cover – optional dependency
+            logger.error(f"[ZeroEval] Failed to setup LangGraph integration: {exc}", exc_info=True)
             print(f"[ZeroEval] Failed to setup LangGraph integration: {exc}")
 
     # ------------------------------------------------------------------
@@ -79,6 +121,7 @@ class LangGraphIntegration(Integration):
         """Return a wrapper around *.compile()* which instruments the returned
         compiled graph instance (per-instance patch).
         """
+        logger = logging.getLogger(__name__)
 
         def wrapper(graph_self, *args: Any, **kwargs: Any):  # type: ignore
             compiled_graph = original(graph_self, *args, **kwargs)
@@ -92,17 +135,44 @@ class LangGraphIntegration(Integration):
                 # Best effort - continue even if metadata extraction fails
                 pass
 
-            # Instrument the resulting compiled graph *instance* so that we
-            # create a parent span covering the entire run.
+            # IMPORTANT: We need to patch AFTER the object is created because
+            # LangChain integration might also patch these methods.
+            # By patching at the instance level, we override class-level patches.
+            
+            # Get the actual methods (which might already be wrapped by LangChain)
             for method_name in ("invoke", "ainvoke", "stream", "astream"):
                 if hasattr(compiled_graph, method_name):
                     try:
-                        self._patch_method(
-                            compiled_graph,  # instance target
-                            method_name,
-                            self._build_graph_wrapper,
-                        )
-                    except Exception:
+                        # Get the method (might be wrapped by LangChain already)
+                        method = getattr(compiled_graph, method_name)
+                        
+                        # If it's already wrapped by LangChain, we need to get the original
+                        # and wrap it with our wrapper that creates langgraph.* spans
+                        if hasattr(method, '__wrapped__'):
+                            # It's been wrapped, get the original
+                            original_method = method.__wrapped__
+                        elif hasattr(method, '__func__'):
+                            # It's a bound method, get the function
+                            original_method = method.__func__
+                        else:
+                            # Use it as-is
+                            original_method = method
+                        
+                        # Create our wrapper with the correct method name
+                        wrapper_func = self._build_graph_wrapper(original_method, method_name)
+                        
+                        # Apply it to the instance
+                        if hasattr(method, '__self__'):
+                            # It's a bound method, rebind with our wrapper
+                            import types
+                            setattr(compiled_graph, method_name, types.MethodType(wrapper_func, compiled_graph))
+                        else:
+                            # Just set it
+                            setattr(compiled_graph, method_name, wrapper_func)
+                            
+                        logger.info(f"[LangGraph] Successfully patched {method_name} on compiled graph instance")
+                    except Exception as e:
+                        logger.error(f"[LangGraph] Failed to patch {method_name} on instance: {e}")
                         # Best-effort – skip if already patched at instance level.
                         pass
 
@@ -329,13 +399,20 @@ class LangGraphIntegration(Integration):
     # ------------------------------------------------------------------
     # Wrapper factory for compiled graph methods
     # ------------------------------------------------------------------
-    def _build_graph_wrapper(self, original: Callable) -> Callable:  # noqa: C901
+    def _build_graph_wrapper(self, original: Callable, method_name: str = None) -> Callable:  # noqa: C901
         """Generate a patched version of *original* that records a span.
 
         Supports sync + async callables (invoke / stream / ainvoke / astream).
         """
         is_async = inspect.iscoroutinefunction(original)
-        method_name = original.__name__
+        # Use provided method name or try to extract it
+        if method_name is None:
+            if hasattr(original, '__name__'):
+                method_name = original.__name__
+            elif hasattr(original, '__func__') and hasattr(original.__func__, '__name__'):
+                method_name = original.__func__.__name__
+            else:
+                method_name = "unknown"
 
         # ------------------------------------------------------------------
         # Async version
@@ -365,6 +442,8 @@ class LangGraphIntegration(Integration):
                     # Clear thread-local
                     self._thread_local.current_graph_span = None
 
+            # Store the original method name on the wrapper
+            async_wrapper.__ze_method_name__ = method_name
             return async_wrapper
 
         # ------------------------------------------------------------------
@@ -393,6 +472,8 @@ class LangGraphIntegration(Integration):
                 # Clear thread-local
                 self._thread_local.current_graph_span = None
 
+        # Store the original method name on the wrapper
+        sync_wrapper.__ze_method_name__ = method_name
         return sync_wrapper
 
     # ------------------------------------------------------------------

@@ -69,7 +69,14 @@ response = chain.invoke({"topic": "AI"})
 
 ### 3. LangGraph (Enhanced)
 
-Our most comprehensive integration, tracing the full agentic workflow:
+Our most comprehensive integration, tracing the full agentic workflow.
+
+**Important:** You will see BOTH `langgraph.*` and `langchain.*` spans when using LangGraph:
+
+- `langgraph.invoke`, `langgraph.stream` - High-level graph execution spans
+- `langchain.*` - Individual node and component execution spans
+
+This is expected behavior as LangGraph builds on top of LangChain components.
 
 **Traced Operations:**
 
