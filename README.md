@@ -184,6 +184,7 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 
 • **Streaming responses** – streaming guide: https://docs.zeroeval.com/streaming (coming soon)
 • **Deep observability** – tracing guide: https://docs.zeroeval.com/tracing (coming soon)
+• **Framework integrations** – see [INTEGRATIONS.md](./INTEGRATIONS.md) for automatic OpenAI, LangChain, and LangGraph tracing
 
 ---
 

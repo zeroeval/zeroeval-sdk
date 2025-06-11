@@ -23,6 +23,8 @@ requests = "^2.32.3"
 openai = "^1.82.0"
 pillow = "^9.5.0"
 langchain-openai = "^0.3.21"
+langgraph = "^0.4.8"
+langchain = "^0.3.25"
 
 [tool.poetry.scripts]
 zeroeval = "zeroeval.cli:main"
