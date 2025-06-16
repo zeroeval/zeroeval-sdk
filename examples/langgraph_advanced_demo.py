@@ -27,7 +27,7 @@ from zeroeval.observability.tracer import tracer
 
 # Configure tracer
 tracer.configure(flush_interval=1.0, max_spans=100)
-ze.init(api_key="sk_ze_3sGv8bqxdz0PShPu6-5c3TRlgPhD7w1QCnJB-bCzHpQ")
+ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
 
 # Set up OpenAI API key
 os.environ.setdefault("OPENAI_API_KEY", "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")

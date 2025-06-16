@@ -16,7 +16,7 @@ from zeroeval.observability.tracer import tracer
 tracer.configure(flush_interval=1.0, max_spans=50)
 
 # Your ZeroEval API key – replace with a real one for production usage.
-ze.init(api_key="sk_ze_3sGv8bqxdz0PShPu6-5c3TRlgPhD7w1QCnJB-bCzHpQ")
+ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
 
 # -----------------------------------------------------------------------------
 # 1. Configure your LLM provider (OpenAI in this demo)

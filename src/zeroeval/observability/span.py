@@ -2,6 +2,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any, List
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -17,8 +18,8 @@ class Span:
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     span_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     parent_id: Optional[str] = None
-    start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
+    start_time: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    end_time: Optional[str] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
     # Fields for tracking execution
     input_data: Optional[str] = None
@@ -33,14 +34,18 @@ class Span:
 
     def end(self) -> None:
         """Mark the span as completed with the current timestamp."""
-        self.end_time = time.time()
+        self.end_time = datetime.now(timezone.utc).isoformat()
     
     @property
     def duration_ms(self) -> Optional[float]:
         """Get the span duration in milliseconds, if completed."""
         if self.end_time is None:
             return None
-        return (self.end_time - self.start_time) * 1000
+        
+        start = datetime.fromisoformat(self.start_time)
+        end = datetime.fromisoformat(self.end_time)
+        
+        return (end - start).total_seconds() * 1000
     
     def set_error(self, code: str, message: str, stack: Optional[str] = None) -> None:
         """Set error information for the span."""
