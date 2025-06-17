@@ -9,8 +9,7 @@ import zeroeval as ze
 # This dataset is designed to benchmark speech-to-text (ASR) models.
 # It takes the sample WAV files located in the sibling directory `sample_audio/`
 # and builds a ZeroEval multimodal dataset where each record contains:
-#   • speaker_id           – ID extracted from the file name (e.g. "Speaker0050")
-#   • segment_id           – Numerical segment identifier extracted from the file name
+#   • segment_id           – Full segment identifier from the file name (e.g. "Speaker0050_000")
 #   • language             – Spoken language (assumed English)
 #   • expected_transcript  – Reference transcript (left blank for now – to be
 #                            filled in later once ground-truth is available)
@@ -57,19 +56,12 @@ records = []
 for wav_path in audio_files:
     # Example file name: Speaker0050_003.wav
     stem = wav_path.stem  # -> "Speaker0050_003"
-    try:
-        speaker_id, segment_str = stem.split("_")
-    except ValueError:
-        # Fallback in case the naming convention is different
-        speaker_id = "Unknown"
-        segment_str = stem
-
+    
     # Get the reference transcript for this specific file
     expected_transcript = reference_transcripts.get(stem, "")
 
     record = {
-        "speaker_id": speaker_id,
-        "segment_id": segment_str,
+        "segment_id": stem,  # Use full segment ID (e.g. "Speaker0050_000")
         "language": "English",
         "expected_transcript": expected_transcript
     }

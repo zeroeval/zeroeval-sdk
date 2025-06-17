@@ -119,18 +119,18 @@ def _compute_wer(reference: str, hypothesis: str) -> float:
 # Task – model inference
 # -----------------------------------------------------------------------------
 
-def transcribe_audio(row: Dict[str, Any]) -> str:
-    """Run Whisper on the `audio_clip` field and return the transcript text."""
+def transcribe_audio(row: Dict[str, Any]) -> Dict[str, str]:
+    """Run Whisper on the `audio_clip` field and return both transcript and detected language."""
     source: Optional[str] = row.get("audio_clip")
     if not source:
-        print("[WARN] Row missing 'audio_clip'; returning empty transcript.")
-        return ""
+        print("[WARN] Row missing 'audio_clip'; returning empty result.")
+        return {"transcript": "", "detected_language": ""}
 
     try:
         audio_bytes, mime_type = _load_audio(source)
     except Exception as exc:
         print(f"[ERROR] Failed to load audio: {exc}")
-        return ""
+        return {"transcript": "", "detected_language": ""}
 
     # Wrap bytes into BytesIO
     audio_file = io.BytesIO(audio_bytes)
@@ -138,34 +138,73 @@ def transcribe_audio(row: Dict[str, Any]) -> str:
     ext = mimetypes.guess_extension(mime_type) or ".wav"
     audio_file.name = f"audio{ext}"
 
+    # Use verbose_json to get both transcript and language
     response = openai_client.audio.transcriptions.create(
         model="whisper-1",
         file=audio_file,
-        response_format="text",
+        response_format="verbose_json",
     )
-    return response.strip()
+    
+    return {
+        "transcript": response.text.strip(),
+        "detected_language": response.language
+    }
 
 # -----------------------------------------------------------------------------
 # Evaluators – WER metrics
 # -----------------------------------------------------------------------------
 
-def evaluate_wer(row: Dict[str, Any], generated_transcript: str):
+def evaluate_wer(row: Dict[str, Any], result: Dict[str, str]):
     """Return Word Error Rate (WER) only."""
     reference: str = row.get("expected_transcript", "")
     if not reference:
         return None  # Skip evaluation if no reference
 
+    generated_transcript = result.get("transcript", "")
     wer = _compute_wer(reference, generated_transcript)
     return wer
 
-def evaluate_accuracy_score(row: Dict[str, Any], generated_transcript: str):
+def evaluate_accuracy_score(row: Dict[str, Any], result: Dict[str, str]):
     """Return accuracy score (1 - WER) only."""
     reference: str = row.get("expected_transcript", "")
     if not reference:
         return None  # Skip evaluation if no reference
 
+    generated_transcript = result.get("transcript", "")
     wer = _compute_wer(reference, generated_transcript)
     return max(0.0, 1.0 - wer)
+
+def evaluate_language_detection(row: Dict[str, Any], result: Dict[str, str]):
+    """Return 1.0 if detected language matches expected language, 0.0 otherwise."""
+    expected_language: str = row.get("language", "").lower()
+    detected_language: str = result.get("detected_language", "").lower()
+    
+    if not expected_language or not detected_language:
+        return None  # Skip evaluation if language info is missing
+    
+    # Map common language names to match Whisper's output format
+    language_mapping = {
+        "english": "en",
+        "spanish": "es", 
+        "french": "fr",
+        "german": "de",
+        "italian": "it",
+        "portuguese": "pt",
+        "russian": "ru",
+        "japanese": "ja",
+        "chinese": "zh",
+        "korean": "ko",
+        "arabic": "ar"
+    }
+    
+    # Normalize expected language
+    expected_normalized = language_mapping.get(expected_language, expected_language)
+    
+    # Check for exact match or partial match
+    if detected_language == expected_normalized or expected_normalized in detected_language:
+        return 1.0
+    else:
+        return 0.0
 
 # -----------------------------------------------------------------------------
 # Build & run experiment
@@ -173,9 +212,9 @@ def evaluate_accuracy_score(row: Dict[str, Any], generated_transcript: str):
 experiment = ze.Experiment(
     dataset=dataset,
     task=transcribe_audio,
-    evaluators=[evaluate_wer, evaluate_accuracy_score],
+    evaluators=[evaluate_wer, evaluate_accuracy_score, evaluate_language_detection],
     name="ASR_Whisper_on_ReadAloudStory",
-    description="Transcribe WAV clips with Whisper and measure WER against reference transcripts.",
+    description="Transcribe WAV clips with Whisper and measure WER against reference transcripts, plus language detection accuracy.",
 )
 
 if __name__ == "__main__":
