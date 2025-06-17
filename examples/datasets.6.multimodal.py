@@ -20,7 +20,7 @@ import zeroeval as ze
 # WER/CER metrics.
 # -----------------------------------------------------------------------------
 
-ze.init(api_key="sk_ze_r8Mf8-nXn-llv4kJIdxBwRagcQbQxjFDm6_4sai8xrU")
+ze.init(api_key="sk_ze_jQcklXGxqujSEdXcr1VnBnNl1NVCW0_sI5RA3ShXWg4")
 
 # Locate the directory that contains the `.wav` files
 current_dir = Path(__file__).parent.absolute()

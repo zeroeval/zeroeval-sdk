@@ -25,7 +25,7 @@ class SpanBackendWriter(SpanWriter):
 
     def __init__(self) -> None:
         """Initialize the writer with an API URL and optional API key."""
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000").rstrip("/")
+        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
 
     def _get_api_key(self) -> str:
         """Get the API key from environment, supporting lazy loading after ze.init()."""
@@ -78,7 +78,7 @@ class SpanBackendWriter(SpanWriter):
             logger.info("No spans to write after formatting.")
             return
 
-        endpoint = f"{self.api_url}/spans/"
+        endpoint = f"{self.api_url}/spans"
         headers = {
             "Content-Type": "application/json",
         }

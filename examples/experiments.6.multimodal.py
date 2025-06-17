@@ -28,7 +28,7 @@ import mimetypes
 # -----------------------------------------------------------------------------
 # SDK / client initialisation
 # -----------------------------------------------------------------------------
-ze.init(api_key="sk_ze_r8Mf8-nXn-llv4kJIdxBwRagcQbQxjFDm6_4sai8xrU")
+ze.init(api_key="sk_ze_jQcklXGxqujSEdXcr1VnBnNl1NVCW0_sI5RA3ShXWg4")
 openai_client = openai.OpenAI(
     api_key="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"
 )
