@@ -106,9 +106,11 @@ class Dataset:
         """
         Push the dataset to a storage destination.
         
+        If a dataset with the same name already exists, a new version will be automatically created.
+        
         Args:
-            create_new_version (bool): If True, and a dataset with this name already exists, 
-                a new version will be created instead of failing. Defaults to False.
+            create_new_version (bool): For backward compatibility. This parameter is no longer needed
+                as new versions are automatically created when a dataset name already exists.
                 
         Returns:
             self: Returns self for method chaining

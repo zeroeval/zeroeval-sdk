@@ -193,7 +193,13 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
                 self._post_data_to_existing_dataset(existing_id, dataset)
                 dataset._backend_id = existing_id
             elif response.status_code == 409:
-                raise ValueError(f"Dataset '{dataset.name}' already exists")
+                existing_id = self._find_existing_dataset_id(dataset.name)
+                if not existing_id:
+                    raise ValueError(
+                        "Dataset conflict but not found. Check workspace name."
+                    )
+                self._post_data_to_existing_dataset(existing_id, dataset)
+                dataset._backend_id = existing_id
             elif response.status_code == 404:
                 raise ValueError("Workspace not found or no access")
             else:
