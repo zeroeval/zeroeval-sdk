@@ -18,12 +18,10 @@ Issues? Email us at [founders@zeroeval.com](mailto:founders@zeroeval.com)
 ## Installation
 
 ```bash
-# pip
 pip install zeroeval
-
-# poetry
-poetry add zeroeval
 ```
+
+The SDK automatically detects and instruments OpenAI, LangChain, and LangGraph if you have them installed. No additional configuration needed!
 
 ---
 
