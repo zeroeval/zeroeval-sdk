@@ -7,7 +7,7 @@ import os
 # 1. Initialize ZeroEval.
 #    It's recommended to set your API key as an environment variable:
 #    export ZEROEVAL_API_KEY="sk_ze_..."
-ze.init(debug=True, api_key="sk_ze_f7mb9PQNbQEfOVSurY4S29B9YiUwrvO96Vi6QeicThU")  # Set debug=True to see detailed tracer logs.
+ze.init(debug=True, api_key="sk_ze_N-gxHpkGR09aTABCP-jQi9Ac2ZsVmdTf1JWgMuUN0p8")  # Set debug=True to see detailed tracer logs.
 
 
 # Create an OpenAI client

@@ -55,9 +55,11 @@ class Span:
         self.status = 'error'
 
     def set_io(self, input_data: Optional[str] = None, output_data: Optional[str] = None) -> None:
-        """Set input/output data for the span."""
-        self.input_data = input_data
-        self.output_data = output_data
+        """Set input/output data for the span, without overwriting existing values."""
+        if input_data is not None:
+            self.input_data = input_data
+        if output_data is not None:
+            self.output_data = output_data
 
     def set_code(self, code: str) -> None:
         """Set the code that was executed in this span."""

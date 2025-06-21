@@ -115,7 +115,8 @@ class Dataset:
         Returns:
             self: Returns self for method chaining
         """
-        _validate_init()
+        if not _validate_init():
+            return self
         self._writer.write(self, create_new_version=create_new_version)
         return self
 
@@ -133,7 +134,8 @@ class Dataset:
           1) Resolve workspace ID from API key
           2) Fetch metadata and rows from the backend
         """
-        _validate_init()
+        if not _validate_init():
+            return None
 
         reader = DatasetBackendReader()
         # The reader will handle workspace resolution from API key internally

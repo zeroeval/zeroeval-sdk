@@ -101,7 +101,8 @@ class DatasetBackendReader(DatasetReader):
         Returns:
             A Dataset instance populated with the fetched data.
         """
-        _validate_init()
+        if not _validate_init():
+            return None
         self._ensure_auth_setup()
         
         # Import here to avoid circular import
@@ -148,7 +149,8 @@ class DatasetBackendReader(DatasetReader):
         Pull a dataset by dataset name.
         Note: workspace_id parameter is ignored as workspace is resolved from API key.
         """
-        _validate_init()
+        if not _validate_init():
+            return None
         self._ensure_auth_setup()
 
         from .dataset_class import Dataset

@@ -38,6 +38,8 @@ class Tracer:
         self._flush_lock = threading.Lock()
         self._integrations: Dict[str, Any] = {}
         self.collect_code_details: bool = True
+        self._shutdown_called: bool = False
+        self._shutdown_lock = threading.Lock()
         
         logger.info("Initializing tracer...")
         logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}")
@@ -85,13 +87,31 @@ class Tracer:
         else:
             logger.info("No active integrations found.")
 
+    def is_shutting_down(self) -> bool:
+        """Check if the tracer is currently in the process of shutting down."""
+        with self._shutdown_lock:
+            return self._shutdown_called
+
     def shutdown(self) -> None:
         """
         Gracefully shuts down the tracer. This method is registered via atexit
         to be called automatically on normal program termination, ensuring all
         buffered spans are sent.
         """
+        with self._shutdown_lock:
+            if self._shutdown_called:
+                return
+            self._shutdown_called = True
+            
         logger.info("Program exiting. Performing final flush of all remaining traces...")
+        
+        # Teardown integrations safely
+        for integration_name, integration in self._integrations.items():
+            try:
+                integration.teardown()
+            except Exception:
+                logger.error(f"Failed to teardown integration {integration_name}", exc_info=True)
+
         # To ensure all traces are flushed, we must move any remaining buckets
         # to the main flush buffer, as they wouldn't be moved otherwise if their
         # root spans haven't technically ended before interpreter shutdown.
@@ -137,6 +157,11 @@ class Tracer:
         session_id: Optional[str] = None
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
+        if self.is_shutting_down():
+            logger.warning("Tracer is shutting down. Discarding new span.")
+            # Return a no-op span if tracer is shutting down
+            return Span(name="noop_span", attributes={"warning": "Tracer is shutting down."})
+
         thread_id = threading.get_ident()
         
         # Initialize span stack for this thread if it doesn't exist
@@ -178,10 +203,13 @@ class Tracer:
         return span
     
     def end_span(self, span: Span) -> None:
-        """End the given span and remove it from active spans if it's the current one."""
+        """End the given span, add it to the trace bucket, and handle trace completion."""
         if not span.end_time:
             span.end()
-        
+            
+        if self.is_shutting_down() or span.name == "noop_span":
+            return # Discard spans if shutting down or if it's a no-op span
+
         duration = span.duration_ms
         logger.info(
             f"Ending span: {span.name} (status: {span.status}, duration: {duration:.2f}ms)"
@@ -190,39 +218,41 @@ class Tracer:
         
         thread_id = threading.get_ident()
         
-        # Only remove from active spans if it's on the stack
-        if thread_id in self._active_spans and self._active_spans[thread_id]:
-            # Check if this is the top span in the stack
-            if self._active_spans[thread_id][-1].span_id == span.span_id:
-                # Remove from the stack
-                self._active_spans[thread_id].pop()
-                
-                # Remove the thread entry if there are no more spans
-                if not self._active_spans[thread_id]:
-                    self._active_spans.pop(thread_id, None)
+        # Remove from active spans if it's the current one for this thread
+        if self._active_spans.get(thread_id) and self._active_spans[thread_id][-1].span_id == span.span_id:
+            self._active_spans[thread_id].pop()
+            if not self._active_spans[thread_id]:
+                del self._active_spans[thread_id]
         
-        # Add span to its trace bucket
+        # Add to bucket and check for trace completion
         trace_id = span.trace_id
-        bucket = self._trace_buckets.setdefault(trace_id, [])
-        bucket.append(span.to_dict())
+        if trace_id not in self._trace_buckets:
+            self._trace_buckets[trace_id] = []
+        self._trace_buckets[trace_id].append(span.to_dict())
 
-        # Decrement active count and, if the trace is complete, move bucket to flush buffer
         self._trace_counts[trace_id] -= 1
         if self._trace_counts[trace_id] == 0:
-            # Sort the bucket to ensure the root span (no parent) is first.
-            # This is critical for the backend to name the trace correctly.
-            bucket_sorted = sorted(bucket, key=lambda s: s.get('parent_id') is not None)
+            self._finalize_trace(trace_id)
 
-            # Move completed trace spans to main buffer atomically
-            with self._flush_lock:
-                self._spans.extend(bucket_sorted)
-            # Cleanup
-            self._trace_buckets.pop(trace_id, None)
-            self._trace_counts.pop(trace_id, None)
+    def _finalize_trace(self, trace_id: str):
+        """Sort, buffer, and clean up a completed trace."""
+        bucket = self._trace_buckets.pop(trace_id, [])
+        if not bucket:
+            return
 
-            if len(self._spans) >= self._max_spans:
-                logger.info(f"Span buffer at max capacity ({self._max_spans}). Triggering flush.")
-                self.flush()
+        # Sort the bucket to ensure the root span is first
+        bucket_sorted = sorted(bucket, key=lambda s: s.get('parent_id') is not None)
+
+        with self._flush_lock:
+            self._spans.extend(bucket_sorted)
+
+        # Cleanup
+        self._trace_counts.pop(trace_id, None)
+
+        # Trigger flush if buffer is full
+        if len(self._spans) >= self._max_spans:
+            logger.info(f"Span buffer at max capacity ({self._max_spans}). Triggering flush.")
+            self.flush()
     
     def flush(self) -> None:
         """Flush all buffered completed spans to the writer."""
