@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "zeroeval"
-version = "0.1.8"
+version = "0.1.9"
 description = "ZeroEval SDK"
 repository = "https://github.com/zeroeval"
 keywords = ["evaluation", "LLM", "observability"]
@@ -22,9 +22,6 @@ opentelemetry-sdk = "^1.30.0"
 requests = "^2.32.3"
 openai = "^1.82.0"
 pillow = "^10.0.0"
-langchain-openai = "^0.3.21"
-langgraph = "^0.4.8"
-langchain = "^0.3.25"
 
 [tool.poetry.scripts]
 zeroeval = "zeroeval.cli:main"

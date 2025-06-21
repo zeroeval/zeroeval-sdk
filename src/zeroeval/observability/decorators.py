@@ -3,8 +3,7 @@ import inspect
 import traceback
 import json
 import ast
-import textwrap
-from typing import Optional, Dict, Any, Callable, TypeVar, cast
+from typing import Optional, Dict, Any, Callable, TypeVar, cast, Union
 import logging
 import os
 
@@ -38,16 +37,32 @@ class span:
         self, 
         name: str, 
         session_id: Optional[str] = None,
+        session: Optional[Union[str, Dict[str, str]]] = None,
         attributes: Optional[Dict[str, Any]] = None,
         input_data: Optional[str] = None,
         output_data: Optional[str] = None
     ):
         self.name = name
-        self.session_id = session_id
         self.attributes = attributes or {}
         self.manual_input = input_data
         self.manual_output = output_data
         self._span = None
+        
+        # Handle session parameter - support both legacy and new format
+        self._session_id = None
+        self._session_name = None
+        
+        if session is not None:
+            if isinstance(session, dict):
+                # New format: session={"id": "...", "name": "..."}
+                self._session_id = session.get("id")
+                self._session_name = session.get("name")
+            elif isinstance(session, str):
+                # Also support session as a string (just ID)
+                self._session_id = session
+        elif session_id is not None:
+            # Legacy format: session_id="..."
+            self._session_id = session_id
 
     def _capture_decorated_function_code(self, func: Callable):
         """Captures the function signature and body, excluding the decorator."""
@@ -213,7 +228,8 @@ class span:
         self._span = tracer.start_span(
             name=self.name, 
             attributes=self.attributes,
-            session_id=self.session_id
+            session_id=self._session_id,
+            session_name=self._session_name
         )
         
         if tracer.collect_code_details:

@@ -46,52 +46,52 @@ class LangGraphIntegration(Integration):
             from langgraph.graph.graph import Graph  # type: ignore
             from langgraph.graph.state import StateGraph  # type: ignore
             
-            logger.info("[LangGraph] Successfully imported Graph and StateGraph")
+            logger.debug("[LangGraph] Successfully imported Graph and StateGraph")
             
             # Debug: Check what we're about to patch
-            logger.info(f"[LangGraph] Graph.compile exists: {hasattr(Graph, 'compile')}")
-            logger.info(f"[LangGraph] StateGraph.compile exists: {hasattr(StateGraph, 'compile')}")
+            logger.debug(f"[LangGraph] Graph.compile exists: {hasattr(Graph, 'compile')}")
+            logger.debug(f"[LangGraph] StateGraph.compile exists: {hasattr(StateGraph, 'compile')}")
             
             # Patch *both* compile methods (Graph + StateGraph inherit separate
             # compile implementations).
             try:
                 self._patch_method(Graph, "compile", self._wrap_compile)
-                logger.info("[LangGraph] Successfully patched Graph.compile")
+                logger.debug("[LangGraph] Successfully patched Graph.compile")
             except Exception as e:
                 logger.error(f"[LangGraph] Failed to patch Graph.compile: {e}")
                 
             try:
                 self._patch_method(StateGraph, "compile", self._wrap_compile)
-                logger.info("[LangGraph] Successfully patched StateGraph.compile")
+                logger.debug("[LangGraph] Successfully patched StateGraph.compile")
             except Exception as e:
                 logger.error(f"[LangGraph] Failed to patch StateGraph.compile: {e}")
             
             # Try to patch node execution if available
             try:
                 from langgraph.pregel import Pregel  # type: ignore
-                logger.info("[LangGraph] Pregel module imported")
+                logger.debug("[LangGraph] Pregel module imported")
                 
                 # List all Pregel methods for debugging
                 pregel_methods = [attr for attr in dir(Pregel) if not attr.startswith('__')]
-                logger.info(f"[LangGraph] Pregel methods available: {pregel_methods}")
+                logger.debug(f"[LangGraph] Pregel methods available: {pregel_methods}")
                 
                 # Patch the internal node execution method
                 if hasattr(Pregel, "_run_node"):
                     self._patch_method(Pregel, "_run_node", self._wrap_node_execution)
-                    logger.info("[LangGraph] Patched Pregel._run_node")
+                    logger.debug("[LangGraph] Patched Pregel._run_node")
                 else:
-                    logger.warning("[LangGraph] Pregel._run_node not found")
+                    logger.debug("[LangGraph] Pregel._run_node not found")
                     
                 if hasattr(Pregel, "_arun_node"):
                     self._patch_method(Pregel, "_arun_node", self._wrap_node_execution)
-                    logger.info("[LangGraph] Patched Pregel._arun_node")
+                    logger.debug("[LangGraph] Patched Pregel._arun_node")
                 else:
-                    logger.warning("[LangGraph] Pregel._arun_node not found")
+                    logger.debug("[LangGraph] Pregel._arun_node not found")
                     
                 # Try other potential node execution methods
                 for method_name in ["run", "arun", "_exec", "_aexec", "execute", "aexecute"]:
                     if hasattr(Pregel, method_name):
-                        logger.info(f"[LangGraph] Found Pregel.{method_name} - considering for patching")
+                        logger.debug(f"[LangGraph] Found Pregel.{method_name} - considering for patching")
                         
             except ImportError as e:
                 logger.warning(f"[LangGraph] Could not import Pregel: {e}")
@@ -102,10 +102,10 @@ class LangGraphIntegration(Integration):
                 from langgraph.checkpoint.base import BaseCheckpointSaver  # type: ignore
                 if hasattr(BaseCheckpointSaver, "put"):
                     self._patch_method(BaseCheckpointSaver, "put", self._wrap_checkpoint_put)
-                    logger.info("[LangGraph] Patched BaseCheckpointSaver.put")
+                    logger.debug("[LangGraph] Patched BaseCheckpointSaver.put")
                 if hasattr(BaseCheckpointSaver, "get"):
                     self._patch_method(BaseCheckpointSaver, "get", self._wrap_checkpoint_get)
-                    logger.info("[LangGraph] Patched BaseCheckpointSaver.get")
+                    logger.debug("[LangGraph] Patched BaseCheckpointSaver.get")
             except ImportError:
                 logger.warning("[LangGraph] Could not import checkpoint module")
                 pass  # Checkpointing might not be used
@@ -170,7 +170,7 @@ class LangGraphIntegration(Integration):
                             # Just set it
                             setattr(compiled_graph, method_name, wrapper_func)
                             
-                        logger.info(f"[LangGraph] Successfully patched {method_name} on compiled graph instance")
+                        logger.debug(f"[LangGraph] Successfully patched {method_name} on compiled graph instance")
                     except Exception as e:
                         logger.error(f"[LangGraph] Failed to patch {method_name} on instance: {e}")
                         # Best-effort – skip if already patched at instance level.

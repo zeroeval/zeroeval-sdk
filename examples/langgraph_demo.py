@@ -1,5 +1,6 @@
 import os
 import asyncio
+import uuid
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
@@ -9,6 +10,7 @@ from langgraph.graph import MessagesState, StateGraph, START, END
 # LangGraph graphs so that their .compile() methods are patched.
 import zeroeval as ze
 from zeroeval.observability.tracer import tracer
+from zeroeval.observability.decorators import span
 
 # -----------------------------------------------------------------------------
 # SDK & tracer configuration (⚙️ tweak as needed)
@@ -16,7 +18,10 @@ from zeroeval.observability.tracer import tracer
 tracer.configure(flush_interval=1.0, max_spans=50)
 
 # Your ZeroEval API key – replace with a real one for production usage.
-ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
+ze.init(api_key="sk_ze_cZisn1v8ix9EZVxFt-JiFFisfqiwddAmAxj2wedGcC8")
+
+# Generate a session ID for this run
+session_id = str(uuid.uuid4())
 
 # -----------------------------------------------------------------------------
 # 1. Configure your LLM provider (OpenAI in this demo)
@@ -65,6 +70,7 @@ CHAT_MODEL = _init_chat_model()
 # -----------------------------------------------------------------------------
 
 
+@span(name="call_llm_node", session={"id": session_id, "name": "LangGraph Demo Session"})
 def call_llm(state: MessagesState):
     """Simple node that calls an LLM (sync)."""
     if CHAT_MODEL is None:
@@ -78,6 +84,7 @@ def call_llm(state: MessagesState):
     return {"messages": [response]}
 
 
+@span(name="finish_node", session={"id": session_id, "name": "LangGraph Demo Session"})
 def finish(state: MessagesState):
     """Terminal node – just returns the current state."""
     return {}
@@ -104,10 +111,16 @@ if __name__ == "__main__":
     user_input = input("Ask something: ") or "Hello LangGraph!"
 
     # Sync run ---------------------------------------------------------------
-    result = app.invoke({"messages": [HumanMessage(content=user_input)]})
-    print("\nSync result:\n", result["messages"][-1].content)
+    @span(name="sync_invoke", session={"id": session_id, "name": "LangGraph Demo Session"})
+    def run_sync():
+        result = app.invoke({"messages": [HumanMessage(content=user_input)]})
+        print("\nSync result:\n", result["messages"][-1].content)
+        return result
+    
+    run_sync()
 
     # Async run --------------------------------------------------------------
+    @span(name="async_invoke", session={"id": session_id, "name": "LangGraph Demo Session"})
     async def async_run():
         out = await app.ainvoke({"messages": [HumanMessage(content="Async hi!")]})
         print("\nAsync result:\n", out["messages"][-1].content)
@@ -115,11 +128,15 @@ if __name__ == "__main__":
     asyncio.run(async_run())
 
     # Stream run -------------------------------------------------------------
-    print("\nStreaming tokens:")
-    for chunk in app.stream(
-        {"messages": [HumanMessage(content="Stream please")]}, stream_mode="values"
-    ):
-        for msg in chunk.get("messages", []):
-            if getattr(msg, "content", ""):
-                print(msg.content, end=" | ")
-    print("\nDone.") 
+    @span(name="stream_invoke", session={"id": session_id, "name": "LangGraph Demo Session"})
+    def run_stream():
+        print("\nStreaming tokens:")
+        for chunk in app.stream(
+            {"messages": [HumanMessage(content="Stream please")]}, stream_mode="values"
+        ):
+            for msg in chunk.get("messages", []):
+                if getattr(msg, "content", ""):
+                    print(msg.content, end=" | ")
+        print("\nDone.")
+    
+    run_stream() 

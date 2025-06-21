@@ -25,7 +25,7 @@ class SpanBackendWriter(SpanWriter):
 
     def __init__(self) -> None:
         """Initialize the writer with an API URL and optional API key."""
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        self.api_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000").rstrip("/")
 
     def _get_api_key(self) -> str:
         """Get the API key from environment, supporting lazy loading after ze.init()."""
@@ -48,6 +48,15 @@ class SpanBackendWriter(SpanWriter):
                 # Convert traceback object to string if present
                 error_stack = str(span.get("error_stack")) if span.get("error_stack") else None
                 
+                # Prepare session data if session_name is provided
+                session_data = None
+                if span.get("session_id"):
+                    if span.get("session_name"):
+                        session_data = {
+                            "id": span["session_id"],
+                            "name": span["session_name"]
+                        }
+                
                 formatted_span = {
                     "id": span["span_id"],
                     "session_id": span.get("session_id"),
@@ -69,6 +78,10 @@ class SpanBackendWriter(SpanWriter):
                     "error_stack": error_stack,
                     "experiment_result_id": span.get("experiment_result_id")
                 }
+                
+                # Add session object if we have session name
+                if session_data:
+                    formatted_span["session"] = session_data
                 formatted_spans.append(formatted_span)
             except Exception:
                 logger.error(f"Failed to format span: {span.get('name', 'unnamed')}", exc_info=True)
@@ -86,6 +99,9 @@ class SpanBackendWriter(SpanWriter):
             headers["Authorization"] = f"Bearer {api_key}"
 
         logger.info(f"Sending {len(formatted_spans)} spans to {endpoint}")
+        # Debug: log the first span to see what's being sent
+        if formatted_spans:
+            logger.info(f"First span being sent: {json.dumps(formatted_spans[0], indent=2)}")
         try:
             response = requests.post(endpoint, headers=headers, json=formatted_spans, timeout=10)
             response.raise_for_status()

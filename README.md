@@ -18,12 +18,10 @@ Issues? Email us at [founders@zeroeval.com](mailto:founders@zeroeval.com)
 ## Installation
 
 ```bash
-# pip
 pip install zeroeval
-
-# poetry
-poetry add zeroeval
 ```
+
+The SDK automatically detects and instruments OpenAI, LangChain, and LangGraph if you have them installed. No additional configuration needed!
 
 ---
 
@@ -33,7 +31,7 @@ poetry add zeroeval
    ```bash
    zeroeval setup  # or: poetry run zeroeval setup
    ```
-   Your API key is securely stored in `~/.config/zeroeval/config.json`.
+   Your API key will be automatically saved to your shell configuration file (e.g., `~/.zshrc`, `~/.bashrc`). Best practice is to also store it in a `.env` file in your project root.
 2. Or set it in code each time:
    ```python
    import zeroeval as ze
@@ -48,7 +46,7 @@ poetry add zeroeval
 # quickstart.py  # save this anywhere in your project
 import zeroeval as ze
 
-ze.init()  # uses key from `zeroeval setup`
+ze.init()  # uses key from ZEROEVAL_API_KEY env var
 
 # 1. create & push a tiny dataset
 capitals = ze.Dataset(
@@ -191,6 +189,12 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 ## CLI commands
 
 ```bash
-zeroeval setup              # one-time API key config (prompts in terminal)
+zeroeval setup              # one-time API key config (auto-saves to shell config)
 zeroeval run my_script.py   # run a script & auto-discover @registered_experiments
+```
+
+## Testing
+
+```bash
+poetry run pytest
 ```

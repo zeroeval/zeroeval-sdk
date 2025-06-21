@@ -2,6 +2,19 @@
 
 These examples demonstrate the enhanced session-based tracing system that creates a proper hierarchy of **Session → Trace → Span** for better observability and monitoring.
 
+> **Note**: To run these examples, you'll need the frameworks they use:
+>
+> ```bash
+> # For examples using OpenAI
+> pip install openai
+>
+> # For examples using LangChain
+> pip install langchain langchain-openai
+>
+> # For examples using LangGraph
+> pip install langgraph
+> ```
+
 ## 🎯 What You'll Learn
 
 - How to use the `@span` decorator with session IDs
