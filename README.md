@@ -192,3 +192,9 @@ ze.Experiment(dataset, task, [dummy_score]).run()
 zeroeval setup              # one-time API key config (auto-saves to shell config)
 zeroeval run my_script.py   # run a script & auto-discover @registered_experiments
 ```
+
+## Testing
+
+```bash
+poetry run pytest
+```

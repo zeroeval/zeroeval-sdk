@@ -106,7 +106,16 @@ class SpanBackendWriter(SpanWriter):
             response = requests.post(endpoint, headers=headers, json=formatted_spans, timeout=10)
             response.raise_for_status()
             logger.info(f"Successfully posted {len(formatted_spans)} spans. Response: {response.status_code}")
-        except requests.RequestException:
-            logger.error(f"Error posting spans to {endpoint}", exc_info=True)
-            # Fail silently to the user, but log the error for debugging.
-            pass
+        except requests.HTTPError as e:
+            if e.response.status_code == 401:
+                logger.error(
+                    "Authorization error sending traces. Please check your API key, "
+                    "set via `ze.init(api_key=...)` or the `ZEROEVAL_API_KEY` env variable. Generate a new key with `zeroeval setup`."
+                )
+            else:
+                logger.error(
+                    f"Error posting spans to {endpoint}: HTTP {e.response.status_code} "
+                    f"Response: {e.response.text}"
+                )
+        except requests.RequestException as e:
+            logger.error(f"Error posting spans to {endpoint}: {e}")

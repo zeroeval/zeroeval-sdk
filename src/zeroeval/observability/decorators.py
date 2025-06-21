@@ -2,11 +2,15 @@ import functools
 import inspect
 import traceback
 import json
+import ast
 from typing import Optional, Dict, Any, Callable, TypeVar, cast, Union
+import logging
+import os
 
 from .tracer import tracer
 
 F = TypeVar('F', bound=Callable[..., Any])
+logger = logging.getLogger(__name__)
 
 
 class span:
@@ -60,6 +64,86 @@ class span:
             # Legacy format: session_id="..."
             self._session_id = session_id
 
+    def _capture_decorated_function_code(self, func: Callable):
+        """Captures the function signature and body, excluding the decorator."""
+        try:
+            # Get the full source including the decorator
+            full_source = inspect.getsource(func)
+            
+            # The 'def' keyword for a function marks the start of what we want to capture.
+            # inspect.getsource() on a decorated function returns the decorator source too.
+            # We find the start of the 'def' or 'async def' to strip off the decorator.
+            def_keyword = "async def " if inspect.iscoroutinefunction(func) else "def "
+            def_start_pos = full_source.find(def_keyword)
+
+            if def_start_pos != -1:
+                code = full_source[def_start_pos:]
+            else:
+                # Fallback to the full source if we can't find the 'def' keyword
+                code = full_source
+            
+            self._span.set_code(code)
+            logger.debug(f"Captured code for span '{self.name}':\n---\n{code}\n---")
+
+            # Set file context
+            filepath = inspect.getsourcefile(func)
+            lineno = inspect.getsourcelines(func)[1]
+            self._span.set_code_context(filepath=filepath, lineno=lineno)
+
+        except (OSError, TypeError):
+            logger.debug(f"Failed to inspect function source for '{func.__name__}'.", exc_info=True)
+
+    def _capture_code_from_context(self, frame: inspect.FrameInfo):
+        """
+        Tries to capture the source code inside the `with` block using AST parsing.
+        """
+        try:
+            filepath = frame.f_code.co_filename
+            lineno = frame.f_lineno
+            self._span.set_code_context(filepath=filepath, lineno=lineno)
+
+            # Avoid trying to parse non-project files or virtual envs
+            if not os.path.exists(filepath) or "site-packages" in filepath or "lib/python" in filepath:
+                 return
+
+            with open(filepath, 'r', encoding='utf-8') as f:
+                source_file_content = f.read()
+
+            tree = ast.parse(source_file_content, filename=filepath)
+
+            class WithVisitor(ast.NodeVisitor):
+                def __init__(self, line_number):
+                    self.line_number = line_number
+                    self.with_node = None
+
+                def visit_With(self, node: ast.With):
+                    if node.lineno == self.line_number:
+                        self.with_node = node
+                    self.generic_visit(node)
+            
+            visitor = WithVisitor(lineno)
+            visitor.visit(tree)
+
+            node = visitor.with_node
+            if node and node.body and hasattr(node.body[-1], 'end_lineno'):
+                body_start_lineno = node.body[0].lineno
+                body_end_lineno = node.body[-1].end_lineno
+                
+                source_lines = source_file_content.splitlines()
+                code_lines = source_lines[body_start_lineno - 1 : body_end_lineno]
+                
+                if code_lines:
+                    # Dedent the code block
+                    indentation = len(code_lines[0]) - len(code_lines[0].lstrip(' '))
+                    dedented_lines = [line[indentation:] for line in code_lines]
+                    code = "\n".join(dedented_lines)
+                    self._span.set_code(code)
+                    logger.debug(f"Captured code for span '{self.name}':\n---\n{code}\n---")
+
+        except Exception:
+            logger.debug("Failed to inspect frame context or parse source code.", exc_info=True)
+
+
     def _capture_args_as_input(self, args: tuple, kwargs: dict, func: Callable) -> str:
         """Convert function arguments to a JSON string representation."""
         # Get function parameter names
@@ -90,14 +174,7 @@ class span:
                 with self as current_span:
                     # Capture function source code and context if enabled
                     if tracer.collect_code_details:
-                        try:
-                            current_span.set_code(inspect.getsource(func))
-                            # Get the source file and line number of the decorated function
-                            filepath = inspect.getsourcefile(func)
-                            lineno = inspect.getsourcelines(func)[1]
-                            current_span.set_code_context(filepath=filepath, lineno=lineno)
-                        except (OSError, TypeError):
-                            pass  # Fail silently if introspection fails
+                        self._capture_decorated_function_code(func)
                     
                     # Capture input parameters if no manual input provided
                     if self.manual_input is None:
@@ -124,14 +201,7 @@ class span:
                 with self as current_span:
                     # Capture function source code and context if enabled
                     if tracer.collect_code_details:
-                        try:
-                            current_span.set_code(inspect.getsource(func))
-                            # Get the source file and line number of the decorated function
-                            filepath = inspect.getsourcefile(func)
-                            lineno = inspect.getsourcelines(func)[1]
-                            current_span.set_code_context(filepath=filepath, lineno=lineno)
-                        except (OSError, TypeError):
-                            pass  # Fail silently if introspection fails
+                        self._capture_decorated_function_code(func)
                     
                     # Capture input parameters if no manual input provided
                     if self.manual_input is None:
@@ -162,17 +232,11 @@ class span:
             session_name=self._session_name
         )
         
-        # If code collection is enabled, capture the calling context.
         if tracer.collect_code_details:
-            try:
-                # Go up 2 frames to get the caller of the 'with span(...)' statement
-                frame = inspect.currentframe().f_back.f_back
-                self._span.set_code_context(
-                    filepath=frame.f_code.co_filename,
-                    lineno=frame.f_lineno
-                )
-            except:
-                pass # Fail silently if introspection fails
+            # Go up 1 frame – the caller is the frame that owns the `with` line
+            frame = inspect.currentframe()
+            if frame and frame.f_back:
+                self._capture_code_from_context(frame.f_back)
         
         if self.manual_input is not None or self.manual_output is not None:
             self._span.set_io(self.manual_input, self.manual_output)
