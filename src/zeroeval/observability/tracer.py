@@ -134,7 +134,8 @@ class Tracer:
         self,
         name: str,
         attributes: Optional[Dict[str, Any]] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        session_name: Optional[str] = None
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
         thread_id = threading.get_ident()
@@ -146,13 +147,16 @@ class Tracer:
         # Get parent span if available
         parent_span = self._active_spans[thread_id][-1] if self._active_spans[thread_id] else None
         
-        # --- decide final session id -------------------------------------
+        # --- decide final session id and name -------------------------------------
         if session_id:
             final_session_id = session_id
+            final_session_name = session_name  # Use provided name or None
         elif parent_span:
             final_session_id = parent_span.session_id
+            final_session_name = parent_span.session_name  # Inherit parent's name
         else:
             final_session_id = str(uuid.uuid4())    # new session for root
+            final_session_name = session_name  # Use provided name or None
         # -----------------------------------------------------------------
         
         # Create new span
@@ -160,7 +164,8 @@ class Tracer:
             name=name,
             parent_id=parent_span.span_id if parent_span else None,
             attributes=attributes or {},
-            session_id=final_session_id
+            session_id=final_session_id,
+            session_name=final_session_name
         )
         
         logger.info(f"Starting span: {span.name}")

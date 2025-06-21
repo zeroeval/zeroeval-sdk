@@ -15,6 +15,7 @@ class Span:
     
     # Optional fields with defaults
     session_id: Optional[str] = None
+    session_name: Optional[str] = None
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     span_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     parent_id: Optional[str] = None
@@ -73,6 +74,7 @@ class Span:
         return {
             "name": self.name,
             "session_id": self.session_id,
+            "session_name": self.session_name,
             "trace_id": self.trace_id,
             "span_id": self.span_id,
             "parent_id": self.parent_id,
