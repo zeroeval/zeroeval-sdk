@@ -123,6 +123,12 @@ class OpenAIIntegration(Integration):
                         # Iterator interface
                         # ------------------------------------------------------------------
                         def __iter__(self):
+                            """Synchronous iterator that yields *every* chunk exactly as the OpenAI client returns it
+                            (perfect passthrough). We only use token-bearing chunks to compute latency and throughput
+                            metrics; role-only and usage chunks are forwarded untouched so caller semantics remain
+                            100 % compatible with the upstream SDK.
+                            """
+
                             try:
                                 for chunk in self._resp:
                                     # Usage-only chunks (statistics) have no choices
@@ -135,6 +141,8 @@ class OpenAIIntegration(Integration):
                                                     "outputTokens": usage.completion_tokens,
                                                 }
                                             )
+                                        # Passthrough – yield the usage chunk as-is
+                                        yield chunk
                                         continue
 
                                     # Content chunks -----------------------------------------------------
@@ -144,6 +152,8 @@ class OpenAIIntegration(Integration):
                                             self._first_token_time = time.time()
                                             span.attributes["latency"] = round(self._first_token_time - start_time, 4)
                                         self._full_response += delta.content  # type: ignore[attr-defined]
+
+                                    # Passthrough – always yield the chunk regardless of whether it had content
                                     yield chunk
                             except Exception as exc:
                                 span.set_error(
@@ -155,6 +165,15 @@ class OpenAIIntegration(Integration):
                             finally:
                                 self._stream_has_finished = True
                                 self._finalise_span()
+
+                            # ------------------------------------------------------------------
+                            # Async iterator interface – delegates to the sync iterator so that
+                            # callers can use either `for` or `async for` with the same semantics.
+                            # ------------------------------------------------------------------
+
+                        async def __aiter__(self):
+                            for chunk in self:
+                                yield chunk
 
                         # ------------------------------------------------------------------
                         # Attribute delegation – e.g. .get_final_completion()
