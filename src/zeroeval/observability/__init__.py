@@ -1,5 +1,5 @@
 # Observability package initialization
-from .decorators import span
 from .tracer import tracer
+from .decorators import span
 
-__all__ = ["span", "tracer"]
+__all__ = ["tracer", "span"]
