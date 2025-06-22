@@ -83,7 +83,6 @@ class span:
                 code = full_source
             
             self._span.set_code(code)
-            logger.debug(f"Captured code for span '{self.name}':\n---\n{code}\n---")
 
             # Set file context
             filepath = inspect.getsourcefile(func)
@@ -138,7 +137,6 @@ class span:
                     dedented_lines = [line[indentation:] for line in code_lines]
                     code = "\n".join(dedented_lines)
                     self._span.set_code(code)
-                    logger.debug(f"Captured code for span '{self.name}':\n---\n{code}\n---")
 
         except Exception:
             logger.debug("Failed to inspect frame context or parse source code.", exc_info=True)

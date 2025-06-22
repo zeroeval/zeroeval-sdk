@@ -7,6 +7,7 @@ from .writer import SpanWriter, SpanBackendWriter
 import uuid
 import logging
 import atexit
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,16 @@ class Tracer:
         self._max_spans: int = 100
         self._flush_lock = threading.Lock()
         self._integrations: Dict[str, Any] = {}
+        
+        # New config for integrations, read from environment variable first
+        self._integrations_config: Dict[str, bool] = {}
+        disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
+        if disabled_env:
+            disabled_names = {name.strip() for name in disabled_env.split(',') if name.strip()}
+            for name in disabled_names:
+                self._integrations_config[name] = False # Disable them
+            logger.info(f"Integrations disabled via environment variable: {disabled_names}")
+
         self.collect_code_details: bool = True
         self._shutdown_called: bool = False
         self._shutdown_lock = threading.Lock()
@@ -71,16 +82,22 @@ class Tracer:
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
         # Setup each available integration
         for integration_class in integration_classes:
+            integration_name = integration_class.__name__
+            # Check if integration is explicitly disabled in config. Default is enabled (None or True)
+            if self._integrations_config.get(integration_name) is False:
+                logger.info(f"Skipping disabled integration as per configuration: {integration_name}")
+                continue
+            
             if integration_class.is_available():
                 try:
-                    logger.info(f"Setting up integration: {integration_class.__name__}")
+                    logger.info(f"Setting up integration: {integration_name}")
                     integration = integration_class(self)
                     integration.setup()
-                    self._integrations[integration_class.__name__] = integration
+                    self._integrations[integration_name] = integration
                 except Exception:
-                    logger.error(f"Failed to set up integration {integration_class.__name__}", exc_info=True)
+                    logger.error(f"Failed to set up integration {integration_name}", exc_info=True)
             else:
-                logger.info(f"Integration not available: {integration_class.__name__}")
+                logger.info(f"Integration not available: {integration_name}")
         
         if self._integrations:
             logger.info(f"Active integrations: {list(self._integrations.keys())}")
@@ -138,7 +155,8 @@ class Tracer:
     def configure(self, 
                   flush_interval: Optional[float] = None,
                   max_spans: Optional[int] = None,
-                  collect_code_details: Optional[bool] = None) -> None:
+                  collect_code_details: Optional[bool] = None,
+                  integrations: Optional[Dict[str, bool]] = None) -> None:
         """Configure the tracer with custom settings."""
         if flush_interval is not None:
             self._flush_interval = flush_interval
@@ -149,6 +167,11 @@ class Tracer:
         if collect_code_details is not None:
             self.collect_code_details = collect_code_details
             logger.info(f"Tracer collect_code_details configured to {collect_code_details}.")
+        if integrations is not None:
+            # Note: this will not re-setup integrations if they are already active.
+            # This configuration should ideally be called before integrations are used.
+            self._integrations_config.update(integrations)
+            logger.info(f"Tracer integrations configured to: {self._integrations_config}")
     
     def start_span(
         self,
