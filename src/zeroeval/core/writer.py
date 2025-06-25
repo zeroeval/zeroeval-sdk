@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 # Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
-API_URL = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
+API_URL = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com")
 
 
 class DatasetWriter(ABC):

@@ -32,7 +32,8 @@ class ColoredFormatter(logging.Formatter):
 def init(
     api_key: str = None, 
     workspace_name: str = "Personal Workspace",
-    debug: bool = False
+    debug: bool = False,
+    api_url: str = "https://api.zeroeval.com"
 ):
     """
     Initialize the ZeroEval SDK.
@@ -43,11 +44,13 @@ def init(
         debug (bool, optional): If True, enables detailed logging for debugging. 
                                 Can also be enabled by setting the ZEROEVAL_DEBUG=true 
                                 environment variable.
+        api_url (str, optional): The URL of the ZeroEval API.
     """
     os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
     if api_key:
         os.environ["ZEROEVAL_API_KEY"] = api_key
-
+    if api_url:
+        os.environ["ZEROEVAL_API_URL"] = api_url    
     # Configure logging
     logger = logging.getLogger("zeroeval")
     
