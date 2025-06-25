@@ -134,7 +134,13 @@ with span(
 ):
     print("Streaming events:")
     current_span = ze.get_current_span()
+    trace_id = ze.get_current_trace()
+    session_id = ze.get_current_session()
+
+    # Attach tags using new helper utilities
     ze.set_tag(current_span, {"unique": "stream_root"})
+    ze.set_tag(trace_id, {"run_type": "stream"})
+    ze.set_tag(session_id, {"env": "local"})
 
     for event in app.stream({"messages": [HumanMessage(content="Stream test")]}):
         node_name = list(event.keys())[0] if event else "unknown"

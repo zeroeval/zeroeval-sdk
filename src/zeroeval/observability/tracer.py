@@ -240,12 +240,15 @@ class Tracer:
             inherited.update(span.tags)  # Child overrides duplicates
             span.tags = inherited
 
-        # Apply any accumulated trace-level tags
+        # Ensure span.trace_tags/session_tags include any previously registered tags
         if span.trace_id in self._trace_level_tags:
-            span.tags.update(self._trace_level_tags[span.trace_id])
-        # Apply any accumulated session-level tags
+            inherited_tags = self._trace_level_tags[span.trace_id]
+            span.trace_tags.update(inherited_tags)
+            span.tags.update(inherited_tags)
         if span.session_id and span.session_id in self._session_level_tags:
-            span.tags.update(self._session_level_tags[span.session_id])
+            inherited_sess = self._session_level_tags[span.session_id]
+            span.session_tags.update(inherited_sess)
+            span.tags.update(inherited_sess)
         
         # Add this span to the stack for this thread
         self._active_spans[thread_id].append(span)
@@ -348,10 +351,12 @@ class Tracer:
         for stack in self._active_spans.values():
             for sp in stack:
                 if sp.trace_id == trace_id:
+                    sp.trace_tags.update(tags)
                     sp.tags.update(tags)
         # Update buffered/completed spans
         if trace_id in self._trace_buckets:
             for sdict in self._trace_buckets[trace_id]:
+                sdict["trace_tags"] = {**sdict.get("trace_tags", {}), **tags}
                 sdict["tags"] = {**sdict.get("tags", {}), **tags}
 
     def add_session_tags(self, session_id: str, tags: Dict[str, str]):
@@ -363,11 +368,13 @@ class Tracer:
         for stack in self._active_spans.values():
             for sp in stack:
                 if sp.session_id == session_id:
+                    sp.session_tags.update(tags)
                     sp.tags.update(tags)
         # Update buffered/completed spans
         for bucket in self._trace_buckets.values():
             for sdict in bucket:
                 if sdict.get("session_id") == session_id:
+                    sdict["session_tags"] = {**sdict.get("session_tags", {}), **tags}
                     sdict["tags"] = {**sdict.get("tags", {}), **tags}
 
     def is_active_trace(self, trace_id: str) -> bool:
