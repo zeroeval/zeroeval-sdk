@@ -25,7 +25,7 @@ class SpanBackendWriter(SpanWriter):
 
     def __init__(self) -> None:
         """Initialize the writer with an API URL and optional API key."""
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        self.api_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000").rstrip("/")
 
     def _get_api_key(self) -> str:
         """Get the API key from environment, supporting lazy loading after ze.init()."""
@@ -51,11 +51,14 @@ class SpanBackendWriter(SpanWriter):
                 # Prepare session data if session_name is provided
                 session_data = None
                 if span.get("session_id"):
-                    if span.get("session_name"):
+                    if span.get("session_name") or span.get("session_tags"):
                         session_data = {
                             "id": span["session_id"],
-                            "name": span["session_name"]
+                            "name": span.get("session_name"),
                         }
+                        # Attach tags if provided
+                        if span.get("session_tags"):
+                            session_data["tags"] = span["session_tags"]
                 
                 formatted_span = {
                     "id": span["span_id"],
@@ -76,7 +79,10 @@ class SpanBackendWriter(SpanWriter):
                     "error_code": span.get("error_code"),
                     "error_message": span.get("error_message"),
                     "error_stack": error_stack,
-                    "experiment_result_id": span.get("experiment_result_id")
+                    "experiment_result_id": span.get("experiment_result_id"),
+                    "tags": span.get("tags", {}),
+                    "trace_tags": span.get("trace_tags", {}),
+                    "session_tags": span.get("session_tags", {})
                 }
                 
                 # Add session object if we have session name

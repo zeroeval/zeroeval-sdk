@@ -40,13 +40,15 @@ class span:
         session: Optional[Union[str, Dict[str, str]]] = None,
         attributes: Optional[Dict[str, Any]] = None,
         input_data: Optional[str] = None,
-        output_data: Optional[str] = None
+        output_data: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None
     ):
         self.name = name
         self.attributes = attributes or {}
         self.manual_input = input_data
         self.manual_output = output_data
         self._span = None
+        self._tags = tags or {}
         
         # Handle session parameter - support both legacy and new format
         self._session_id = None
@@ -227,7 +229,8 @@ class span:
             name=self.name, 
             attributes=self.attributes,
             session_id=self._session_id,
-            session_name=self._session_name
+            session_name=self._session_name,
+            tags=self._tags
         )
         
         if tracer.collect_code_details:

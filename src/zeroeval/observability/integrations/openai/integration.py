@@ -98,6 +98,7 @@ class OpenAIIntegration(Integration):
                     "messages": self._serialize_messages(kwargs.get("messages")),
                     "streaming": is_streaming,
                 },
+                tags={"integration": "openai"},
             )
             tracer = self.tracer
 
@@ -115,7 +116,7 @@ class OpenAIIntegration(Integration):
                         try:
                             async for chunk in response:
                                 #
-                                # 1️⃣  “meta” packets with neither `choices` nor `usage`
+                                # 1️⃣  "meta" packets with neither `choices` nor `usage`
                                 #     (e.g.   {"event":"message_start", ...} )
                                 #
                                 if not getattr(chunk, "choices", None) and not getattr(chunk, "usage", None):
@@ -220,6 +221,7 @@ class OpenAIIntegration(Integration):
                     "messages": self._serialize_messages(kwargs.get("messages")),
                     "streaming": is_streaming,
                 },
+                tags={"integration": "openai"},
             )
             tracer = self.tracer
 

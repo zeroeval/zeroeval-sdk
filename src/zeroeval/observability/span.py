@@ -32,6 +32,11 @@ class Span:
     error_message: Optional[str] = None
     error_stack: Optional[str] = None
     status: str = "ok"
+    tags: Dict[str, str] = field(default_factory=dict)
+    # Optional tags that should be applied to the owning trace and/or session when this
+    # span is ingested. These will be processed by the backend ingestion service.
+    trace_tags: Dict[str, str] = field(default_factory=dict)
+    session_tags: Dict[str, str] = field(default_factory=dict)
 
     def end(self) -> None:
         """Mark the span as completed with the current timestamp."""
@@ -84,6 +89,9 @@ class Span:
             "end_time": self.end_time,
             "duration_ms": self.duration_ms,
             "attributes": self.attributes,
+            "tags": self.tags,
+            "trace_tags": self.trace_tags,
+            "session_tags": self.session_tags,
             "input_data": self.input_data,
             "output_data": self.output_data,
             "code": self.code,  # Added code field

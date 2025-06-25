@@ -252,7 +252,8 @@ class LangGraphIntegration(Integration):
                         "kind": "node",
                         "node_name": node_name,
                         "graph_id": getattr(pregel_self, "graph_id", None),
-                    }
+                    },
+                    tags={"integration": "langgraph"}
                 )
                 
                 if parent_span:
@@ -297,7 +298,8 @@ class LangGraphIntegration(Integration):
                         "kind": "node", 
                         "node_name": node_name,
                         "graph_id": getattr(pregel_self, "graph_id", None),
-                    }
+                    },
+                    tags={"integration": "langgraph"}
                 )
                 
                 if parent_span:
@@ -344,7 +346,8 @@ class LangGraphIntegration(Integration):
                     "service.name": "langgraph",
                     "kind": "checkpoint",
                     "operation": "save",
-                }
+                },
+                tags={"integration": "langgraph"}
             )
             
             start_time = time.time()
@@ -375,7 +378,8 @@ class LangGraphIntegration(Integration):
                     "service.name": "langgraph",
                     "kind": "checkpoint",
                     "operation": "load",
-                }
+                },
+                tags={"integration": "langgraph"}
             )
             
             start_time = time.time()
@@ -504,7 +508,7 @@ class LangGraphIntegration(Integration):
             if metadata.get("nodes"):
                 attributes["nodes"] = ",".join(metadata["nodes"][:10])  # Limit to first 10
 
-        return self.tracer.start_span(name=f"langgraph.{method_name}", attributes=attributes)
+        return self.tracer.start_span(name=f"langgraph.{method_name}", attributes=attributes, tags={"integration": "langgraph"})
 
     def _finalise_span(self, span, start_time: float, args, kwargs, output):  # noqa: ANN001
         elapsed = time.time() - start_time

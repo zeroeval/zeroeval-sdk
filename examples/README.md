@@ -88,7 +88,7 @@ cd sdk/
 pip install -e .
 
 # Set your backend URL (if different from default)
-export API_URL="https://api.zeroeval.com"
+export API_URL="http://localhost:8000"
 export API_KEY="your-api-key"  # Optional, for authentication
 ```
 
@@ -235,7 +235,7 @@ tracer.configure(
 ### Environment Variables
 
 ```bash
-# Backend URL (default: https://api.zeroeval.com)
+# Backend URL (default: http://localhost:8000)
 export API_URL="https://your-backend.com"
 
 # API Key for authentication (optional)

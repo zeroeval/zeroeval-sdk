@@ -59,7 +59,7 @@ class _BackendWriter:
     """Base class for backend writers to handle authentication."""
 
     def __init__(self):
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        self.api_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000").rstrip("/")
         self._api_key: Optional[str] = None
         self._workspace_id: Optional[str] = None
         self._headers: Optional[Dict[str, str]] = None
