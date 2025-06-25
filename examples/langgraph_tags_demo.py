@@ -83,7 +83,6 @@ with span(
     session=SESSION_INFO,
     tags={**DEMO_TAGS, "run": "invoke"},
 ):
-    # Inject runtime tags before executing the graph
     root_span = ze.get_current_span()
     ze.set_tag(root_span, {"phase": "pre-run"})
     ze.set_tag(ze.get_current_trace(), {"run_mode": "invoke"})
