@@ -1,6 +1,7 @@
 """Test LangGraph Tracing - Demonstrates the trace hierarchy"""
 
 import time
+import uuid
 from typing import TypedDict, Annotated
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langgraph.graph import StateGraph, START, END
@@ -13,7 +14,20 @@ from zeroeval.observability.decorators import span
 
 # Configure tracer
 tracer.configure(flush_interval=1.0, max_spans=100)
-ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
+ze.init(api_key="sk_ze_LIE7c4w3D7AasfKzzr-Qcff1Ts3R9d580HW5WjHf2HU")
+
+# ---------------------------------------------------------------------------
+# Global tags & session setup for this demo
+# ---------------------------------------------------------------------------
+# Project-level / example-level tags that we want on *every* span.
+GLOBAL_TAGS = {
+    "example": "test_langgraph_tracing",
+    "project": "zeroeval",
+}
+
+# Create a shared session so all spans are grouped together.
+SESSION_ID = str(uuid.uuid4())
+SESSION_INFO = {"id": SESSION_ID, "name": "LangGraph Tracing Test"}
 
 print("🔍 LangGraph Tracing Test")
 print("=" * 60)
@@ -29,13 +43,21 @@ class GraphState(TypedDict):
     counter: int
 
 # Nodes with manual spans to show hierarchy
-@span(name="custom.process_message")
+@span(
+    name="custom.process_message",
+    session=SESSION_INFO,
+    tags={**GLOBAL_TAGS, "node": "process", "graph": "simple_demo", "env": "local", "team": "dev"},
+)
 def process_message(state: GraphState) -> GraphState:
     """First node - processes the message"""
     print("  → Processing message...")
     time.sleep(0.1)  # Simulate work
     
-    with span(name="custom.extract_info"):
+    with span(
+        name="custom.extract_info",
+        session=SESSION_INFO,
+        tags={**GLOBAL_TAGS, "operation": "extract_info"},
+    ):
         # Nested span to show hierarchy
         message_content = state["messages"][-1].content
         print(f"    Extracted: '{message_content}'")
@@ -45,7 +67,11 @@ def process_message(state: GraphState) -> GraphState:
         "counter": state.get("counter", 0) + 1
     }
 
-@span(name="custom.enhance_message")
+@span(
+    name="custom.enhance_message",
+    session=SESSION_INFO,
+    tags={**GLOBAL_TAGS, "node": "enhance", "graph": "simple_demo"},
+)
 def enhance_message(state: GraphState) -> GraphState:
     """Second node - enhances the processed message"""
     print("  → Enhancing message...")
@@ -85,7 +111,11 @@ print("✅ Graph compiled")
 # Test 1: Invoke
 print("\n🚀 Test 1: Graph Invocation")
 print("-" * 40)
-with span(name="test.invoke_workflow"):
+with span(
+    name="test.invoke_workflow",
+    session=SESSION_INFO,
+    tags={**GLOBAL_TAGS, "operation": "invoke", "run_type": "invoke", "env": "local"},
+):
     result = app.invoke({
         "messages": [HumanMessage(content="Hello, LangGraph!")],
         "counter": 0
@@ -97,8 +127,21 @@ print(f"Final message: {result['messages'][-1].content}")
 # Test 2: Stream
 print("\n\n🚀 Test 2: Graph Streaming")
 print("-" * 40)
-with span(name="test.stream_workflow"):
+with span(
+    name="test.stream_workflow",
+    session=SESSION_INFO,
+    tags={**GLOBAL_TAGS, "operation": "stream"},
+):
     print("Streaming events:")
+    current_span = ze.get_current_span()
+    trace_id = ze.get_current_trace()
+    session_id = ze.get_current_session()
+
+    # Attach tags using new helper utilities
+    ze.set_tag(current_span, {"unique": "stream_root"})
+    ze.set_tag(trace_id, {"run_type": "stream"})
+    ze.set_tag(session_id, {"env": "local"})
+
     for event in app.stream({"messages": [HumanMessage(content="Stream test")]}):
         node_name = list(event.keys())[0] if event else "unknown"
         if node_name not in ["__root__", "messages"]:

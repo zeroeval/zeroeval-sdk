@@ -18,6 +18,7 @@ import asyncio
 from typing import TypedDict, Annotated, List, Dict, Literal, Optional
 from datetime import datetime
 import json
+import uuid
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage
@@ -38,6 +39,15 @@ ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
 
 # Set up API keys
 os.environ.setdefault("OPENAI_API_KEY", "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")
+
+
+# -----------------------------------------------------------------------------
+# ZeroEval tagging/demo configuration
+# -----------------------------------------------------------------------------
+GLOBAL_TAGS: Dict[str, str] = {"demo": "langgraph", "project": "zeroeval", "agent": "web_research"}
+SESSION_ID = str(uuid.uuid4())
+SESSION_META = {"id": SESSION_ID, "name": "Web Research Agent Session"}
+# -----------------------------------------------------------------------------
 
 
 # -----------------------------------------------------------------------------
@@ -122,7 +132,8 @@ except:
 # -----------------------------------------------------------------------------
 # Node Definitions
 # -----------------------------------------------------------------------------
-@span(name="agent.analyze_query")
+@span(name="agent.analyze_query", session=SESSION_META,
+      tags={**GLOBAL_TAGS, "stage": "analyze"})
 def analyze_query_node(state: ResearchState) -> ResearchState:
     """Analyze the user query and plan search strategy."""
     query = state["messages"][-1].content if state["messages"] else state.get("query", "")
@@ -143,7 +154,8 @@ def analyze_query_node(state: ResearchState) -> ResearchState:
     }
 
 
-@span(name="agent.search_web") 
+@span(name="agent.search_web", session=SESSION_META,
+      tags={**GLOBAL_TAGS, "stage": "search"}) 
 def search_node(state: ResearchState) -> ResearchState:
     """Execute web searches based on the search plan."""
     search_results = state.get("search_results", [])
@@ -183,7 +195,8 @@ def search_node(state: ResearchState) -> ResearchState:
     }
 
 
-@span(name="agent.evaluate_results")
+@span(name="agent.evaluate_results", session=SESSION_META,
+      tags={**GLOBAL_TAGS, "stage": "evaluate"})
 def evaluate_results_node(state: ResearchState) -> ResearchState:
     """Evaluate search results and extract relevant information."""
     all_sources = []
@@ -208,7 +221,8 @@ def evaluate_results_node(state: ResearchState) -> ResearchState:
     }
 
 
-@span(name="agent.synthesize")
+@span(name="agent.synthesize", session=SESSION_META,
+      tags={**GLOBAL_TAGS, "stage": "synthesize"})
 def synthesize_node(state: ResearchState) -> ResearchState:
     """Synthesize findings into a comprehensive answer."""
     query = state.get("query", "")
@@ -311,6 +325,10 @@ app = workflow.compile(checkpointer=checkpointer)
 # -----------------------------------------------------------------------------
 # Example Usage
 # -----------------------------------------------------------------------------
+@span(name="research_demo", session=SESSION_META,
+      tags={**GLOBAL_TAGS, "operation": "research_demo"},
+      trace_tags={"run_type": "demo"},
+      session_tags={"env": "dev"})
 async def research_demo():
     """Demonstrate the research agent with different queries."""
     

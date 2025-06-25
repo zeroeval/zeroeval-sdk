@@ -12,13 +12,16 @@ import zeroeval as ze
 from zeroeval.observability.tracer import tracer
 from zeroeval.observability.decorators import span
 
+# Common demo tags
+GLOBAL_TAGS = {"demo": "langgraph", "project": "zeroeval"}
+
 # -----------------------------------------------------------------------------
 # SDK & tracer configuration (⚙️ tweak as needed)
 # -----------------------------------------------------------------------------
 tracer.configure(flush_interval=1.0, max_spans=50)
 
 # Your ZeroEval API key – replace with a real one for production usage.
-ze.init(api_key="sk_ze_cZisn1v8ix9EZVxFt-JiFFisfqiwddAmAxj2wedGcC8")
+ze.init(api_key="sk_ze_CjaC7em5s-XKFWPLkMDe-0ITQXlm17oRIrLOK9QcJ6I")
 
 # Generate a session ID for this run
 session_id = str(uuid.uuid4())
@@ -70,7 +73,8 @@ CHAT_MODEL = _init_chat_model()
 # -----------------------------------------------------------------------------
 
 
-@span(name="call_llm_node", session={"id": session_id, "name": "LangGraph Demo Session"})
+@span(name="call_llm_node", session={"id": session_id, "name": "LangGraph Demo Session"},
+      tags={**GLOBAL_TAGS, "node": "llm", "provider": "openai"})
 def call_llm(state: MessagesState):
     """Simple node that calls an LLM (sync)."""
     if CHAT_MODEL is None:
@@ -84,7 +88,8 @@ def call_llm(state: MessagesState):
     return {"messages": [response]}
 
 
-@span(name="finish_node", session={"id": session_id, "name": "LangGraph Demo Session"})
+@span(name="finish_node", session={"id": session_id, "name": "LangGraph Demo Session"},
+      tags={**GLOBAL_TAGS, "node": "finish"})
 def finish(state: MessagesState):
     """Terminal node – just returns the current state."""
     return {}
@@ -111,7 +116,10 @@ if __name__ == "__main__":
     user_input = input("Ask something: ") or "Hello LangGraph!"
 
     # Sync run ---------------------------------------------------------------
-    @span(name="sync_invoke", session={"id": session_id, "name": "LangGraph Demo Session"})
+    @span(name="sync_invoke", session={"id": session_id, "name": "LangGraph Demo Session"},
+          tags={**GLOBAL_TAGS, "operation": "sync_invoke"},
+          trace_tags={"run_type": "sync"},
+          session_tags={"env": "dev"})
     def run_sync():
         result = app.invoke({"messages": [HumanMessage(content=user_input)]})
         print("\nSync result:\n", result["messages"][-1].content)
@@ -120,7 +128,9 @@ if __name__ == "__main__":
     run_sync()
 
     # Async run --------------------------------------------------------------
-    @span(name="async_invoke", session={"id": session_id, "name": "LangGraph Demo Session"})
+    @span(name="async_invoke", session={"id": session_id, "name": "LangGraph Demo Session"},
+          tags={**GLOBAL_TAGS, "operation": "async_invoke"},
+          trace_tags={"run_type": "async"})
     async def async_run():
         out = await app.ainvoke({"messages": [HumanMessage(content="Async hi!")]})
         print("\nAsync result:\n", out["messages"][-1].content)
@@ -128,7 +138,9 @@ if __name__ == "__main__":
     asyncio.run(async_run())
 
     # Stream run -------------------------------------------------------------
-    @span(name="stream_invoke", session={"id": session_id, "name": "LangGraph Demo Session"})
+    @span(name="stream_invoke", session={"id": session_id, "name": "LangGraph Demo Session"},
+          tags={**GLOBAL_TAGS, "operation": "stream_invoke"},
+          trace_tags={"run_type": "stream"})
     def run_stream():
         print("\nStreaming tokens:")
         for chunk in app.stream(
