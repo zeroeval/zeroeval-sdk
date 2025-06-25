@@ -305,7 +305,7 @@ class LangChainIntegration(Integration):
                 if k in kwargs:
                     attributes[k] = kwargs[k]
 
-        return self.tracer.start_span(name=f"langchain.{method_name}", attributes=attributes)
+        return self.tracer.start_span(name=f"langchain.{method_name}", attributes=attributes, tags={"integration": "langchain"})
 
     def _finalise_span(self, span, start_time: float, args, kwargs, output):  # noqa: ANN001
         """Attach IO + latency + throughput then close span."""
