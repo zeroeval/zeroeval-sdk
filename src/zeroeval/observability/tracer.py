@@ -52,6 +52,10 @@ class Tracer:
         self._shutdown_called: bool = False
         self._shutdown_lock = threading.Lock()
         
+        # New containers for trace- and session-level tags
+        self._trace_level_tags: Dict[str, Dict[str, str]] = {}
+        self._session_level_tags: Dict[str, Dict[str, str]] = {}
+        
         logger.info("Initializing tracer...")
         logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}")
 
@@ -178,7 +182,10 @@ class Tracer:
         name: str,
         attributes: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
-        session_name: Optional[str] = None
+        session_name: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+        trace_tags: Optional[Dict[str, str]] = None,
+        session_tags: Optional[Dict[str, str]] = None
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
         if self.is_shutting_down():
@@ -213,7 +220,10 @@ class Tracer:
             parent_id=parent_span.span_id if parent_span else None,
             attributes=attributes or {},
             session_id=final_session_id,
-            session_name=final_session_name
+            session_name=final_session_name,
+            tags=tags or {},
+            trace_tags=trace_tags or {},
+            session_tags=session_tags or {}
         )
         
         logger.info(f"Starting span: {span.name}")
@@ -221,6 +231,21 @@ class Tracer:
         # If there's a parent span, both spans should share the same trace ID
         if parent_span:
             span.trace_id = parent_span.trace_id
+        
+        # ---------------------------------------------------------------
+        # Inherit/bubble tags from parent span, trace-level, session-level
+        # ---------------------------------------------------------------
+        if parent_span:
+            inherited = parent_span.tags.copy()
+            inherited.update(span.tags)  # Child overrides duplicates
+            span.tags = inherited
+
+        # Apply any accumulated trace-level tags
+        if span.trace_id in self._trace_level_tags:
+            span.tags.update(self._trace_level_tags[span.trace_id])
+        # Apply any accumulated session-level tags
+        if span.session_id and span.session_id in self._session_level_tags:
+            span.tags.update(self._session_level_tags[span.session_id])
         
         # Add this span to the stack for this thread
         self._active_spans[thread_id].append(span)
@@ -304,6 +329,50 @@ class Tracer:
                 if self._spans:
                     logger.info(f"Periodic flush triggered after {self._flush_interval}s interval.")
                     self.flush()
+
+    def current_span(self) -> Optional[Span]:
+        """Return the current active span for this thread, if any."""
+        thread_id = threading.get_ident()
+        stack = self._active_spans.get(thread_id)
+        return stack[-1] if stack else None
+
+    # ------------------------------------------------------------------
+    # Tag helpers (trace / session level)
+    # ------------------------------------------------------------------
+    def add_trace_tags(self, trace_id: str, tags: Dict[str, str]):
+        """Attach *tags* to an entire trace (root + all children, past & future)."""
+        if not tags:
+            return
+        self._trace_level_tags.setdefault(trace_id, {}).update(tags)
+        # Update active spans
+        for stack in self._active_spans.values():
+            for sp in stack:
+                if sp.trace_id == trace_id:
+                    sp.tags.update(tags)
+        # Update buffered/completed spans
+        if trace_id in self._trace_buckets:
+            for sdict in self._trace_buckets[trace_id]:
+                sdict["tags"] = {**sdict.get("tags", {}), **tags}
+
+    def add_session_tags(self, session_id: str, tags: Dict[str, str]):
+        """Attach *tags* to every span within a session."""
+        if not tags:
+            return
+        self._session_level_tags.setdefault(session_id, {}).update(tags)
+        # Update active spans
+        for stack in self._active_spans.values():
+            for sp in stack:
+                if sp.session_id == session_id:
+                    sp.tags.update(tags)
+        # Update buffered/completed spans
+        for bucket in self._trace_buckets.values():
+            for sdict in bucket:
+                if sdict.get("session_id") == session_id:
+                    sdict["tags"] = {**sdict.get("tags", {}), **tags}
+
+    def is_active_trace(self, trace_id: str) -> bool:
+        """Return True if *trace_id* is known to the tracer."""
+        return trace_id in self._trace_counts or trace_id in self._trace_buckets
 
 
 # Create the global tracer instance
