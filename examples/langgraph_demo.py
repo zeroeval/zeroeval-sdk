@@ -21,7 +21,7 @@ GLOBAL_TAGS = {"demo": "langgraph", "project": "zeroeval"}
 tracer.configure(flush_interval=1.0, max_spans=50)
 
 # Your ZeroEval API key – replace with a real one for production usage.
-ze.init(api_key="sk_ze_CjaC7em5s-XKFWPLkMDe-0ITQXlm17oRIrLOK9QcJ6I")
+ze.init(api_key="sk_ze_V12rPuG8k2ee9uWg0p-wksm3b3h9tDgkR7nWZtxVy24")
 
 # Generate a session ID for this run
 session_id = str(uuid.uuid4())

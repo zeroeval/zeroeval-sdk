@@ -10,8 +10,8 @@ if TYPE_CHECKING:
     from .evaluator_class import Evaluator, Evaluation
 
 
-# Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
-API_URL = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
+# Default to production API; for local dev set BACKEND_URL env var to "http://localhost:8000" (or another URL)
+API_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 
 
 class DatasetWriter(ABC):
@@ -59,7 +59,7 @@ class _BackendWriter:
     """Base class for backend writers to handle authentication."""
 
     def __init__(self):
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        self.api_url = os.environ.get("ZEROEVAL_API_URL", "http://localhost:8000").rstrip("/")
         self._api_key: Optional[str] = None
         self._workspace_id: Optional[str] = None
         self._headers: Optional[Dict[str, str]] = None
@@ -148,11 +148,23 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
 
             endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{res.experiment_id}/results"
             payload = {
-                "dataset_row_id": res.row_id or "",
+                # Ensure dataset_row_id is present and valid UUID reference if available
+                # If row_id is missing, experiment results cannot be persisted because of
+                # the NOT NULL constraint and FK on the backend. In such cases, raise
+                # a clear error early instead of sending an empty string (which
+                # violates UUID syntax).
+                "dataset_row_id": res.row_id,
                 "result": str(res.result),
                 "result_type": "text",
                 "trace_id": res.trace_id if res.trace_id else "",
             }
+
+            if payload["dataset_row_id"] is None:
+                raise ValueError(
+                    "Dataset row_id is missing for ExperimentResult. Ensure the dataset is pushed "
+                    "and row identifiers are resolved before running experiments."
+                )
+
             try:
                 response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
@@ -251,6 +263,35 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
         dataset._version_id = version_info["id"]
         dataset._version_number = version_info["version_number"]
 
+        # -----------------------------------------------------------
+        # Fetch the newly created rows so we can map backend row_id's
+        # back onto the in-memory Dataset instance. This is required
+        # for experiments to reference dataset_row_id when persisting
+        # ExperimentResults.
+        # -----------------------------------------------------------
+        try:
+            rows_resp = requests.get(
+                f"{self.api_url}/workspaces/{self._workspace_id}/datasets/{dataset_id}/data",
+                params={"version_id": dataset._version_id, "limit": len(dataset._get_all_full_rows()), "offset": 0},
+                headers=self._headers,
+            )
+            rows_resp.raise_for_status()
+            rows_payload = rows_resp.json()
+
+            backend_rows = rows_payload.get("rows", [])
+
+            # Ensure we have same number of rows; if mismatch, skip mapping.
+            if len(backend_rows) == len(dataset._get_all_full_rows()):
+                for idx, backend_row in enumerate(backend_rows):
+                    row_id = backend_row.get("row_id")
+                    row_data = backend_row.get("data")
+
+                    # Replace local row with structure containing row_id and data.
+                    dataset._data[idx] = {"row_id": row_id, "data": row_data}
+        except requests.RequestException:
+            # If we fail to fetch rows, leave dataset._data untouched.
+            pass
+
     def _handle_http_error(self, error: requests.HTTPError) -> None:
         """Handle common HTTP errors with appropriate messages."""
         if error.response.status_code in (401, 403):
@@ -309,11 +350,16 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
 
             payload = {
                 "evaluator_id": evaluator_id,
-                "dataset_row_id": evaluation.dataset_row_id or "",
+                "dataset_row_id": evaluation.dataset_row_id,
                 "experiment_result_id": evaluation.experiment_result_id,
                 "evaluation_value": str(evaluation.result),
                 "evaluation_type": "text",  # Default to text type
             }
+
+            if payload["dataset_row_id"] is None:
+                raise ValueError(
+                    "Dataset row_id is missing for Evaluation. Ensure ExperimentResults have row identifiers before writing evaluations."
+                )
 
             try:
                 endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"

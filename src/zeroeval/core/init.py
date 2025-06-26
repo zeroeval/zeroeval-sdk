@@ -33,7 +33,7 @@ def init(
     api_key: str = None, 
     workspace_name: str = "Personal Workspace",
     debug: bool = False,
-    api_url: str = "https://api.zeroeval.com"
+    api_url: str = "http://localhost:8000"
 ):
     """
     Initialize the ZeroEval SDK.

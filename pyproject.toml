@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "zeroeval"
-version = "0.2.4"
+version = "0.2.7"
 description = "ZeroEval SDK"
 repository = "https://github.com/zeroeval"
 keywords = ["evaluation", "LLM", "observability"]
