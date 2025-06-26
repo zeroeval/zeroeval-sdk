@@ -1,6 +1,6 @@
 import zeroeval as ze
 
-ze.init(api_key="sk_ze_kaKGNsyBh4pdlQ3Zr0L7uvyzPMvsng-md7Qj3_34lJ0", api_url="http://localhost:8000")
+ze.init(api_key="sk_ze_kaKGNsyBh4pdlQ3Zr0L7uvyzPMvsng-md7Qj3_34lJ0", api_url="https://api.zeroeval.com")
 
 dataset = ze.Dataset(
     name="Capitals (Complete)",
