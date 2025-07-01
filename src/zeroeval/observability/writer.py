@@ -25,7 +25,13 @@ class SpanBackendWriter(SpanWriter):
 
     def __init__(self) -> None:
         """Initialize the writer with an API URL and optional API key."""
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        # Don't read API URL at init time - read it lazily at write time
+        # This allows ze.init() to set the environment variable first
+        pass
+
+    def _get_api_url(self) -> str:
+        """Get the API URL from environment, supporting lazy loading after ze.init()."""
+        return os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
 
     def _get_api_key(self) -> str:
         """Get the API key from environment, supporting lazy loading after ze.init()."""
@@ -34,12 +40,14 @@ class SpanBackendWriter(SpanWriter):
     def write(self, spans: List[Dict[str, Any]]) -> None:
         """
         Write a batch of spans to the '/spans' endpoint, ensuring the payload
-        matches the backend's expected schema.
+        matches the backend's expected schema. This writer is intentionally simple,
+        sending spans as they are received from the tracer's buffer.
         """
         if not spans:
             return
 
-        # Get API key at write time (after ze.init() has been called)
+        # Get API URL and key at write time
+        api_url = self._get_api_url()
         api_key = self._get_api_key()
 
         formatted_spans = []
@@ -48,7 +56,7 @@ class SpanBackendWriter(SpanWriter):
                 # Convert traceback object to string if present
                 error_stack = str(span.get("error_stack")) if span.get("error_stack") else None
                 
-                # Prepare session data if session_name is provided
+                # Prepare session data if session_name or session_tags are provided
                 session_data = None
                 if span.get("session_id"):
                     if span.get("session_name") or span.get("session_tags"):
@@ -85,7 +93,7 @@ class SpanBackendWriter(SpanWriter):
                     "session_tags": span.get("session_tags", {})
                 }
                 
-                # Add session object if we have session name
+                # Add session object if we have session name or tags
                 if session_data:
                     formatted_span["session"] = session_data
                 formatted_spans.append(formatted_span)
@@ -97,7 +105,7 @@ class SpanBackendWriter(SpanWriter):
             logger.info("No spans to write after formatting.")
             return
 
-        endpoint = f"{self.api_url}/spans"
+        endpoint = f"{api_url}/spans"
         headers = {
             "Content-Type": "application/json",
         }
@@ -105,9 +113,6 @@ class SpanBackendWriter(SpanWriter):
             headers["Authorization"] = f"Bearer {api_key}"
 
         logger.info(f"Sending {len(formatted_spans)} spans to {endpoint}")
-        # Debug: log the first span to see what's being sent
-        if formatted_spans:
-            logger.info(f"First span being sent: {json.dumps(formatted_spans[0], indent=2)}")
         try:
             response = requests.post(endpoint, headers=headers, json=formatted_spans, timeout=10)
             response.raise_for_status()

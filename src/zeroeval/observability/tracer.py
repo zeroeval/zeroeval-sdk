@@ -8,16 +8,30 @@ import uuid
 import logging
 import atexit
 import os
+from dataclasses import dataclass, field
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Trace:
+    """Represents a collection of spans and metadata for a single trace."""
+    trace_id: str
+    spans: List[Dict[str, Any]] = field(default_factory=list)
+    ref_count: int = 0
 
 
 class Tracer:
     """
     Singleton tracer that manages spans, buffering, and flushing to writers.
+    Spans are flushed periodically or when the buffer is full, without waiting
+    for traces to complete, enabling real-time streaming.
     """
     _instance = None
     _lock = threading.Lock()
+    
+    _active_spans_ctx: ContextVar[List[Span]] = ContextVar("active_spans", default=[])
     
     def __new__(cls):
         with cls._lock:
@@ -29,17 +43,16 @@ class Tracer:
     def _initialize(self) -> None:
         """Initialize the tracer's internal state and register for graceful shutdown."""
         self._spans: List[Dict[str, Any]] = []
-        self._active_spans: Dict[int, List[Span]] = {}
-        self._trace_buckets: Dict[str, List[Dict[str, Any]]] = {}
-        self._trace_counts: Dict[str, int] = {}
+        self._active_spans: Dict[str, List[Span]] = {}  # For legacy/compatibility
+        self._traces: Dict[str, Trace] = {}  # Replaces _trace_buckets and _trace_counts
         self._last_flush_time = time.time()
         self._writer: SpanWriter = SpanBackendWriter()
-        self._flush_interval: float = 10.0
-        self._max_spans: int = 100
+        self._flush_interval: float = 1.0  # Flush more frequently for streaming
+        self._max_spans: int = 20
         self._flush_lock = threading.Lock()
         self._integrations: Dict[str, Any] = {}
         
-        # New config for integrations, read from environment variable first
+        # Config for integrations, read from environment variable first
         self._integrations_config: Dict[str, bool] = {}
         disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
         if disabled_env:
@@ -56,17 +69,17 @@ class Tracer:
         self._trace_level_tags: Dict[str, Dict[str, str]] = {}
         self._session_level_tags: Dict[str, Dict[str, str]] = {}
         
-        logger.info("Initializing tracer...")
+        logger.info("Initializing tracer for streaming...")
         logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}")
 
         # Start flush thread
         self._flush_thread = threading.Thread(target=self._flush_periodically, daemon=True)
         self._flush_thread.start()
 
-        # Auto-setup integrations immediately (reverted behavior)
+        # Auto-setup integrations
         self._setup_available_integrations()
         
-        # Register a single shutdown hook that will run on program exit.
+        # Register shutdown hook
         atexit.register(self.shutdown)
     
     def _setup_available_integrations(self) -> None:
@@ -132,20 +145,8 @@ class Tracer:
                 integration.teardown()
             except Exception:
                 logger.error(f"Failed to teardown integration {integration_name}", exc_info=True)
-
-        # To ensure all traces are flushed, we must move any remaining buckets
-        # to the main flush buffer, as they wouldn't be moved otherwise if their
-        # root spans haven't technically ended before interpreter shutdown.
-        with self._flush_lock:
-            for trace_id, bucket in self._trace_buckets.items():
-                logger.info(f"Flushing incomplete trace '{trace_id}' on shutdown.")
-                bucket_sorted = sorted(bucket, key=lambda s: s.get('parent_id') is not None)
-                self._spans.extend(bucket_sorted)
-
-            # Clear the buckets to avoid duplicates if shutdown is called manually
-            self._trace_buckets.clear()
-            self._trace_counts.clear()
-
+        
+        # Final flush for any remaining spans in the buffer
         self.flush()
 
     def __del__(self):
@@ -193,14 +194,8 @@ class Tracer:
             # Return a no-op span if tracer is shutting down
             return Span(name="noop_span", attributes={"warning": "Tracer is shutting down."})
 
-        thread_id = threading.get_ident()
-        
-        # Initialize span stack for this thread if it doesn't exist
-        if thread_id not in self._active_spans:
-            self._active_spans[thread_id] = []
-        
-        # Get parent span if available
-        parent_span = self._active_spans[thread_id][-1] if self._active_spans[thread_id] else None
+        stack = self._active_spans_ctx.get()
+        parent_span = stack[-1] if stack else None
         
         # --- decide final session id and name -------------------------------------
         if session_id:
@@ -251,15 +246,18 @@ class Tracer:
             span.tags.update(inherited_sess)
         
         # Add this span to the stack for this thread
-        self._active_spans[thread_id].append(span)
+        self._active_spans_ctx.set(stack + [span])
         
         # --- Reference counting for the trace -------------------
-        self._trace_counts[span.trace_id] = self._trace_counts.get(span.trace_id, 0) + 1
+        trace_id = span.trace_id
+        if trace_id not in self._traces:
+            self._traces[trace_id] = Trace(trace_id=trace_id)
+        self._traces[trace_id].ref_count += 1
         
         return span
     
     def end_span(self, span: Span) -> None:
-        """End the given span, add it to the trace bucket, and handle trace completion."""
+        """Ends the span, adds it to the buffer, and triggers a flush if needed."""
         if not span.end_time:
             span.end()
             
@@ -272,47 +270,25 @@ class Tracer:
             if duration else f"Ending span: {span.name} (status: {span.status})"
         )
         
-        thread_id = threading.get_ident()
+        stack = self._active_spans_ctx.get()
+        if stack and stack[-1].span_id == span.span_id:
+            self._active_spans_ctx.set(stack[:-1])
         
-        # Remove from active spans if it's the current one for this thread
-        if self._active_spans.get(thread_id) and self._active_spans[thread_id][-1].span_id == span.span_id:
-            self._active_spans[thread_id].pop()
-            if not self._active_spans[thread_id]:
-                del self._active_spans[thread_id]
-        
-        # Add to bucket and check for trace completion
-        trace_id = span.trace_id
-        if trace_id not in self._trace_buckets:
-            self._trace_buckets[trace_id] = []
-        self._trace_buckets[trace_id].append(span.to_dict())
-
-        self._trace_counts[trace_id] -= 1
-        if self._trace_counts[trace_id] == 0:
-            self._finalize_trace(trace_id)
-
-    def _finalize_trace(self, trace_id: str):
-        """Sort, buffer, and clean up a completed trace."""
-        bucket = self._trace_buckets.pop(trace_id, [])
-        if not bucket:
-            return
-
-        # Sort the bucket to ensure the root span is first
-        bucket_sorted = sorted(bucket, key=lambda s: s.get('parent_id') is not None)
-
         with self._flush_lock:
-            self._spans.extend(bucket_sorted)
+            self._spans.append(span.to_dict())
+            
+            # Trigger flush if buffer is full
+            if len(self._spans) >= self._max_spans:
+                logger.info(f"Span buffer at max capacity ({self._max_spans}). Triggering flush.")
+                self.flush(in_lock=True) # Already holding lock
 
-        # Cleanup
-        self._trace_counts.pop(trace_id, None)
-
-        # Trigger flush if buffer is full
-        if len(self._spans) >= self._max_spans:
-            logger.info(f"Span buffer at max capacity ({self._max_spans}). Triggering flush.")
-            self.flush()
-    
-    def flush(self) -> None:
-        """Flush all buffered completed spans to the writer."""
-        with self._flush_lock:
+    def flush(self, in_lock: bool = False) -> None:
+        """
+        Flush all buffered completed spans to the writer.
+        The `in_lock` parameter prevents deadlocks when called from a context
+        that already holds the flush lock.
+        """
+        def _do_flush():
             if not self._spans:
                 return
 
@@ -322,21 +298,30 @@ class Tracer:
 
             logger.info(f"Flushing {len(spans_to_flush)} spans to writer.")
             self._writer.write(spans_to_flush)
+            
+        if in_lock:
+            _do_flush()
+        else:
+            with self._flush_lock:
+                _do_flush()
     
     def _flush_periodically(self) -> None:
         """Background thread that flushes spans based on time interval."""
-        while True:
-            time.sleep(1.0)  # Check every second
-            current_time = time.time()
-            if (current_time - self._last_flush_time) >= self._flush_interval:
-                if self._spans:
-                    logger.info(f"Periodic flush triggered after {self._flush_interval}s interval.")
-                    self.flush()
+        while not self.is_shutting_down():
+            time.sleep(self._flush_interval)
+            
+            # Check if it's time to flush based on interval
+            with self._flush_lock:
+                is_buffer_non_empty = bool(self._spans)
+                time_since_last_flush = time.time() - self._last_flush_time
+
+            if is_buffer_non_empty and time_since_last_flush >= self._flush_interval:
+                logger.info(f"Periodic flush triggered after {self._flush_interval}s interval.")
+                self.flush()
 
     def current_span(self) -> Optional[Span]:
         """Return the current active span for this thread, if any."""
-        thread_id = threading.get_ident()
-        stack = self._active_spans.get(thread_id)
+        stack = self._active_spans_ctx.get()
         return stack[-1] if stack else None
 
     # ------------------------------------------------------------------
@@ -347,39 +332,36 @@ class Tracer:
         if not tags:
             return
         self._trace_level_tags.setdefault(trace_id, {}).update(tags)
-        # Update active spans
-        for stack in self._active_spans.values():
-            for sp in stack:
-                if sp.trace_id == trace_id:
-                    sp.trace_tags.update(tags)
-                    sp.tags.update(tags)
-        # Update buffered/completed spans
-        if trace_id in self._trace_buckets:
-            for sdict in self._trace_buckets[trace_id]:
-                sdict["trace_tags"] = {**sdict.get("trace_tags", {}), **tags}
-                sdict["tags"] = {**sdict.get("tags", {}), **tags}
+        # Update active spans only. The backend is responsible for back-filling
+        # tags on already-flushed spans for the same trace.
+        stack = self._active_spans_ctx.get()
+        for sp in stack:
+            if sp.trace_id == trace_id:
+                sp.trace_tags.update(tags)
+                sp.tags.update(tags)
 
     def add_session_tags(self, session_id: str, tags: Dict[str, str]):
         """Attach *tags* to every span within a session."""
         if not tags:
             return
         self._session_level_tags.setdefault(session_id, {}).update(tags)
-        # Update active spans
-        for stack in self._active_spans.values():
-            for sp in stack:
-                if sp.session_id == session_id:
-                    sp.session_tags.update(tags)
-                    sp.tags.update(tags)
-        # Update buffered/completed spans
-        for bucket in self._trace_buckets.values():
-            for sdict in bucket:
-                if sdict.get("session_id") == session_id:
-                    sdict["session_tags"] = {**sdict.get("session_tags", {}), **tags}
-                    sdict["tags"] = {**sdict.get("tags", {}), **tags}
+        # Update active spans only.
+        stack = self._active_spans_ctx.get()
+        for sp in stack:
+            if sp.session_id == session_id:
+                sp.session_tags.update(tags)
+                sp.tags.update(tags)
 
     def is_active_trace(self, trace_id: str) -> bool:
-        """Return True if *trace_id* is known to the tracer."""
-        return trace_id in self._trace_counts or trace_id in self._trace_buckets
+        """
+        Return True if *trace_id* is known to the tracer by being present
+        in an active (un-ended) span. This check is indicative, not exhaustive.
+        """
+        stack = self._active_spans_ctx.get()
+        for sp in stack:
+            if sp.trace_id == trace_id:
+                return True
+        return False
 
 
 # Create the global tracer instance

@@ -32,8 +32,11 @@ def tracer():
     
     # Clean up any leftover state from other tests
     t._spans.clear()
-    t._trace_buckets.clear()
-    t._trace_counts.clear()
+    t._traces.clear()
+    t._active_spans_ctx.set([])
+    # t._trace_buckets.clear()
+    # t._trace_counts.clear()
+    # t._active_spans.clear()
     
     yield t
     
