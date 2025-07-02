@@ -44,11 +44,7 @@ class LangChainIntegration(Integration):
     # ---------------------------------------------------------------------
     def setup(self) -> None:
         """Patch Runnable methods once LangChain is importable."""
-        try:
-            from langchain_core.runnables.base import Runnable  # pylint: disable=import-error
-        except Exception as exc:  # pragma: no cover – defensive: should not happen
-            print(f"[ZeroEval] LangChain import failed – integration disabled: {exc}")
-            return
+        from langchain_core.runnables.base import Runnable  # pylint: disable=import-error
 
         # Gather the base class and *all* subclasses so that overrides on custom
         # Runnables (e.g. RunnableSequence) are instrumented as well.
@@ -95,11 +91,25 @@ class LangChainIntegration(Integration):
         def _ze_init_subclass(cls, **kwargs):  # noqa: D401, ANN001  pylint: disable=unused-argument
             # Call LangChain\'s original __init_subclass__ first
             try:
-                bound_init = original_init_subclass.__get__(cls, cls)
-                bound_init(**kwargs)  # type: ignore[misc]
+                # Handle both regular methods and builtin methods
+                if hasattr(original_init_subclass, '__get__'):
+                    # It's a regular method, use descriptor protocol
+                    bound_init = original_init_subclass.__get__(cls, cls)
+                    bound_init(**kwargs)  # type: ignore[misc]
+                else:
+                    # It's a builtin method, call directly
+                    original_init_subclass(**kwargs)
             except TypeError:
                 # Some versions accept no kwargs at all.
-                bound_init()
+                try:
+                    if hasattr(original_init_subclass, '__get__'):
+                        bound_init = original_init_subclass.__get__(cls, cls)
+                        bound_init()
+                    else:
+                        original_init_subclass()
+                except Exception:
+                    # Fallback: just ignore if we can't call it
+                    pass
 
             # Patch the new subclass\'s methods
             for method_name in (
@@ -364,10 +374,25 @@ class LangChainIntegration(Integration):
         def _ze_init_subclass(cls, **kwargs):  # noqa: D401, ANN001
             # Call the original hook first
             try:
-                bound_init = original_init_subclass.__get__(cls, cls)
-                bound_init(**kwargs)  # type: ignore[misc]
+                # Handle both regular methods and builtin methods
+                if hasattr(original_init_subclass, '__get__'):
+                    # It's a regular method, use descriptor protocol
+                    bound_init = original_init_subclass.__get__(cls, cls)
+                    bound_init(**kwargs)  # type: ignore[misc]
+                else:
+                    # It's a builtin method, call directly
+                    original_init_subclass(**kwargs)
             except TypeError:
-                bound_init()
+                # Some versions accept no kwargs at all.
+                try:
+                    if hasattr(original_init_subclass, '__get__'):
+                        bound_init = original_init_subclass.__get__(cls, cls)
+                        bound_init()
+                    else:
+                        original_init_subclass()
+                except Exception:
+                    # Fallback: just ignore if we can't call it
+                    pass
 
             # Patch the new subclass's methods
             for method in method_names:

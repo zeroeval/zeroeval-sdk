@@ -8,6 +8,13 @@ class Integration(ABC):
     # Required package for this integration
     PACKAGE_NAME: str = None
     
+    def __init__(self, tracer):
+        self.tracer = tracer
+        self._original_functions: Dict[str, Callable] = {}
+        self._setup_attempted = False
+        self._setup_successful = False
+        self._setup_error = None
+
     @classmethod
     def is_available(cls) -> bool:
         """Check if the required package is installed."""
@@ -19,14 +26,29 @@ class Integration(ABC):
         except ImportError:
             return False
 
-    def __init__(self, tracer):
-        self.tracer = tracer
-        self._original_functions: Dict[str, Callable] = {}
-
     @abstractmethod
     def setup(self) -> None:
         """Setup the integration by applying all necessary patches."""
         pass
+
+    def safe_setup(self) -> bool:
+        """Safely attempt to setup the integration, catching and storing any errors."""
+        if self._setup_attempted:
+            return self._setup_successful
+            
+        self._setup_attempted = True
+        try:
+            self.setup()
+            self._setup_successful = True
+            return True
+        except Exception as exc:
+            self._setup_error = exc
+            self._setup_successful = False
+            return False
+
+    def get_setup_error(self) -> Optional[Exception]:
+        """Get the error that occurred during setup, if any."""
+        return self._setup_error
 
     def teardown(self) -> None:
         """Teardown the integration by removing all patches."""
@@ -67,3 +89,9 @@ class Integration(ABC):
         if key in self._original_functions:
             setattr(target_object, method_name, self._original_functions[key])
             del self._original_functions[key]
+
+    def _get_object_by_path(self, obj_path: str) -> Any:
+        """Helper to get an object by its module path."""
+        module_path, obj_name = obj_path.rsplit('.', 1)
+        module = importlib.import_module(module_path)
+        return getattr(module, obj_name)

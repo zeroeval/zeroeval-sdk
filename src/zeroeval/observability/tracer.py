@@ -1,7 +1,7 @@
 import threading
 import time
 import atexit
-from typing import List, Dict, Any, Optional, Type
+from typing import List, Dict, Any, Optional, Type, Union
 from .span import Span
 from .writer import SpanWriter, SpanBackendWriter
 import uuid
@@ -20,6 +20,33 @@ class Trace:
     trace_id: str
     spans: List[Dict[str, Any]] = field(default_factory=list)
     ref_count: int = 0
+
+
+@dataclass
+class Signal:
+    """Represents a signal that can be attached to entities."""
+    name: str
+    value: Union[str, bool, int, float]
+    signal_type: str = "boolean"  # "boolean" or "numerical"
+    
+    def __post_init__(self):
+        # Auto-detect signal type and normalize value
+        if isinstance(self.value, bool):
+            self.signal_type = "boolean"
+            self.value = "true" if self.value else "false"
+        elif isinstance(self.value, (int, float)):
+            self.signal_type = "numerical"
+            self.value = str(self.value)
+        else:
+            # For string values, try to detect boolean
+            str_val = str(self.value).lower()
+            if str_val in ("true", "false"):
+                self.signal_type = "boolean"
+                self.value = str_val
+            else:
+                # Default to boolean for string values
+                self.signal_type = "boolean"
+                self.value = str(self.value)
 
 
 class Tracer:
@@ -52,6 +79,10 @@ class Tracer:
         self._flush_lock = threading.Lock()
         self._integrations: Dict[str, Any] = {}
         
+        # Async signal writer (optional)
+        self._async_signal_enabled = False
+        self._signal_writer = None
+        
         # Config for integrations, read from environment variable first
         self._integrations_config: Dict[str, bool] = {}
         disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
@@ -65,7 +96,7 @@ class Tracer:
         self._shutdown_called: bool = False
         self._shutdown_lock = threading.Lock()
         
-        # New containers for trace- and session-level tags
+        # Containers for trace- and session-level tags
         self._trace_level_tags: Dict[str, Dict[str, str]] = {}
         self._session_level_tags: Dict[str, Dict[str, str]] = {}
         
@@ -109,10 +140,18 @@ class Tracer:
                 try:
                     logger.info(f"Setting up integration: {integration_name}")
                     integration = integration_class(self)
-                    integration.setup()
-                    self._integrations[integration_name] = integration
-                except Exception:
-                    logger.error(f"Failed to set up integration {integration_name}", exc_info=True)
+                    
+                    # Use safe setup method with better error handling
+                    if integration.safe_setup():
+                        self._integrations[integration_name] = integration
+                        logger.info(f"✅ Successfully set up integration: {integration_name}")
+                    else:
+                        setup_error = integration.get_setup_error()
+                        logger.error(f"❌ Failed to set up integration {integration_name}: {setup_error}")
+                        self._print_user_friendly_error(integration_name, setup_error)
+                except Exception as exc:
+                    logger.error(f"❌ Critical error setting up integration {integration_name}: {exc}", exc_info=True)
+                    self._print_user_friendly_error(integration_name, exc)
             else:
                 logger.info(f"Integration not available: {integration_name}")
         
@@ -120,6 +159,33 @@ class Tracer:
             logger.info(f"Active integrations: {list(self._integrations.keys())}")
         else:
             logger.info("No active integrations found.")
+
+    def _print_user_friendly_error(self, integration_name: str, error: Exception) -> None:
+        """Print user-friendly error messages for common integration issues."""
+        error_str = str(error)
+        
+        if "builtin_function_or_method" in error_str and "__get__" in error_str:
+            print(f"\n[ZeroEval] ❌ {integration_name} failed due to Python compatibility issue.")
+            print(f"This often happens with Python 3.13+ and certain library versions.")
+            print(f"💡 You can disable this integration with:")
+            print(f"   import zeroeval as ze")
+            print(f"   ze.tracer.configure(integrations={{'{integration_name}': False}})")
+            print(f"   ze.init(api_key='your-key')")
+        elif "typing.Generic" in error_str:
+            print(f"\n[ZeroEval] ❌ {integration_name} failed due to type annotation compatibility issue.")
+            print(f"This is typically caused by Python 3.13+ with older library versions.")
+            print(f"💡 You can:")
+            print(f"   1. Disable this integration: ze.tracer.configure(integrations={{'{integration_name}': False}})")
+            print(f"   2. Or use Python 3.11 or 3.12 if possible")
+        elif "ImportError" in error_str or "ModuleNotFoundError" in error_str:
+            print(f"\n[ZeroEval] ❌ {integration_name} failed due to missing dependencies.")
+            print(f"💡 Install required packages or disable this integration:")
+            print(f"   ze.tracer.configure(integrations={{'{integration_name}': False}})")
+        else:
+            print(f"\n[ZeroEval] ❌ {integration_name} setup failed: {error}")
+            print(f"💡 You can disable this integration:")
+            print(f"   ze.tracer.configure(integrations={{'{integration_name}': False}})")
+        print()  # Empty line for readability
 
     def is_shutting_down(self) -> bool:
         """Check if the tracer is currently in the process of shutting down."""
@@ -138,6 +204,25 @@ class Tracer:
             self._shutdown_called = True
             
         logger.info("Program exiting. Performing final flush of all remaining traces...")
+        
+        # Stop async signal writer if enabled
+        if self._async_signal_enabled and self._signal_writer:
+            try:
+                from .signal_writer import SignalWriterManager
+                import asyncio
+                
+                # Stop the signal writer
+                def stop_writer():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(SignalWriterManager.stop_writer())
+                    
+                stop_thread = threading.Thread(target=stop_writer)
+                stop_thread.start()
+                stop_thread.join(timeout=5.0)  # Wait up to 5 seconds
+                
+            except Exception as e:
+                logger.error(f"Error stopping signal writer: {e}")
         
         # Teardown integrations safely
         for integration_name, integration in self._integrations.items():
@@ -362,6 +447,72 @@ class Tracer:
             if sp.trace_id == trace_id:
                 return True
         return False
+
+    # ------------------------------------------------------------------
+    # Convenience helper methods
+    # ------------------------------------------------------------------
+    def get_current_span(self) -> Optional[Span]:
+        """Return the current active Span (or None)."""
+        return self.current_span()
+
+    def get_current_trace(self) -> Optional[str]:
+        """Return the current trace_id (or None if no active span)."""
+        current = self.current_span()
+        return current.trace_id if current else None
+
+    def get_current_session(self) -> Optional[str]:
+        """Return the current session_id (or None if no active span)."""
+        current = self.current_span()
+        return current.session_id if current else None
+
+    def set_tag(self, target, tags: Dict[str, str]) -> None:
+        """Attach *tags* to a Span, trace or session.
+
+        * ``target`` can be:
+            - a ``Span`` instance → tags are applied to that span (and will bubble to children)
+            - a ``str`` trace_id      → tags applied to every span in that trace
+            - a ``str`` session_id    → tags applied to every span within that session
+        """
+        if not isinstance(tags, dict):
+            raise TypeError("tags must be a dictionary")
+
+        if isinstance(target, Span):
+            target.tags.update(tags)
+        elif isinstance(target, str):
+            # Heuristically decide whether this is a trace_id or session_id
+            if self.is_active_trace(target):
+                self.add_trace_tags(target, tags)
+            else:
+                self.add_session_tags(target, tags)
+        else:
+            raise TypeError("Unsupported target type for set_tag")
+
+    # ------------------------------------------------------------------
+    # Convenience methods for current context
+    # ------------------------------------------------------------------
+    def set_current_tag(self, key: str, value: str) -> None:
+        """Set a tag on the current span. If no span is active, this is a no-op."""
+        current = self.current_span()
+        if current:
+            current.tags[key] = value
+        else:
+            logger.warning("No active span to set tag on")
+
+    def set_trace_tag(self, key: str, value: str) -> None:
+        """Set a tag on the current trace. If no trace is active, this is a no-op."""
+        trace_id = self.get_current_trace()
+        if trace_id:
+            self.add_trace_tags(trace_id, {key: value})
+        else:
+            logger.warning("No active trace to set tag on")
+
+    def set_session_tag(self, key: str, value: str) -> None:
+        """Set a tag on the current session. If no session is active, this is a no-op."""
+        session_id = self.get_current_session()
+        if session_id:
+            self.add_session_tags(session_id, {key: value})
+        else:
+            logger.warning("No active session to set tag on")
 
 
 # Create the global tracer instance
