@@ -1,9 +1,8 @@
 import time
+import traceback
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any, List, Union
-from datetime import datetime, timezone
-import traceback
+from typing import Any, Optional, Union
 
 
 @dataclass
@@ -49,7 +48,7 @@ class Span:
     parent_id: Optional[str] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
-    attributes: Dict[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
     # Fields for tracking execution
     input_data: Optional[str] = None
     output_data: Optional[str] = None
@@ -60,13 +59,13 @@ class Span:
     error_message: Optional[str] = None
     error_stack: Optional[str] = None
     status: str = "ok"
-    tags: Dict[str, str] = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)
     # Optional tags that should be applied to the owning trace and/or session when this
     # span is ingested. These will be processed by the backend ingestion service.
-    trace_tags: Dict[str, str] = field(default_factory=dict)
-    session_tags: Dict[str, str] = field(default_factory=dict)
+    trace_tags: dict[str, str] = field(default_factory=dict)
+    session_tags: dict[str, str] = field(default_factory=dict)
     # Signals attached to this span
-    signals: Dict[str, Any] = field(default_factory=dict)
+    signals: dict[str, Any] = field(default_factory=dict)
 
     def end(self) -> None:
         """Mark the span as completed with the current timestamp."""
@@ -107,7 +106,7 @@ class Span:
         """Set a signal for this span."""
         self.signals[name] = Signal(name=name, value=value)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the span to a dictionary representation."""
         # Convert signals to a serializable format
         signals_dict = {}

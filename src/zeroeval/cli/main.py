@@ -1,8 +1,8 @@
 import argparse
-import sys
 
 from .runner import run_script
 from .setup import setup
+
 
 def main():
     parser = argparse.ArgumentParser(description="zeroeval CLI")
@@ -13,7 +13,7 @@ def main():
     run_parser.add_argument("script", help="Path to the Python script you'd like to run")
 
     # 'setup' command:
-    setup_parser = subparsers.add_parser("setup", help="Setup tokens for zeroeval")
+    subparsers.add_parser("setup", help="Setup tokens for zeroeval")
 
     args = parser.parse_args()
 

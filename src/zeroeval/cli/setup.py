@@ -1,11 +1,13 @@
-import webbrowser
-import time
 import os
-import subprocess
 import platform
-from pathlib import Path
+import subprocess
+import time
+import webbrowser
 from getpass import getpass
-from .utils import brand_print, animate_dots, show_welcome_box, spinner, console
+from pathlib import Path
+
+from .utils import animate_dots, brand_print, console, show_welcome_box, spinner
+
 
 def get_shell_config_file():
     """Get the appropriate shell configuration file for the current system."""
@@ -95,7 +97,7 @@ def setup():
 
     # Simulate initialization with spinner
     with spinner("Initializing ZeroEval") as progress:
-        task = progress.add_task("", total=None)
+        progress.add_task("", total=None)
         time.sleep(2)
 
     # Launch browser with animation
@@ -113,7 +115,7 @@ def setup():
     if token:
         # Save to shell configuration
         with spinner("Saving your API key") as progress:
-            task = progress.add_task("", total=None)
+            progress.add_task("", total=None)
             success, location = save_to_shell_config(token)
             time.sleep(1)
         
@@ -128,7 +130,7 @@ def setup():
                     console.print(f"   [info]Run 'source {location}' or restart your terminal to use it[/info]")
             console.print("\n💡 [tip]Best practice: Also store this in a .env file in your project root[/tip]")
             console.print("   Create a .env file and add:")
-            console.print(f"   ZEROEVAL_API_KEY=...\n")
+            console.print("   ZEROEVAL_API_KEY=...\n")
         else:
             # Fallback to manual instructions
             console.print("\n⚠️ [warning]Could not automatically save API key[/warning]")
@@ -136,7 +138,7 @@ def setup():
             console.print(f"[info]export ZEROEVAL_API_KEY=\"{token}\"[/info]\n")
             console.print("💡 [tip]Best practice: Store this in a .env file in your project root[/tip]")
             console.print("   Create a .env file and add:")
-            console.print(f"   ZEROEVAL_API_KEY=...\n")
+            console.print("   ZEROEVAL_API_KEY=...\n")
         
         console.print("Happy building!\n")
     else:
