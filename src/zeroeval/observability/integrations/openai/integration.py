@@ -1,10 +1,9 @@
 import json
+import logging
 from functools import wraps
 from typing import Any, Callable
+
 from ..base import Integration
-import inspect
-import logging
-import types
 
 # use the package logger so callers can enable it if they want
 logger = logging.getLogger(__name__)
@@ -77,7 +76,8 @@ class OpenAIIntegration(Integration):
     #  Async  wrapper –   client = openai.AsyncOpenAI                   |
     # ------------------------------------------------------------------+
     def _wrap_chat_completion_async(self, original: Callable) -> Callable:  # noqa: C901 (length)
-        import time, json, inspect
+        import json
+        import time
 
         @wraps(original)
         async def wrapper(*args: Any, **kwargs: Any):  # type: ignore[return-type]
@@ -201,7 +201,8 @@ class OpenAIIntegration(Integration):
     #  Sync wrapper – client = openai.OpenAI                            |
     # ------------------------------------------------------------------+
     def _wrap_chat_completion_sync(self, original: Callable) -> Callable:  # noqa: C901 (length)
-        import time, json
+        import json
+        import time
 
         @wraps(original)
         def wrapper(*args: Any, **kwargs: Any):
@@ -354,7 +355,8 @@ class _StreamingResponseProxy:
     async def __anext__(self):
         if not self._is_async:
             # delegate to sync __next__ in a thread
-            import asyncio, functools
+            import asyncio
+            import functools
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, functools.partial(self.__next__))
 

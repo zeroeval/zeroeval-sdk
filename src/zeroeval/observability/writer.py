@@ -1,10 +1,10 @@
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any
 import json
-import os
-import requests
-from datetime import datetime
 import logging
+import os
+from abc import ABC, abstractmethod
+from typing import Any
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class SpanWriter(ABC):
     """Interface for writing spans to different destinations."""
     
     @abstractmethod
-    def write(self, spans: List[Dict[str, Any]]) -> None:
+    def write(self, spans: list[dict[str, Any]]) -> None:
         """Write a batch of spans to the destination."""
         pass
 
@@ -37,7 +37,7 @@ class SpanBackendWriter(SpanWriter):
         """Get the API key from environment, supporting lazy loading after ze.init()."""
         return os.environ.get("ZEROEVAL_API_KEY", "")
 
-    def write(self, spans: List[Dict[str, Any]]) -> None:
+    def write(self, spans: list[dict[str, Any]]) -> None:
         """
         Write a batch of spans to the '/spans' endpoint, ensuring the payload
         matches the backend's expected schema. This writer is intentionally simple,

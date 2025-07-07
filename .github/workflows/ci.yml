@@ -1,0 +1,155 @@
+name: 🚀 SDK CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  quality:
+    name: 🔍 Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: 🔧 Set up Python
+        run: uv python install 3.12
+
+      - name: 📦 Install dependencies
+        run: uv sync --group dev
+
+      - name: 🎨 Check Formatting
+        run: |
+          echo "::group::🎨 Ruff Formatting"
+          uv run ruff format --check --diff .
+          echo "::endgroup::"
+
+      - name: 🔍 Run Linting
+        run: |
+          echo "::group::🔍 Ruff Linting"
+          uv run ruff check . --output-format=github
+          echo "::endgroup::"
+
+      - name: 🔬 Type Checking
+        run: |
+          echo "::group::🔬 MyPy Type Checking"
+          uv run mypy src/zeroeval --show-error-codes
+          echo "::endgroup::"
+
+      - name: ✅ Quality Summary
+        if: success()
+        run: |
+          echo "::notice::✅ All code quality checks passed!"
+          echo "- Formatting: PASSED"
+          echo "- Linting: PASSED"
+          echo "- Type checking: PASSED"
+
+  test:
+    name: 🧪 Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: 🔧 Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: 📦 Install dependencies
+        run: uv sync --group dev
+
+      - name: 🧪 Run Core Tests
+        run: |
+          echo "::group::🧪 Core Tests"
+          uv run pytest tests/core/ -v --tb=short
+          echo "::endgroup::"
+
+      - name: ⚡ Run Performance Tests
+        run: |
+          echo "::group::⚡ Performance Tests"
+          uv run pytest tests/performance/ --runperformance -v --tb=short
+          echo "::endgroup::"
+
+      - name: 📊 Test Summary
+        if: success()
+        run: |
+          echo "::notice::✅ All tests passed on Python ${{ matrix.python-version }}!"
+          echo "- Core tests: PASSED"
+          echo "- Performance tests: PASSED"
+
+  test-matrix:
+    name: 🎯 Multi-Python Matrix
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: 🔧 Set up Python versions
+        run: uv python install 3.9 3.10 3.11 3.12 3.13
+
+      - name: 📦 Install dependencies
+        run: uv sync --group dev
+
+      - name: 🎯 Run Tox Matrix
+        run: |
+          echo "::group::🎯 Tox Multi-Python Testing"
+          uv run tox --parallel auto
+          echo "::endgroup::"
+
+      - name: 📈 Matrix Summary
+        if: success()
+        run: |
+          echo "::notice::✅ Multi-Python matrix testing completed!"
+          echo "- Tested across Python 3.9-3.13"
+          echo "- Core + Performance tests: PASSED"
+
+  all-checks:
+    name: ✅ All Checks
+    runs-on: ubuntu-latest
+    needs: [quality, test, test-matrix]
+    if: always()
+
+    steps:
+      - name: 🎉 Success Summary
+        if: ${{ needs.quality.result == 'success' && needs.test.result == 'success' && needs.test-matrix.result == 'success' }}
+        run: |
+          echo "::notice::🎉 All CI checks passed successfully!"
+          echo "✅ Code Quality: PASSED"
+          echo "✅ Individual Tests: PASSED"
+          echo "✅ Matrix Tests: PASSED"
+          echo ""
+          echo "🚀 Ready to merge!"
+
+      - name: ❌ Failure Summary
+        if: ${{ needs.quality.result == 'failure' || needs.test.result == 'failure' || needs.test-matrix.result == 'failure' }}
+        run: |
+          echo "::error::❌ Some CI checks failed"
+          echo "🔍 Code Quality: ${{ needs.quality.result }}"
+          echo "🧪 Individual Tests: ${{ needs.test.result }}"
+          echo "🎯 Matrix Tests: ${{ needs.test-matrix.result }}"
+          echo ""
+          echo "Please fix the failing checks before merging."
+          exit 1

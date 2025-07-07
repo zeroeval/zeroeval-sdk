@@ -9,4 +9,7 @@ dist/
 dist/*
 .pytest_cache/
 
+# Build and test directories
+.tox/
+
 examples/

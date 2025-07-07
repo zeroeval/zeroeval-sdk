@@ -3,6 +3,7 @@ import os
 
 from zeroeval.core.decorators import registered_experiments
 
+
 def run_script(script_path: str):
     """
     Imports the user script and runs the decorated functions with extra logic.

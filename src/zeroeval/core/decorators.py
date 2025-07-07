@@ -1,7 +1,5 @@
-import types
 import functools
-from typing import Optional, Dict, Any
-from zeroeval.observability.tracer import tracer
+import types
 
 # This global registry will store metadata about each decorated function.
 registered_experiments = []

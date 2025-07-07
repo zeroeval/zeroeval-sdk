@@ -1,6 +1,7 @@
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Optional, Type
 import importlib
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Optional
+
 
 class Integration(ABC):
     """Base class for all tracing integrations."""
@@ -10,7 +11,7 @@ class Integration(ABC):
     
     def __init__(self, tracer):
         self.tracer = tracer
-        self._original_functions: Dict[str, Callable] = {}
+        self._original_functions: dict[str, Callable] = {}
         self._setup_attempted = False
         self._setup_successful = False
         self._setup_error = None
@@ -79,7 +80,7 @@ class Integration(ABC):
 
         patched = wrapper(original)
         # Mark so we can recognise it later and avoid double wrapping
-        setattr(patched, "__ze_patched__", True)
+        patched.__ze_patched__ = True
 
         setattr(target_object, method_name, patched)
 

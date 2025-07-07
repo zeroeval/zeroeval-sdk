@@ -1,13 +1,14 @@
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 import json
-import requests
 import os
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Optional, Union
+
+import requests
 
 if TYPE_CHECKING:
     from .dataset_class import Dataset
+    from .evaluator_class import Evaluation, Evaluator
     from .experiment_class import Experiment, ExperimentResult
-    from .evaluator_class import Evaluator, Evaluation
 
 
 # Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
@@ -62,7 +63,7 @@ class _BackendWriter:
         self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
         self._api_key: Optional[str] = None
         self._workspace_id: Optional[str] = None
-        self._headers: Optional[Dict[str, str]] = None
+        self._headers: Optional[dict[str, str]] = None
 
     def _ensure_auth_setup(self):
         """Ensure API key and workspace ID are resolved and headers are set."""
@@ -184,15 +185,7 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
                 create_url, json=create_payload, headers=self._headers
             )
 
-            if response.status_code == 409 and create_new_version:
-                existing_id = self._find_existing_dataset_id(dataset.name)
-                if not existing_id:
-                    raise ValueError(
-                        "Dataset conflict but not found. Check workspace name."
-                    )
-                self._post_data_to_existing_dataset(existing_id, dataset)
-                dataset._backend_id = existing_id
-            elif response.status_code == 409:
+            if response.status_code == 409 and create_new_version or response.status_code == 409:
                 existing_id = self._find_existing_dataset_id(dataset.name)
                 if not existing_id:
                     raise ValueError(
@@ -275,7 +268,7 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
         self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]
     ) -> Union[str, None]:
         """Write an evaluator or evaluation to the backend."""
-        from .evaluator_class import Evaluator, Evaluation
+        from .evaluator_class import Evaluation, Evaluator
 
         self._ensure_auth_setup()
 

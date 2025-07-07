@@ -1,10 +1,14 @@
-from typing import List, Callable, Any, Optional
-from .dataset_class import Dataset
-from .writer import ExperimentResultWriter, ExperimentResultBackendWriter
-from .evaluator_class import Evaluation, Evaluator
 import inspect
 import traceback
+from typing import Any, Callable, Optional
+
 from zeroeval.observability.tracer import tracer
+
+from .dataset_class import Dataset
+from .evaluator_class import Evaluation, Evaluator
+from .writer import ExperimentResultBackendWriter, ExperimentResultWriter
+
+
 class Experiment:
     """
     Represents an experiment that can run a 'task' (the user's function)
@@ -15,7 +19,7 @@ class Experiment:
         self, 
         dataset: Dataset, 
         task: Callable[[Any], Any], 
-        evaluators: Optional[List[Callable[[Any, Any], Any]]] = None,
+        evaluators: Optional[list[Callable[[Any, Any], Any]]] = None,
         name: Optional[str] = None,
         description: Optional[str] = None
     ):
@@ -32,7 +36,7 @@ class Experiment:
 
         # We'll treat the default writer as a backend writer.
         self._writer: ExperimentResultWriter = ExperimentResultBackendWriter()
-        self.results: List['ExperimentResult'] = []
+        self.results: list[ExperimentResult] = []
 
         # Will be set once the experiment is persisted to the backend
         self._backend_id: Optional[str] = None
@@ -40,7 +44,7 @@ class Experiment:
         # New attribute storing whether we should trace the task calls
         self.trace_task = True
 
-    def run_task(self, subset: Optional[List[dict]] = None, raise_on_error: bool = False) -> List['ExperimentResult']:
+    def run_task(self, subset: Optional[list[dict]] = None, raise_on_error: bool = False) -> list['ExperimentResult']:
         """
         Run the task function on each row (either a given subset or the entire dataset).
         Store the output in self.results and automatically write each result to the backend.
@@ -95,9 +99,9 @@ class Experiment:
 
     def run_evaluators(
         self, 
-        evaluators: Optional[List[Callable[[Any, Any], Any]]] = None, 
-        results: Optional[List['ExperimentResult']] = None
-    ) -> List['ExperimentResult']:
+        evaluators: Optional[list[Callable[[Any, Any], Any]]] = None, 
+        results: Optional[list['ExperimentResult']] = None
+    ) -> list['ExperimentResult']:
         """
         Run the specified evaluators on a list of results (or on self.results if none provided).
         Each evaluator is a function: evaluator(row_data, result).
@@ -129,7 +133,7 @@ class Experiment:
 
         return results
 
-    def run(self, subset: Optional[List[dict]] = None) -> List['ExperimentResult']:
+    def run(self, subset: Optional[list[dict]] = None) -> list['ExperimentResult']:
         """
         Run tasks and evaluators together, evaluating each task result immediately.
         """
