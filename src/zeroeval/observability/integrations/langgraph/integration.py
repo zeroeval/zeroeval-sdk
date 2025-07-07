@@ -1,12 +1,11 @@
-from ..base import Integration
-
 import inspect
-import time
-import json
-import threading
-from functools import wraps
-from typing import Any, Callable, Dict, Optional, Union
 import logging
+import threading
+import time
+from functools import wraps
+from typing import Any, Callable
+
+from ..base import Integration
 
 
 class LangGraphIntegration(Integration):
@@ -178,7 +177,7 @@ class LangGraphIntegration(Integration):
     # ------------------------------------------------------------------
     # Graph metadata extraction
     # ------------------------------------------------------------------
-    def _extract_graph_metadata(self, graph_self, compiled_graph) -> Dict[str, Any]:
+    def _extract_graph_metadata(self, graph_self, compiled_graph) -> dict[str, Any]:
         """Extract metadata about the graph structure for better tracing."""
         metadata = {
             "nodes": [],

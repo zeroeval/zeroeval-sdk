@@ -1,11 +1,11 @@
 import sys
 import time
-from typing import List, Optional
+
 from rich.console import Console
-from rich.theme import Theme
-from rich.progress import SpinnerColumn, Progress
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn
 from rich.text import Text
+from rich.theme import Theme
 
 # Custom theme for our brand
 THEME = Theme({

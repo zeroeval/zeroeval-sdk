@@ -1,6 +1,6 @@
-import os
 import logging
-from typing import Dict, Union
+import os
+from typing import Union
 
 import requests
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def _send_signals_immediately(
-    entity_type: str, entity_id: str, signals: Dict[str, Union[str, bool, int, float]]
+    entity_type: str, entity_id: str, signals: dict[str, Union[str, bool, int, float]]
 ) -> bool:
     """
     Private helper to send a batch of signals for a single entity immediately.
@@ -39,7 +39,9 @@ def _send_signals_immediately(
             "entity_id": entity_id,
             "name": name,
             "value": value,
-            "signal_type": "numerical" if isinstance(value, (int, float)) else "boolean",
+            "signal_type": "numerical"
+            if isinstance(value, (int, float))
+            else "boolean",
         }
         for name, value in signals.items()
     ]
@@ -62,7 +64,7 @@ def _send_signals_immediately(
 
 
 def set_signal(
-    target: Union[Span, str], signals: Dict[str, Union[str, bool, int, float]]
+    target: Union[Span, str], signals: dict[str, Union[str, bool, int, float]]
 ) -> bool:
     """
     Send signals immediately for a given span, trace, or session.
@@ -98,4 +100,4 @@ def set_signal(
             f"Unsupported target type '{type(target).__name__}' for signal. Must be Span or str."
         )
 
-    return _send_signals_immediately(entity_type, entity_id, signals) 
+    return _send_signals_immediately(entity_type, entity_id, signals)

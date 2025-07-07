@@ -1,15 +1,17 @@
+import atexit
+import builtins
+import contextlib
+import logging
+import os
 import threading
 import time
-import atexit
-from typing import List, Dict, Any, Optional, Type, Union
-from .span import Span
-from .writer import SpanWriter, SpanBackendWriter
 import uuid
-import logging
-import atexit
-import os
-from dataclasses import dataclass, field
 from contextvars import ContextVar
+from dataclasses import dataclass, field
+from typing import Any, Optional, Union
+
+from .span import Span
+from .writer import SpanBackendWriter, SpanWriter
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 class Trace:
     """Represents a collection of spans and metadata for a single trace."""
     trace_id: str
-    spans: List[Dict[str, Any]] = field(default_factory=list)
+    spans: list[dict[str, Any]] = field(default_factory=list)
     ref_count: int = 0
 
 
@@ -58,33 +60,33 @@ class Tracer:
     _instance = None
     _lock = threading.Lock()
     
-    _active_spans_ctx: ContextVar[List[Span]] = ContextVar("active_spans", default=[])
+    _active_spans_ctx: ContextVar[list[Span]] = ContextVar("active_spans", default=[])
     
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
-                cls._instance = super(Tracer, cls).__new__(cls)
+                cls._instance = super().__new__(cls)
                 cls._instance._initialize()
             return cls._instance
     
     def _initialize(self) -> None:
         """Initialize the tracer's internal state and register for graceful shutdown."""
-        self._spans: List[Dict[str, Any]] = []
-        self._active_spans: Dict[str, List[Span]] = {}  # For legacy/compatibility
-        self._traces: Dict[str, Trace] = {}  # Replaces _trace_buckets and _trace_counts
+        self._spans: list[dict[str, Any]] = []
+        self._active_spans: dict[str, list[Span]] = {}  # For legacy/compatibility
+        self._traces: dict[str, Trace] = {}  # Replaces _trace_buckets and _trace_counts
         self._last_flush_time = time.time()
         self._writer: SpanWriter = SpanBackendWriter()
         self._flush_interval: float = 1.0  # Flush more frequently for streaming
         self._max_spans: int = 20
         self._flush_lock = threading.Lock()
-        self._integrations: Dict[str, Any] = {}
+        self._integrations: dict[str, Any] = {}
         
         # Async signal writer (optional)
         self._async_signal_enabled = False
         self._signal_writer = None
         
         # Config for integrations, read from environment variable first
-        self._integrations_config: Dict[str, bool] = {}
+        self._integrations_config: dict[str, bool] = {}
         disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
         if disabled_env:
             disabled_names = {name.strip() for name in disabled_env.split(',') if name.strip()}
@@ -97,8 +99,8 @@ class Tracer:
         self._shutdown_lock = threading.Lock()
         
         # Containers for trace- and session-level tags
-        self._trace_level_tags: Dict[str, Dict[str, str]] = {}
-        self._session_level_tags: Dict[str, Dict[str, str]] = {}
+        self._trace_level_tags: dict[str, dict[str, str]] = {}
+        self._session_level_tags: dict[str, dict[str, str]] = {}
         
         logger.info("Initializing tracer for streaming...")
         logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}")
@@ -116,9 +118,9 @@ class Tracer:
     def _setup_available_integrations(self) -> None:
         """Automatically set up all available integrations."""
         # Import here to avoid circular imports
-        from .integrations.openai.integration import OpenAIIntegration
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
+        from .integrations.openai.integration import OpenAIIntegration
         
         # List of all integration classes
         integration_classes = [
@@ -166,24 +168,24 @@ class Tracer:
         
         if "builtin_function_or_method" in error_str and "__get__" in error_str:
             print(f"\n[ZeroEval] ❌ {integration_name} failed due to Python compatibility issue.")
-            print(f"This often happens with Python 3.13+ and certain library versions.")
-            print(f"💡 You can disable this integration with:")
-            print(f"   import zeroeval as ze")
+            print("This often happens with Python 3.13+ and certain library versions.")
+            print("💡 You can disable this integration with:")
+            print("   import zeroeval as ze")
             print(f"   ze.tracer.configure(integrations={{'{integration_name}': False}})")
-            print(f"   ze.init(api_key='your-key')")
+            print("   ze.init(api_key='your-key')")
         elif "typing.Generic" in error_str:
             print(f"\n[ZeroEval] ❌ {integration_name} failed due to type annotation compatibility issue.")
-            print(f"This is typically caused by Python 3.13+ with older library versions.")
-            print(f"💡 You can:")
+            print("This is typically caused by Python 3.13+ with older library versions.")
+            print("💡 You can:")
             print(f"   1. Disable this integration: ze.tracer.configure(integrations={{'{integration_name}': False}})")
-            print(f"   2. Or use Python 3.11 or 3.12 if possible")
+            print("   2. Or use Python 3.11 or 3.12 if possible")
         elif "ImportError" in error_str or "ModuleNotFoundError" in error_str:
             print(f"\n[ZeroEval] ❌ {integration_name} failed due to missing dependencies.")
-            print(f"💡 Install required packages or disable this integration:")
+            print("💡 Install required packages or disable this integration:")
             print(f"   ze.tracer.configure(integrations={{'{integration_name}': False}})")
         else:
             print(f"\n[ZeroEval] ❌ {integration_name} setup failed: {error}")
-            print(f"💡 You can disable this integration:")
+            print("💡 You can disable this integration:")
             print(f"   ze.tracer.configure(integrations={{'{integration_name}': False}})")
         print()  # Empty line for readability
 
@@ -208,8 +210,9 @@ class Tracer:
         # Stop async signal writer if enabled
         if self._async_signal_enabled and self._signal_writer:
             try:
-                from .signal_writer import SignalWriterManager
                 import asyncio
+
+                from .signal_writer import SignalWriterManager
                 
                 # Stop the signal writer
                 def stop_writer():
@@ -237,16 +240,14 @@ class Tracer:
     def __del__(self):
         """Cleanup integrations when tracer is destroyed."""
         for integration in self._integrations.values():
-            try:
+            with contextlib.suppress(builtins.BaseException):
                 integration.teardown()
-            except:
-                pass
     
     def configure(self, 
                   flush_interval: Optional[float] = None,
                   max_spans: Optional[int] = None,
                   collect_code_details: Optional[bool] = None,
-                  integrations: Optional[Dict[str, bool]] = None) -> None:
+                  integrations: Optional[dict[str, bool]] = None) -> None:
         """Configure the tracer with custom settings."""
         if flush_interval is not None:
             self._flush_interval = flush_interval
@@ -266,12 +267,12 @@ class Tracer:
     def start_span(
         self,
         name: str,
-        attributes: Optional[Dict[str, Any]] = None,
+        attributes: Optional[dict[str, Any]] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
-        trace_tags: Optional[Dict[str, str]] = None,
-        session_tags: Optional[Dict[str, str]] = None
+        tags: Optional[dict[str, str]] = None,
+        trace_tags: Optional[dict[str, str]] = None,
+        session_tags: Optional[dict[str, str]] = None
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
         if self.is_shutting_down():
@@ -412,7 +413,7 @@ class Tracer:
     # ------------------------------------------------------------------
     # Tag helpers (trace / session level)
     # ------------------------------------------------------------------
-    def add_trace_tags(self, trace_id: str, tags: Dict[str, str]):
+    def add_trace_tags(self, trace_id: str, tags: dict[str, str]):
         """Attach *tags* to an entire trace (root + all children, past & future)."""
         if not tags:
             return
@@ -425,7 +426,7 @@ class Tracer:
                 sp.trace_tags.update(tags)
                 sp.tags.update(tags)
 
-    def add_session_tags(self, session_id: str, tags: Dict[str, str]):
+    def add_session_tags(self, session_id: str, tags: dict[str, str]):
         """Attach *tags* to every span within a session."""
         if not tags:
             return
@@ -443,10 +444,7 @@ class Tracer:
         in an active (un-ended) span. This check is indicative, not exhaustive.
         """
         stack = self._active_spans_ctx.get()
-        for sp in stack:
-            if sp.trace_id == trace_id:
-                return True
-        return False
+        return any(sp.trace_id == trace_id for sp in stack)
 
     # ------------------------------------------------------------------
     # Convenience helper methods
@@ -465,7 +463,7 @@ class Tracer:
         current = self.current_span()
         return current.session_id if current else None
 
-    def set_tag(self, target, tags: Dict[str, str]) -> None:
+    def set_tag(self, target, tags: dict[str, str]) -> None:
         """Attach *tags* to a Span, trace or session.
 
         * ``target`` can be:

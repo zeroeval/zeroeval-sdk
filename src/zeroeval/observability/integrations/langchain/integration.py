@@ -1,7 +1,6 @@
-from functools import wraps
 import inspect
-import types
 import time
+import types
 from typing import Any, Callable
 
 from ..base import Integration
@@ -44,7 +43,9 @@ class LangChainIntegration(Integration):
     # ---------------------------------------------------------------------
     def setup(self) -> None:
         """Patch Runnable methods once LangChain is importable."""
-        from langchain_core.runnables.base import Runnable  # pylint: disable=import-error
+        from langchain_core.runnables.base import (
+            Runnable,  # pylint: disable=import-error
+        )
 
         # Gather the base class and *all* subclasses so that overrides on custom
         # Runnables (e.g. RunnableSequence) are instrumented as well.
@@ -132,7 +133,7 @@ class LangChainIntegration(Integration):
 
         # Avoid double-hooking if someone else already replaced it
         if getattr(Runnable.__init_subclass__, "__ze_patched__", False) is False:
-            setattr(_ze_init_subclass, "__ze_patched__", True)
+            _ze_init_subclass.__ze_patched__ = True
             Runnable.__init_subclass__ = _ze_init_subclass
 
         # ------------------------------------------------------------------
@@ -153,7 +154,9 @@ class LangChainIntegration(Integration):
             pass
 
         try:
-            from langchain_core.language_models.base import BaseLanguageModel  # pylint: disable=import-error
+            from langchain_core.language_models.base import (
+                BaseLanguageModel,  # pylint: disable=import-error
+            )
 
             self._instrument_class_methods(
                 BaseLanguageModel,
@@ -166,7 +169,9 @@ class LangChainIntegration(Integration):
             pass
 
         try:
-            from langchain_core.retrievers import BaseRetriever  # pylint: disable=import-error
+            from langchain_core.retrievers import (
+                BaseRetriever,  # pylint: disable=import-error
+            )
 
             self._instrument_class_methods(
                 BaseRetriever,
@@ -285,9 +290,13 @@ class LangChainIntegration(Integration):
         # Determine a suitable kind based on the LangChain abstraction
         kind: str = "runnable"
         try:
+            from langchain_core.language_models.base import (
+                BaseLanguageModel,  # pylint: disable=import-error
+            )
+            from langchain_core.retrievers import (
+                BaseRetriever,  # pylint: disable=import-error
+            )
             from langchain_core.tools import BaseTool  # pylint: disable=import-error
-            from langchain_core.language_models.base import BaseLanguageModel  # pylint: disable=import-error
-            from langchain_core.retrievers import BaseRetriever  # pylint: disable=import-error
 
             if isinstance(runnable_self, BaseTool):
                 kind = "tool"
@@ -406,5 +415,5 @@ class LangChainIntegration(Integration):
                         pass  # silently ignore – best-effort
 
         if getattr(base_cls.__init_subclass__, "__ze_patched__", False) is False:
-            setattr(_ze_init_subclass, "__ze_patched__", True)
+            _ze_init_subclass.__ze_patched__ = True
             base_cls.__init_subclass__ = _ze_init_subclass 

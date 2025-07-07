@@ -1,11 +1,11 @@
+import ast
 import functools
 import inspect
-import traceback
 import json
-import ast
-from typing import Optional, Dict, Any, Callable, TypeVar, cast, Union
 import logging
 import os
+import traceback
+from typing import Any, Callable, Optional, TypeVar, Union, cast
 
 from .tracer import tracer
 
@@ -37,11 +37,11 @@ class span:
         self, 
         name: str, 
         session_id: Optional[str] = None,
-        session: Optional[Union[str, Dict[str, str]]] = None,
-        attributes: Optional[Dict[str, Any]] = None,
+        session: Optional[Union[str, dict[str, str]]] = None,
+        attributes: Optional[dict[str, Any]] = None,
         input_data: Optional[str] = None,
         output_data: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None
+        tags: Optional[dict[str, str]] = None
     ):
         self.name = name
         self.attributes = attributes or {}
@@ -107,7 +107,7 @@ class span:
             if not os.path.exists(filepath) or "site-packages" in filepath or "lib/python" in filepath:
                  return
 
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, encoding='utf-8') as f:
                 source_file_content = f.read()
 
             tree = ast.parse(source_file_content, filename=filepath)

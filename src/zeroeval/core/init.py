@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 
 
 class ColoredFormatter(logging.Formatter):
@@ -68,7 +68,7 @@ def init(
         
         # Log all configuration values as the first log message
         masked_api_key = f"{api_key[:8]}..." if api_key and len(api_key) > 8 else "***" if api_key else "Not set"
-        logger.debug(f"ZeroEval SDK Configuration:")
+        logger.debug("ZeroEval SDK Configuration:")
         logger.debug(f"  Workspace: {workspace_name}")
         logger.debug(f"  API Key: {masked_api_key}")
         logger.debug(f"  API URL: {api_url}")

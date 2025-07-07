@@ -1,15 +1,15 @@
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
-from .writer import DatasetBackendWriter
-from .reader import DatasetBackendReader
+import base64
+import mimetypes
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
 from .init import _validate_init
-import os
-import base64
-from pathlib import Path
-import mimetypes
-import uuid
+from .reader import DatasetBackendReader
+from .writer import DatasetBackendWriter
+
 if TYPE_CHECKING:
-    from .writer import DatasetWriter
+    pass
 
 class Dataset:
     """
@@ -24,7 +24,7 @@ class Dataset:
         version_number (int): The version number in the backend
     """
     
-    def __init__(self, name: str, data: List[Dict[str, Any]], description: Optional[str] = None):
+    def __init__(self, name: str, data: list[dict[str, Any]], description: Optional[str] = None):
         """
         Initialize a Dataset with a name and data.
         
@@ -56,7 +56,7 @@ class Dataset:
         self._version_id = None
         self._version_number = None
 
-    def add_rows(self, new_rows: List[Dict[str, Any]]) -> None:
+    def add_rows(self, new_rows: list[dict[str, Any]]) -> None:
         """
         Add one or more rows to the dataset.
         
@@ -88,7 +88,7 @@ class Dataset:
         except IndexError:
             raise IndexError(f"Cannot delete row {index}, index is out of range.")
 
-    def update_row(self, index: int, new_data: Dict[str, Any]) -> None:
+    def update_row(self, index: int, new_data: dict[str, Any]) -> None:
         """
         Update a single row in the dataset by index, replacing its entire contents.
         
@@ -309,16 +309,16 @@ class Dataset:
         except IndexError:
             raise IndexError(f"Row index {row_index} is out of range")
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def __getitem__(self, idx: int) -> dict[str, Any]:
         """
         By design, return *only* the 'data' part to the user,
         hiding row_id from direct indexing.
         """
         row = self._data[idx]
         # Return the data portion if present, else the row as-is
-        return row["data"] if "data" in row else row
+        return row.get("data", row)
     
-    def __setitem__(self, idx: int, value: Dict[str, Any]):
+    def __setitem__(self, idx: int, value: dict[str, Any]):
         """
         Updating a row at the given index. If the existing row has a row_id, preserve it.
         For direct user usage, the caller is presumably passing the 'data' portion.
@@ -348,7 +348,7 @@ class Dataset:
         so normal iteration does not expose row_id.
         """
         for row in self._data:
-            yield row["data"] if "data" in row else row
+            yield row.get("data", row)
             
     def __len__(self):
         """
@@ -357,14 +357,14 @@ class Dataset:
         return len(self._data)
 
     @property
-    def data(self) -> List[Dict[str, Any]]:
+    def data(self) -> list[dict[str, Any]]:
         """
         Returns a list of just the data portion for each row.
         """
-        return [row["data"] if "data" in row else row for row in self._data]
+        return [row.get("data", row) for row in self._data]
         
     @property
-    def columns(self) -> List[str]:
+    def columns(self) -> list[str]:
         """
         Returns a list of column names in the dataset.
         """
@@ -388,11 +388,11 @@ class Dataset:
     # Internal API: methods that return full rows.
     # Not intended for typical user usage, but for internal calls.
     # -------------------
-    def _get_full_row(self, idx: int) -> Dict[str, Any]:
+    def _get_full_row(self, idx: int) -> dict[str, Any]:
         """Return the entire row dictionary, including row_id, data, etc."""
         return self._data[idx]
 
-    def _get_all_full_rows(self) -> List[Dict[str, Any]]:
+    def _get_all_full_rows(self) -> list[dict[str, Any]]:
         """Return all row dictionaries in their entirety."""
         return self._data
 

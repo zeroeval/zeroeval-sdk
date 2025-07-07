@@ -1,5 +1,7 @@
-from typing import Optional, Any
-from .writer import EvaluatorWriter, EvaluatorBackendWriter
+from typing import Any, Optional
+
+from .writer import EvaluatorBackendWriter, EvaluatorWriter
+
 
 class Evaluator:
     """

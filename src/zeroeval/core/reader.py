@@ -1,7 +1,8 @@
-from abc import ABC, abstractmethod
-from typing import Optional, TYPE_CHECKING
-import requests
 import os
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Optional
+
+import requests
 
 from .init import _validate_init
 
@@ -59,15 +60,15 @@ class DatasetBackendReader(DatasetReader):
                 response_data = response.json()
                 
                 if "workspace_id" not in response_data:
-                    raise ValueError(f"API key does not resolve to a workspace")
+                    raise ValueError("API key does not resolve to a workspace")
                 
                 self._workspace_id = response_data["workspace_id"]
                 
             except requests.HTTPError as e:
                 if e.response.status_code == 401:
-                    raise ValueError(f"Invalid API key")
+                    raise ValueError("Invalid API key")
                 elif e.response.status_code == 404:
-                    raise ValueError(f"API key does not resolve to a workspace")
+                    raise ValueError("API key does not resolve to a workspace")
                 else:
                     raise ValueError(f"Failed to resolve API key (HTTP {e.response.status_code})")
             except requests.RequestException as e:

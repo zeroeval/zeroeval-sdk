@@ -4,9 +4,9 @@ Exposes core functionality for experiment decoration and running.
 """
 from .core import Dataset, Experiment, experiment, init
 from .observability import span
-from .observability.tracer import tracer
-from .observability.span import Span
 from .observability.signals import set_signal
+from .observability.span import Span
+from .observability.tracer import tracer
 
 # Import helper methods directly from tracer for convenience
 get_current_span = tracer.get_current_span
