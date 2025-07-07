@@ -1,0 +1,7 @@
+[project]
+name = "zeroeval"
+version = "0.2.4"
+description = "ZeroEval SDK"
+
+[project.scripts]
+zeroeval = "zeroeval.cli.main:main"
