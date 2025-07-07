@@ -1,18 +1,18 @@
 import time
+import traceback
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any, List, Union
-from datetime import datetime, timezone
-import traceback
+from typing import Any, Dict, Optional, Union
 
 
 @dataclass
 class Signal:
     """Represents a signal that can be attached to entities."""
+
     name: str
     value: Union[str, bool, int, float]
     signal_type: str = "boolean"  # "boolean" or "numerical"
-    
+
     def __post_init__(self):
         # Auto-detect signal type and normalize value
         if isinstance(self.value, bool):
@@ -38,9 +38,10 @@ class Span:
     """
     Represents a traced operation with OpenTelemetry-compatible attributes.
     """
+
     # Required fields first
     name: str
-    
+
     # Optional fields with defaults
     session_id: Optional[str] = None
     session_name: Optional[str] = None
@@ -71,23 +72,25 @@ class Span:
     def end(self) -> None:
         """Mark the span as completed with the current timestamp."""
         self.end_time = time.time()
-    
+
     @property
     def duration_ms(self) -> Optional[float]:
         """Get the span duration in milliseconds, if completed."""
         if self.end_time is None:
             return None
-        
+
         return (self.end_time - self.start_time) * 1000
-    
+
     def set_error(self, code: str, message: str, stack: Optional[str] = None) -> None:
         """Set error information for the span."""
         self.error_code = code
         self.error_message = message
         self.error_stack = stack
-        self.status = 'error'
+        self.status = "error"
 
-    def set_io(self, input_data: Optional[str] = None, output_data: Optional[str] = None) -> None:
+    def set_io(
+        self, input_data: Optional[str] = None, output_data: Optional[str] = None
+    ) -> None:
         """Set input/output data for the span, without overwriting existing values."""
         if input_data is not None:
             self.input_data = input_data
@@ -112,16 +115,16 @@ class Span:
         # Convert signals to a serializable format
         signals_dict = {}
         for name, signal in self.signals.items():
-            if hasattr(signal, 'value') and hasattr(signal, 'signal_type'):
+            if hasattr(signal, "value") and hasattr(signal, "signal_type"):
                 signals_dict[name] = {
-                    'name': signal.name,
-                    'value': signal.value,
-                    'type': signal.signal_type
+                    "name": signal.name,
+                    "value": signal.value,
+                    "type": signal.signal_type,
                 }
             else:
                 # Handle legacy signal format or simple values
                 signals_dict[name] = signal
-        
+
         span_dict = {
             "name": self.name,
             "session_id": self.session_id,
@@ -145,20 +148,20 @@ class Span:
             "error_code": self.error_code,
             "error_message": self.error_message,
             "error_stack": self.error_stack,
-            "status": self.status
+            "status": self.status,
         }
-        
+
         # Add session_name if it exists
         if self.session_name:
             span_dict["session_name"] = self.session_name
-        
+
         return span_dict
 
     def end(self, error: Optional[Exception] = None) -> None:
         """End the span, calculating duration and capturing errors."""
         if self.end_time:
             return  # Span already ended
-            
+
         self.end_time = time.time()
 
         if error:

@@ -13,38 +13,42 @@ The agent uses a multi-step workflow:
 - Query Analysis → Search Planning → Web Search → Result Evaluation → Synthesis
 """
 
-import os
 import asyncio
-from typing import TypedDict, Annotated, List, Dict, Literal, Optional
-from datetime import datetime
-import json
+import os
 import uuid
+from typing import Annotated, Dict, List, Literal, Optional, TypedDict
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode
-from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 
 # Initialize ZeroEval for comprehensive tracing
 import zeroeval as ze
-from zeroeval.observability.tracer import tracer
 from zeroeval.observability.decorators import span
+from zeroeval.observability.tracer import tracer
 
 # Configure tracer for detailed agent tracing
 tracer.configure(flush_interval=1.0, max_spans=200)
 ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
 
 # Set up API keys
-os.environ.setdefault("OPENAI_API_KEY", "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")
+os.environ.setdefault(
+    "OPENAI_API_KEY",
+    "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",
+)
 
 
 # -----------------------------------------------------------------------------
 # ZeroEval tagging/demo configuration
 # -----------------------------------------------------------------------------
-GLOBAL_TAGS: Dict[str, str] = {"demo": "langgraph", "project": "zeroeval", "agent": "web_research"}
+GLOBAL_TAGS: Dict[str, str] = {
+    "demo": "langgraph",
+    "project": "zeroeval",
+    "agent": "web_research",
+}
 SESSION_ID = str(uuid.uuid4())
 SESSION_META = {"id": SESSION_ID, "name": "Web Research Agent Session"}
 # -----------------------------------------------------------------------------
@@ -55,6 +59,7 @@ SESSION_META = {"id": SESSION_ID, "name": "Web Research Agent Session"}
 # -----------------------------------------------------------------------------
 class ResearchState(TypedDict):
     """State for the research agent"""
+
     messages: Annotated[List[BaseMessage], add_messages]
     query: str
     search_queries: List[str]
@@ -82,25 +87,25 @@ def web_search(query: str, num_results: int = 5) -> Dict:
                 "title": f"Result 1 for: {query}",
                 "url": f"https://example.com/1/{query.replace(' ', '-')}",
                 "snippet": f"This is a detailed article about {query}. It covers various aspects including implementation details, best practices, and real-world applications.",
-                "date": "2024-01-15"
+                "date": "2024-01-15",
             },
             {
                 "title": f"Research Paper: {query}",
                 "url": f"https://arxiv.org/2/{query.replace(' ', '-')}",
                 "snippet": f"Academic research on {query} showing latest developments and theoretical foundations. Includes empirical studies and benchmarks.",
-                "date": "2024-02-20"
+                "date": "2024-02-20",
             },
             {
                 "title": f"Tutorial: Getting Started with {query}",
                 "url": f"https://tutorial.com/3/{query.replace(' ', '-')}",
                 "snippet": f"Step-by-step guide for beginners on {query}. Learn the fundamentals and build your first project.",
-                "date": "2023-12-10"
-            }
+                "date": "2023-12-10",
+            },
         ],
         "query": query,
-        "search_time": 0.234
+        "search_time": 0.234,
     }
-    
+
     return mock_results
 
 
@@ -111,7 +116,7 @@ def extract_key_facts(text: str) -> List[str]:
     facts = [
         f"Key finding from text: {text[:50]}...",
         "Important consideration mentioned in the source",
-        "Practical application identified"
+        "Practical application identified",
     ]
     return facts
 
@@ -132,75 +137,100 @@ except:
 # -----------------------------------------------------------------------------
 # Node Definitions
 # -----------------------------------------------------------------------------
-@span(name="agent.analyze_query", session=SESSION_META,
-      tags={**GLOBAL_TAGS, "stage": "analyze"})
+@span(
+    name="agent.analyze_query",
+    session=SESSION_META,
+    tags={**GLOBAL_TAGS, "stage": "analyze"},
+)
 def analyze_query_node(state: ResearchState) -> ResearchState:
     """Analyze the user query and plan search strategy."""
-    query = state["messages"][-1].content if state["messages"] else state.get("query", "")
-    
+    query = (
+        state["messages"][-1].content if state["messages"] else state.get("query", "")
+    )
+
     # Analyze complexity and create search queries
     search_queries = [
         query,  # Original query
         f"{query} latest developments 2024",  # Recent info
         f"{query} best practices",  # Practical info
     ]
-    
+
     return {
         "query": query,
         "search_queries": search_queries[:2],  # Start with first 2
         "requires_more_info": True,
         "search_count": 0,
-        "max_searches": 3
+        "max_searches": 3,
     }
 
 
-@span(name="agent.search_web", session=SESSION_META,
-      tags={**GLOBAL_TAGS, "stage": "search"}) 
+@span(
+    name="agent.search_web",
+    session=SESSION_META,
+    tags={**GLOBAL_TAGS, "stage": "search"},
+)
 def search_node(state: ResearchState) -> ResearchState:
     """Execute web searches based on the search plan."""
     search_results = state.get("search_results", [])
     search_count = state.get("search_count", 0)
-    
+
     # Get next search query
-    remaining_queries = [q for q in state["search_queries"] 
-                        if not any(r.get("query") == q for r in search_results)]
-    
+    remaining_queries = [
+        q
+        for q in state["search_queries"]
+        if not any(r.get("query") == q for r in search_results)
+    ]
+
     if not remaining_queries:
         return {"requires_more_info": False}
-    
+
     next_query = remaining_queries[0]
     print(f"\n🔍 Searching for: '{next_query}'")
-    
+
     # Perform search
     if search_model:
         # Real search using tool
-        result = search_model.invoke([
-            SystemMessage(content="You are a research assistant. Search for the following query."),
-            HumanMessage(content=f"Search for: {next_query}")
-        ])
+        result = search_model.invoke(
+            [
+                SystemMessage(
+                    content="You are a research assistant. Search for the following query."
+                ),
+                HumanMessage(content=f"Search for: {next_query}"),
+            ]
+        )
         # Extract tool call results
-        search_data = {"query": next_query, "results": []}  # Would parse from tool_calls
+        search_data = {
+            "query": next_query,
+            "results": [],
+        }  # Would parse from tool_calls
     else:
         # Mock search
         search_data = web_search.invoke({"query": next_query})
-    
+
     search_results.append(search_data)
     search_count += 1
-    
+
     return {
         "search_results": search_results,
         "search_count": search_count,
-        "messages": [AIMessage(content=f"Completed search {search_count} of {state['max_searches']}")],
-        "requires_more_info": search_count < state.get("max_searches", 3)
+        "messages": [
+            AIMessage(
+                content=f"Completed search {search_count} of {state['max_searches']}"
+            )
+        ],
+        "requires_more_info": search_count < state.get("max_searches", 3),
     }
 
 
-@span(name="agent.evaluate_results", session=SESSION_META,
-      tags={**GLOBAL_TAGS, "stage": "evaluate"})
+@span(
+    name="agent.evaluate_results",
+    session=SESSION_META,
+    tags={**GLOBAL_TAGS, "stage": "evaluate"},
+)
 def evaluate_results_node(state: ResearchState) -> ResearchState:
     """Evaluate search results and extract relevant information."""
     all_sources = []
-    
+
     for search in state.get("search_results", []):
         for result in search.get("results", []):
             source = {
@@ -208,26 +238,29 @@ def evaluate_results_node(state: ResearchState) -> ResearchState:
                 "url": result["url"],
                 "snippet": result["snippet"],
                 "relevance_score": 0.85,  # Would be calculated
-                "key_facts": extract_key_facts.invoke({"text": result["snippet"]})
+                "key_facts": extract_key_facts.invoke({"text": result["snippet"]}),
             }
             all_sources.append(source)
-    
+
     # Sort by relevance
     all_sources.sort(key=lambda x: x["relevance_score"], reverse=True)
-    
+
     return {
         "sources": all_sources[:10],  # Top 10 sources
-        "messages": [AIMessage(content=f"Evaluated {len(all_sources)} sources")]
+        "messages": [AIMessage(content=f"Evaluated {len(all_sources)} sources")],
     }
 
 
-@span(name="agent.synthesize", session=SESSION_META,
-      tags={**GLOBAL_TAGS, "stage": "synthesize"})
+@span(
+    name="agent.synthesize",
+    session=SESSION_META,
+    tags={**GLOBAL_TAGS, "stage": "synthesize"},
+)
 def synthesize_node(state: ResearchState) -> ResearchState:
     """Synthesize findings into a comprehensive answer."""
     query = state.get("query", "")
     sources = state.get("sources", [])
-    
+
     if not sources:
         synthesis = f"I couldn't find sufficient information about '{query}'."
     else:
@@ -242,7 +275,7 @@ Based on my research on "{query}", here's what I found:
             synthesis += f"{i}. **{source['title']}**\n"
             synthesis += f"   - {source['snippet']}\n"
             synthesis += f"   - Source: {source['url']}\n\n"
-        
+
         synthesis += f"""
 ## Summary
 
@@ -251,28 +284,27 @@ The sources include recent developments, best practices, and practical applicati
 
 Would you like me to dive deeper into any specific aspect?
 """
-    
+
     return {
         "synthesis": synthesis,
         "messages": [AIMessage(content=synthesis)],
-        "requires_more_info": False
+        "requires_more_info": False,
     }
 
 
-def should_search_more(state: ResearchState) -> Literal["search", "evaluate", "synthesize"]:
+def should_search_more(
+    state: ResearchState,
+) -> Literal["search", "evaluate", "synthesize"]:
     """Decide whether to search more or move to synthesis."""
     search_count = state.get("search_count", 0)
     max_searches = state.get("max_searches", 3)
     requires_more = state.get("requires_more_info", True)
-    
-    if search_count == 0:
+
+    if search_count == 0 or (requires_more and search_count < max_searches):
         return "search"
-    elif requires_more and search_count < max_searches:
-        return "search"
-    elif state.get("search_results"):
+    if state.get("search_results"):
         return "evaluate"
-    else:
-        return "synthesize"
+    return "synthesize"
 
 
 # -----------------------------------------------------------------------------
@@ -293,22 +325,14 @@ workflow.add_edge(START, "analyze")
 workflow.add_conditional_edges(
     "analyze",
     should_search_more,
-    {
-        "search": "search",
-        "evaluate": "evaluate",
-        "synthesize": "synthesize"
-    }
+    {"search": "search", "evaluate": "evaluate", "synthesize": "synthesize"},
 )
 
 # After search, decide next step
 workflow.add_conditional_edges(
     "search",
     should_search_more,
-    {
-        "search": "search",
-        "evaluate": "evaluate", 
-        "synthesize": "synthesize"
-    }
+    {"search": "search", "evaluate": "evaluate", "synthesize": "synthesize"},
 )
 
 # Evaluate leads to synthesis
@@ -325,67 +349,91 @@ app = workflow.compile(checkpointer=checkpointer)
 # -----------------------------------------------------------------------------
 # Example Usage
 # -----------------------------------------------------------------------------
-@span(name="research_demo", session=SESSION_META,
-      tags={**GLOBAL_TAGS, "operation": "research_demo"},
-      trace_tags={"run_type": "demo"},
-      session_tags={"env": "dev"})
+@span(
+    name="research_demo",
+    session=SESSION_META,
+    tags={**GLOBAL_TAGS, "operation": "research_demo"},
+    trace_tags={"run_type": "demo"},
+    session_tags={"env": "dev"},
+)
 async def research_demo():
     """Demonstrate the research agent with different queries."""
-    
+
     print("🤖 AI Research Assistant")
     print("=" * 60)
-    
+
     # Example 1: Technical Research
     print("\n📚 Example 1: Technical Research Query")
     print("-" * 60)
-    
+
     config = {"configurable": {"thread_id": "research-1"}}
-    
-    result = await app.ainvoke({
-        "messages": [HumanMessage(content="What are the latest developments in quantum computing error correction?")],
-        "max_searches": 3
-    }, config=config)
-    
-    print(f"\n✅ Research completed!")
+
+    result = await app.ainvoke(
+        {
+            "messages": [
+                HumanMessage(
+                    content="What are the latest developments in quantum computing error correction?"
+                )
+            ],
+            "max_searches": 3,
+        },
+        config=config,
+    )
+
+    print("\n✅ Research completed!")
     print(f"- Searches performed: {result.get('search_count', 0)}")
     print(f"- Sources found: {len(result.get('sources', []))}")
     print(f"\nSynthesis preview: {result.get('synthesis', '')[:200]}...")
-    
+
     # Example 2: Follow-up Question
     print("\n\n📚 Example 2: Follow-up Question")
     print("-" * 60)
-    
-    result2 = await app.ainvoke({
-        "messages": [HumanMessage(content="Can you explain more about surface codes specifically?")],
-    }, config=config)
-    
-    print(f"\nFollow-up handled with context from previous search")
-    
+
+    result2 = await app.ainvoke(
+        {
+            "messages": [
+                HumanMessage(
+                    content="Can you explain more about surface codes specifically?"
+                )
+            ],
+        },
+        config=config,
+    )
+
+    print("\nFollow-up handled with context from previous search")
+
     # Example 3: Streaming Research
     print("\n\n📚 Example 3: Streaming Research Progress")
     print("-" * 60)
-    
+
     print("Researching 'How do large language models handle context windows?'")
     print("\nProgress: ", end="", flush=True)
-    
+
     config3 = {"configurable": {"thread_id": "research-3"}}
-    
-    async for event in app.astream({
-        "messages": [HumanMessage(content="How do large language models handle context windows?")],
-        "max_searches": 2
-    }, config=config3):
+
+    async for event in app.astream(
+        {
+            "messages": [
+                HumanMessage(
+                    content="How do large language models handle context windows?"
+                )
+            ],
+            "max_searches": 2,
+        },
+        config=config3,
+    ):
         # Show which node is executing
         for key in event:
             if key not in ["__root__", "messages"]:
                 print(f"[{key}]", end=" ", flush=True)
-    
+
     print("\n\n✨ Done! Check your ZeroEval dashboard to see:")
     print("- 🎯 Complete agent execution traces")
-    print("- 🔍 Individual search operations") 
+    print("- 🔍 Individual search operations")
     print("- 🧠 Decision points and routing")
     print("- 📊 Performance metrics for each step")
     print("- 🔄 State transformations throughout the workflow")
 
 
 if __name__ == "__main__":
-    asyncio.run(research_demo()) 
+    asyncio.run(research_demo())

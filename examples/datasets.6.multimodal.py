@@ -1,6 +1,6 @@
-import os
 import sys
 from pathlib import Path
+
 import zeroeval as ze
 
 # -----------------------------------------------------------------------------
@@ -49,21 +49,21 @@ reference_transcripts = {
     "Speaker0050_006": "No, it was not suicide. So far from intending to take his own life, Mr. Shackford, it appeared, had made rather careful preparations to live that day. The breakfast-table had been laid overnight, the coals left ready for kindling in the Franklin stove, and a kettle, filled with water to be heated for his tea or coffee, stood on the hearth. Two facts had sharply demonstrated themselves. First, that Mr. Shackford had been murdered, and second, that the spur to the crime had been the possession of a sum of money, which the deceased was supposed to keep in a strong-box in his bedroom. The padlock had been wrenched open, and the less valuable contents of the chest, chiefly papers, scattered over the carpet. A memorandum among the papers seemed to specify the respective sums in notes and gold that had been deposited in the box. A document of some kind had been torn into minute pieces and thrown into the waste-basket. On close scrutiny, a word or two here and there revealed the fact that the document was of a legal character. The fragments were put into an envelope, and given in charge",
     "Speaker0050_007": "of Mr. Shackford's lawyer, who placed seals on that and on the drawers of an escritoire, which stood in the corner and contained other manuscript. The instrument with which the fatal blow had been dealt, for the autopsy showed that there had been but one blow, was not only not discoverable, but the fashion of it defied conjecture. The shape of the wound did not indicate the use of any implement known to the jurors, several of whom were skilled machinists. The wound was an inch and three-quarters in length, and very deep at the extremities. In the middle it scarcely penetrated to the cranium. So peculiar a cut could not have been produced with the claw part of a hammer, because the claw is always curved, and the incision was straight. A flat claw, which is used in opening packing cases, was suggested. A collection of several sizes manufactured was procured, but none corresponded with the wound. They were either too wide or too narrow. Moreover, the cut was as thin as the blade of a case-knife. That was never done by any tool in these parts,\" declared Stevens, the foreman of the finishing",
     "Speaker0050_008": "shop at Slocum's. The assassin or assassins had entered by the scullery door, the simple fastening of which, a hook and staple, had been broken. There were footprints in the soft clay path leading from the side gate to the stone step, but Mary Hennessy had so confused and obliterated the outlines that now it was impossible accurately to measure them. A half-burnt match was found under the sink, evidently thrown there by the burglars. It was of a kind known as the safety match, which can be ignited only by friction on a strip of chemically prepared paper glued to the box. As no box of this description was discovered, and as all the other matches in the house were of a different make, the charred splinter was preserved. The most minute examination failed to show more than this. The last time Mr. Shackford had been seen alive was at six o'clock the previous evening. Who had done the deed? Tramps, answered Stillwater with one voice, though Stillwater lay somewhat out of the natural highway, and the Tramp, that bitter blossom of civilization,",
-    "Speaker0050_009": "whose seed was blown to us from over the seas, was not then so common by the New England roadsides as he became five or six years later. But it was intolerable not to have a theory, it was that or none, for conjecture turned to no one in the village. To be sure, Mr. Shackford had been in litigation with several of the corporations, and had had legal quarrels with more than one of his neighbours. But Mr. Shackford had never been victorious in any of these contests, and the incentive of revenge was wanting to explain the crime. Besides, it was so clearly robbery. Though the gathering around the Shackford house had reduced itself to half a dozen idlers, and the less frequented streets had resumed their normal aspect of dullness, there was a strange electric quality in the atmosphere. The community was in that state of suppressed agitation and suspicion which no word adequately describes. The slightest circumstance would have swayed it to the belief in any man's guilt, and, indeed, there were men in Stillwater quite capable of disposing a fellow-creature for a much smaller price."
+    "Speaker0050_009": "whose seed was blown to us from over the seas, was not then so common by the New England roadsides as he became five or six years later. But it was intolerable not to have a theory, it was that or none, for conjecture turned to no one in the village. To be sure, Mr. Shackford had been in litigation with several of the corporations, and had had legal quarrels with more than one of his neighbours. But Mr. Shackford had never been victorious in any of these contests, and the incentive of revenge was wanting to explain the crime. Besides, it was so clearly robbery. Though the gathering around the Shackford house had reduced itself to half a dozen idlers, and the less frequented streets had resumed their normal aspect of dullness, there was a strange electric quality in the atmosphere. The community was in that state of suppressed agitation and suspicion which no word adequately describes. The slightest circumstance would have swayed it to the belief in any man's guilt, and, indeed, there were men in Stillwater quite capable of disposing a fellow-creature for a much smaller price.",
 }
 
 records = []
 for wav_path in audio_files:
     # Example file name: Speaker0050_003.wav
     stem = wav_path.stem  # -> "Speaker0050_003"
-    
+
     # Get the reference transcript for this specific file
     expected_transcript = reference_transcripts.get(stem, "")
 
     record = {
         "segment_id": stem,  # Use full segment ID (e.g. "Speaker0050_000")
         "language": "English",
-        "expected_transcript": expected_transcript
+        "expected_transcript": expected_transcript,
     }
     records.append(record)
 
@@ -80,9 +80,7 @@ asr_dataset = ze.Dataset(
 # Attach the actual audio to each row under the column name `audio_clip`
 for idx, wav_path in enumerate(audio_files):
     asr_dataset.add_audio(
-        row_index=idx,
-        column_name="audio_clip",
-        audio_path=str(wav_path)
+        row_index=idx, column_name="audio_clip", audio_path=str(wav_path)
     )
     print(f"Attached audio file {wav_path.name} to row {idx}.")
 
@@ -93,4 +91,4 @@ print(f"Number of records: {len(asr_dataset)}")
 print(f"Columns: {asr_dataset.columns}")
 
 # Uncomment the following line to push the dataset to your ZeroEval workspace
-asr_dataset.push() 
+asr_dataset.push()

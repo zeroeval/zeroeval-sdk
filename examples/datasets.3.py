@@ -12,7 +12,7 @@ dataset = ze.Dataset(
         {"input": "Chile", "output": "Santiago"},
         {"input": "Ecuador", "output": "Quito"},
         {"input": "Venezuela", "output": "Caracas"},
-    ]
+    ],
 )
 
 dataset.push()
@@ -21,16 +21,10 @@ dataset = ze.Dataset.pull("Capitals-again")
 
 dataset.add_rows(
     [
-        {
-            "input": "Brazil",
-            "output": "Brasília"
-        },
-        {
-            "input": "Argentina",
-            "output": "Buenos Aires"
-        }
+        {"input": "Brazil", "output": "Brasília"},
+        {"input": "Argentina", "output": "Buenos Aires"},
     ]
-)  
+)
 
 dataset.delete_row(0)
 
@@ -38,20 +32,11 @@ dataset.push(create_new_version=True)
 
 print(dataset[0])
 
-dataset.update_row(
-    0,
-    {
-        "input": dataset[0]["input"],
-        "output": "Mexico City"
-    }
-)
+dataset.update_row(0, {"input": dataset[0]["input"], "output": "Mexico City"})
 
 print(dataset[2:3])
 
-dataset[4] = {
-    "input": "Mexico",
-    "output": "Mexico City"
-}
+dataset[4] = {"input": "Mexico", "output": "Mexico City"}
 
 del dataset[3]
 

@@ -1,16 +1,16 @@
-import os
 import asyncio
+import os
 import uuid
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langgraph.graph import MessagesState, StateGraph, START, END
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 # Initialise ZeroEval tracer (auto-sets up integrations) BEFORE building any
 # LangGraph graphs so that their .compile() methods are patched.
 import zeroeval as ze
-from zeroeval.observability.tracer import tracer
 from zeroeval.observability.decorators import span
+from zeroeval.observability.tracer import tracer
 
 # Common demo tags
 GLOBAL_TAGS = {"demo": "langgraph", "project": "zeroeval"}
@@ -33,7 +33,10 @@ session_id = str(uuid.uuid4())
 #   $ pip install langgraph langchain-openai
 # -----------------------------------------------------------------------------
 
-os.environ.setdefault("OPENAI_API_KEY", "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")
+os.environ.setdefault(
+    "OPENAI_API_KEY",
+    "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",
+)
 
 # -----------------------------------------------------------------------------
 # Helper – obtain an OpenAI key interactively (optional)
@@ -73,23 +76,29 @@ CHAT_MODEL = _init_chat_model()
 # -----------------------------------------------------------------------------
 
 
-@span(name="call_llm_node", session={"id": session_id, "name": "LangGraph Demo Session"},
-      tags={**GLOBAL_TAGS, "node": "llm", "provider": "openai"})
+@span(
+    name="call_llm_node",
+    session={"id": session_id, "name": "LangGraph Demo Session"},
+    tags={**GLOBAL_TAGS, "node": "llm", "provider": "openai"},
+)
 def call_llm(state: MessagesState):
     """Simple node that calls an LLM (sync)."""
     if CHAT_MODEL is None:
         # Fallback to an echo response so the demo runs without a key.
         response = {
             "role": "assistant",
-            "content": f"(echo) {state['messages'][-1]['content']}"
+            "content": f"(echo) {state['messages'][-1]['content']}",
         }
     else:
         response = CHAT_MODEL.invoke(state["messages"])
     return {"messages": [response]}
 
 
-@span(name="finish_node", session={"id": session_id, "name": "LangGraph Demo Session"},
-      tags={**GLOBAL_TAGS, "node": "finish"})
+@span(
+    name="finish_node",
+    session={"id": session_id, "name": "LangGraph Demo Session"},
+    tags={**GLOBAL_TAGS, "node": "finish"},
+)
 def finish(state: MessagesState):
     """Terminal node – just returns the current state."""
     return {}
@@ -116,21 +125,27 @@ if __name__ == "__main__":
     user_input = input("Ask something: ") or "Hello LangGraph!"
 
     # Sync run ---------------------------------------------------------------
-    @span(name="sync_invoke", session={"id": session_id, "name": "LangGraph Demo Session"},
-          tags={**GLOBAL_TAGS, "operation": "sync_invoke"},
-          trace_tags={"run_type": "sync"},
-          session_tags={"env": "dev"})
+    @span(
+        name="sync_invoke",
+        session={"id": session_id, "name": "LangGraph Demo Session"},
+        tags={**GLOBAL_TAGS, "operation": "sync_invoke"},
+        trace_tags={"run_type": "sync"},
+        session_tags={"env": "dev"},
+    )
     def run_sync():
         result = app.invoke({"messages": [HumanMessage(content=user_input)]})
         print("\nSync result:\n", result["messages"][-1].content)
         return result
-    
+
     run_sync()
 
     # Async run --------------------------------------------------------------
-    @span(name="async_invoke", session={"id": session_id, "name": "LangGraph Demo Session"},
-          tags={**GLOBAL_TAGS, "operation": "async_invoke"},
-          trace_tags={"run_type": "async"})
+    @span(
+        name="async_invoke",
+        session={"id": session_id, "name": "LangGraph Demo Session"},
+        tags={**GLOBAL_TAGS, "operation": "async_invoke"},
+        trace_tags={"run_type": "async"},
+    )
     async def async_run():
         out = await app.ainvoke({"messages": [HumanMessage(content="Async hi!")]})
         print("\nAsync result:\n", out["messages"][-1].content)
@@ -138,9 +153,12 @@ if __name__ == "__main__":
     asyncio.run(async_run())
 
     # Stream run -------------------------------------------------------------
-    @span(name="stream_invoke", session={"id": session_id, "name": "LangGraph Demo Session"},
-          tags={**GLOBAL_TAGS, "operation": "stream_invoke"},
-          trace_tags={"run_type": "stream"})
+    @span(
+        name="stream_invoke",
+        session={"id": session_id, "name": "LangGraph Demo Session"},
+        tags={**GLOBAL_TAGS, "operation": "stream_invoke"},
+        trace_tags={"run_type": "stream"},
+    )
     def run_stream():
         print("\nStreaming tokens:")
         for chunk in app.stream(
@@ -150,5 +168,5 @@ if __name__ == "__main__":
                 if getattr(msg, "content", ""):
                     print(msg.content, end=" | ")
         print("\nDone.")
-    
-    run_stream() 
+
+    run_stream()

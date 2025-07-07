@@ -1,16 +1,16 @@
-import types
 import functools
-from typing import Optional, Dict, Any
-from zeroeval.observability.tracer import tracer
+import types
 
 # This global registry will store metadata about each decorated function.
 registered_experiments = []
+
 
 def experiment(dataset=None, model=None):
     """
     A decorator that attaches the specified dataset and model to the function.
     Also optionally copies the function globals if needed.
     """
+
     def decorator(fn):
         # (Optional) Copy the original function's globals if you truly need a new global context.
         new_globals = dict(fn.__globals__)
@@ -19,11 +19,7 @@ def experiment(dataset=None, model=None):
 
         # Create a new function object with updated globals
         new_fn = types.FunctionType(
-            fn.__code__,
-            new_globals,
-            fn.__name__,
-            fn.__defaults__,
-            fn.__closure__
+            fn.__code__, new_globals, fn.__name__, fn.__defaults__, fn.__closure__
         )
 
         # Maintain function metadata
@@ -35,4 +31,5 @@ def experiment(dataset=None, model=None):
         new_fn._exp_metadata = {"dataset": dataset, "model": model}
         registered_experiments.append(new_fn)
         return new_fn
+
     return decorator

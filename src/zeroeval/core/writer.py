@@ -1,13 +1,14 @@
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, List, Dict, Any, Optional, Union
 import json
-import requests
 import os
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Dict, Optional, Union
+
+import requests
 
 if TYPE_CHECKING:
     from .dataset_class import Dataset
+    from .evaluator_class import Evaluation, Evaluator
     from .experiment_class import Experiment, ExperimentResult
-    from .evaluator_class import Evaluator, Evaluation
 
 
 # Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
@@ -20,7 +21,6 @@ class DatasetWriter(ABC):
     @abstractmethod
     def write(self, dataset: "Dataset", create_new_version: bool = False) -> None:
         """Write a dataset to the destination."""
-        pass
 
 
 class ExperimentResultWriter(ABC):
@@ -37,7 +37,6 @@ class ExperimentResultWriter(ABC):
         Return a str (experiment_id) if writing an Experiment,
         or None if writing an ExperimentResult.
         """
-        pass
 
 
 class EvaluatorWriter(ABC):
@@ -52,14 +51,15 @@ class EvaluatorWriter(ABC):
         Return a str (evaluator_id) if writing an Evaluator,
         or None if writing an Evaluation.
         """
-        pass
 
 
 class _BackendWriter:
     """Base class for backend writers to handle authentication."""
 
     def __init__(self):
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        self.api_url = os.environ.get(
+            "ZEROEVAL_API_URL", "https://api.zeroeval.com"
+        ).rstrip("/")
         self._api_key: Optional[str] = None
         self._workspace_id: Optional[str] = None
         self._headers: Optional[Dict[str, str]] = None
@@ -87,14 +87,13 @@ class _BackendWriter:
             except requests.HTTPError as e:
                 if e.response.status_code == 401:
                     raise ValueError("Invalid API key")
-                elif e.response.status_code == 404:
+                if e.response.status_code == 404:
                     raise ValueError("API key does not resolve to a workspace")
-                else:
-                    raise ValueError(
-                        f"Failed to resolve API key (HTTP {e.response.status_code})"
-                    )
+                raise ValueError(
+                    f"Failed to resolve API key (HTTP {e.response.status_code})"
+                )
             except requests.RequestException as e:
-                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
+                raise RuntimeError(f"Network error while resolving API key: {e!s}")
 
         if self._headers is None:
             self._headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -184,15 +183,9 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
                 create_url, json=create_payload, headers=self._headers
             )
 
-            if response.status_code == 409 and create_new_version:
-                existing_id = self._find_existing_dataset_id(dataset.name)
-                if not existing_id:
-                    raise ValueError(
-                        "Dataset conflict but not found. Check workspace name."
-                    )
-                self._post_data_to_existing_dataset(existing_id, dataset)
-                dataset._backend_id = existing_id
-            elif response.status_code == 409:
+            if (
+                response.status_code == 409 and create_new_version
+            ) or response.status_code == 409:
                 existing_id = self._find_existing_dataset_id(dataset.name)
                 if not existing_id:
                     raise ValueError(
@@ -211,7 +204,7 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
         except requests.HTTPError as e:
             self._handle_http_error(e)
         except requests.RequestException as e:
-            raise RuntimeError(f"Connection error: {str(e)}")
+            raise RuntimeError(f"Connection error: {e!s}")
 
     def _find_existing_dataset_id(self, dataset_name: str) -> Optional[str]:
         """Find dataset ID by name in the workspace."""
@@ -228,7 +221,7 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
                 (ds["id"] for ds in datasets if ds["name"] == dataset_name), None
             )
         except requests.RequestException as e:
-            raise RuntimeError(f"Failed to lookup existing dataset: {str(e)}")
+            raise RuntimeError(f"Failed to lookup existing dataset: {e!s}")
 
     def _post_data_to_existing_dataset(
         self, dataset_id: str, dataset: "Dataset"
@@ -255,14 +248,13 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
         """Handle common HTTP errors with appropriate messages."""
         if error.response.status_code in (401, 403):
             raise ValueError("Authentication error: Check API key/permissions")
-        elif error.response.status_code >= 500:
-            raise RuntimeError(f"Backend server error: {str(error)}")
-        else:
-            try:
-                detail = error.response.json().get("detail", str(error))
-                raise ValueError(f"API error: {detail}")
-            except:
-                raise ValueError(f"API error: {str(error)}")
+        if error.response.status_code >= 500:
+            raise RuntimeError(f"Backend server error: {error!s}")
+        try:
+            detail = error.response.json().get("detail", str(error))
+            raise ValueError(f"API error: {detail}")
+        except:
+            raise ValueError(f"API error: {error!s}")
 
 
 class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
@@ -275,7 +267,7 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
         self, evaluator_or_evaluation: Union["Evaluator", "Evaluation"]
     ) -> Union[str, None]:
         """Write an evaluator or evaluation to the backend."""
-        from .evaluator_class import Evaluator, Evaluation
+        from .evaluator_class import Evaluation, Evaluator
 
         self._ensure_auth_setup()
 

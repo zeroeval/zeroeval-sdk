@@ -1,21 +1,22 @@
-'''LangGraph Tags Demo
+"""LangGraph Tags Demo
 
 Demonstrates:
 • Static tags via @span / with span blocks
 • Automatic propagation to child spans
 • Dynamic tagging of current span, trace and session using helper functions.
-'''
+"""
 
 import time
 import uuid
-from typing import TypedDict, Annotated
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langgraph.graph import StateGraph, START, END
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 import zeroeval as ze
-from zeroeval.observability.tracer import tracer
 from zeroeval.observability.decorators import span
+from zeroeval.observability.tracer import tracer
 
 # Configure tracer for quick flushing in demos
 tracer.configure(flush_interval=1.0, max_spans=100)
@@ -28,10 +29,12 @@ DEMO_TAGS = {"example": "langgraph_tags_demo", "project": "zeroeval"}
 SESSION_ID = str(uuid.uuid4())
 SESSION_INFO = {"id": SESSION_ID, "name": "Tags Demo Session"}
 
+
 # ---------------------- Graph definition -----------------------------
 class GraphState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     count: int
+
 
 @span(
     name="demo.process",
@@ -48,7 +51,11 @@ def process(state: GraphState) -> GraphState:
         tags={**DEMO_TAGS, "operation": "extract"},
     ):
         extracted = last.upper()
-    return {"messages": [AIMessage(content=extracted)], "count": state.get("count", 0) + 1}
+    return {
+        "messages": [AIMessage(content=extracted)],
+        "count": state.get("count", 0) + 1,
+    }
+
 
 @span(
     name="demo.enhance",
@@ -61,9 +68,14 @@ def enhance(state: GraphState) -> GraphState:
     msg = state["messages"][-1].content + " ✨"
     return {"messages": [AIMessage(content=msg)], "count": state.get("count", 0) + 1}
 
+
 def finish(state: GraphState) -> GraphState:
     print("→ Finishing …")
-    return {"messages": [AIMessage(content="✅ done")], "count": state.get("count", 0) + 1}
+    return {
+        "messages": [AIMessage(content="✅ done")],
+        "count": state.get("count", 0) + 1,
+    }
+
 
 # Build graph
 workflow = StateGraph(GraphState)
@@ -109,4 +121,4 @@ with span(
 
 # Flush everything to the backend
 tracer.flush()
-print("✅ demo finished – inspect tags in your ZeroEval dashboard") 
+print("✅ demo finished – inspect tags in your ZeroEval dashboard")

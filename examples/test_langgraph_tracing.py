@@ -2,15 +2,16 @@
 
 import time
 import uuid
-from typing import TypedDict, Annotated
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langgraph.graph import StateGraph, START, END
+from typing import Annotated, TypedDict
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 # Initialize ZeroEval tracer before building graphs
 import zeroeval as ze
-from zeroeval.observability.tracer import tracer
 from zeroeval.observability.decorators import span
+from zeroeval.observability.tracer import tracer
 
 # Configure tracer
 tracer.configure(flush_interval=1.0, max_spans=100)
@@ -37,22 +38,30 @@ print("- langchain.* spans for node executions and internal operations")
 print("- Custom spans from @span decorators")
 print("=" * 60)
 
+
 # Simple state
 class GraphState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     counter: int
 
+
 # Nodes with manual spans to show hierarchy
 @span(
     name="custom.process_message",
     session=SESSION_INFO,
-    tags={**GLOBAL_TAGS, "node": "process", "graph": "simple_demo", "env": "local", "team": "dev"},
+    tags={
+        **GLOBAL_TAGS,
+        "node": "process",
+        "graph": "simple_demo",
+        "env": "local",
+        "team": "dev",
+    },
 )
 def process_message(state: GraphState) -> GraphState:
     """First node - processes the message"""
     print("  → Processing message...")
     time.sleep(0.1)  # Simulate work
-    
+
     with span(
         name="custom.extract_info",
         session=SESSION_INFO,
@@ -61,11 +70,12 @@ def process_message(state: GraphState) -> GraphState:
         # Nested span to show hierarchy
         message_content = state["messages"][-1].content
         print(f"    Extracted: '{message_content}'")
-    
+
     return {
         "messages": [AIMessage(content=f"Processed: {message_content}")],
-        "counter": state.get("counter", 0) + 1
+        "counter": state.get("counter", 0) + 1,
     }
+
 
 @span(
     name="custom.enhance_message",
@@ -76,22 +86,24 @@ def enhance_message(state: GraphState) -> GraphState:
     """Second node - enhances the processed message"""
     print("  → Enhancing message...")
     time.sleep(0.1)  # Simulate work
-    
+
     last_msg = state["messages"][-1].content
     enhanced = f"{last_msg} [Enhanced with metadata]"
-    
+
     return {
         "messages": [AIMessage(content=enhanced)],
-        "counter": state.get("counter", 0) + 1
+        "counter": state.get("counter", 0) + 1,
     }
+
 
 def finalize_message(state: GraphState) -> GraphState:
     """Final node - no manual span to show contrast"""
     print("  → Finalizing...")
     return {
         "messages": [AIMessage(content="✅ Complete!")],
-        "counter": state.get("counter", 0) + 1
+        "counter": state.get("counter", 0) + 1,
     }
+
 
 # Build the graph
 print("\n📊 Building graph...")
@@ -116,10 +128,9 @@ with span(
     session=SESSION_INFO,
     tags={**GLOBAL_TAGS, "operation": "invoke", "run_type": "invoke", "env": "local"},
 ):
-    result = app.invoke({
-        "messages": [HumanMessage(content="Hello, LangGraph!")],
-        "counter": 0
-    })
+    result = app.invoke(
+        {"messages": [HumanMessage(content="Hello, LangGraph!")], "counter": 0}
+    )
 
 print(f"\nResult: {result['counter']} steps executed")
 print(f"Final message: {result['messages'][-1].content}")
@@ -168,4 +179,4 @@ Check your ZeroEval dashboard to see:
 # Flush traces
 time.sleep(2)
 tracer.flush()
-print("\n✅ Traces flushed to ZeroEval dashboard") 
+print("\n✅ Traces flushed to ZeroEval dashboard")

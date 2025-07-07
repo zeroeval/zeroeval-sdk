@@ -31,8 +31,8 @@ dataset = ze.Dataset(
         {"input": "Nigeria", "output": "Abuja"},
         {"input": "Saudi Arabia", "output": "Riyadh"},
         {"input": "South Korea", "output": "Seoul"},
-        {"input": "Thailand", "output": "Bangkok"}
-    ]
+        {"input": "Thailand", "output": "Bangkok"},
+    ],
 )
 
 # dataset.push()
@@ -40,4 +40,3 @@ dataset = ze.Dataset(
 dataset.push(create_new_version=True)
 dataset.push(create_new_version=True)
 dataset.push(create_new_version=True)
-

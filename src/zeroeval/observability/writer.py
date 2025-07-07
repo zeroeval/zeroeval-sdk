@@ -1,20 +1,20 @@
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any
 import json
-import os
-import requests
-from datetime import datetime
 import logging
+import os
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List
+
+import requests
 
 logger = logging.getLogger(__name__)
 
+
 class SpanWriter(ABC):
     """Interface for writing spans to different destinations."""
-    
+
     @abstractmethod
     def write(self, spans: List[Dict[str, Any]]) -> None:
         """Write a batch of spans to the destination."""
-        pass
 
 
 class SpanBackendWriter(SpanWriter):
@@ -27,11 +27,12 @@ class SpanBackendWriter(SpanWriter):
         """Initialize the writer with an API URL and optional API key."""
         # Don't read API URL at init time - read it lazily at write time
         # This allows ze.init() to set the environment variable first
-        pass
 
     def _get_api_url(self) -> str:
         """Get the API URL from environment, supporting lazy loading after ze.init()."""
-        return os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+        return os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip(
+            "/"
+        )
 
     def _get_api_key(self) -> str:
         """Get the API key from environment, supporting lazy loading after ze.init()."""
@@ -54,8 +55,10 @@ class SpanBackendWriter(SpanWriter):
         for span in spans:
             try:
                 # Convert traceback object to string if present
-                error_stack = str(span.get("error_stack")) if span.get("error_stack") else None
-                
+                error_stack = (
+                    str(span.get("error_stack")) if span.get("error_stack") else None
+                )
+
                 # Prepare session data if session_name or session_tags are provided
                 session_data = None
                 if span.get("session_id"):
@@ -67,7 +70,7 @@ class SpanBackendWriter(SpanWriter):
                         # Attach tags if provided
                         if span.get("session_tags"):
                             session_data["tags"] = span["session_tags"]
-                
+
                 formatted_span = {
                     "id": span["span_id"],
                     "session_id": span.get("session_id"),
@@ -79,8 +82,12 @@ class SpanBackendWriter(SpanWriter):
                     "duration_ms": span["duration_ms"],
                     "attributes": span.get("attributes", {}),
                     "status": span.get("status", "unset"),
-                    "input_data": json.dumps(span["input_data"]) if isinstance(span["input_data"], (dict, list)) else span["input_data"],
-                    "output_data": json.dumps(span["output_data"]) if isinstance(span["output_data"], (dict, list)) else span["output_data"],
+                    "input_data": json.dumps(span["input_data"])
+                    if isinstance(span["input_data"], (dict, list))
+                    else span["input_data"],
+                    "output_data": json.dumps(span["output_data"])
+                    if isinstance(span["output_data"], (dict, list))
+                    else span["output_data"],
                     "code": span.get("code"),
                     "code_filepath": span.get("code_filepath"),
                     "code_lineno": span.get("code_lineno"),
@@ -90,15 +97,18 @@ class SpanBackendWriter(SpanWriter):
                     "experiment_result_id": span.get("experiment_result_id"),
                     "tags": span.get("tags", {}),
                     "trace_tags": span.get("trace_tags", {}),
-                    "session_tags": span.get("session_tags", {})
+                    "session_tags": span.get("session_tags", {}),
                 }
-                
+
                 # Add session object if we have session name or tags
                 if session_data:
                     formatted_span["session"] = session_data
                 formatted_spans.append(formatted_span)
             except Exception:
-                logger.error(f"Failed to format span: {span.get('name', 'unnamed')}", exc_info=True)
+                logger.error(
+                    f"Failed to format span: {span.get('name', 'unnamed')}",
+                    exc_info=True,
+                )
                 continue
 
         if not formatted_spans:
@@ -114,9 +124,13 @@ class SpanBackendWriter(SpanWriter):
 
         logger.info(f"Sending {len(formatted_spans)} spans to {endpoint}")
         try:
-            response = requests.post(endpoint, headers=headers, json=formatted_spans, timeout=10)
+            response = requests.post(
+                endpoint, headers=headers, json=formatted_spans, timeout=10
+            )
             response.raise_for_status()
-            logger.info(f"Successfully posted {len(formatted_spans)} spans. Response: {response.status_code}")
+            logger.info(
+                f"Successfully posted {len(formatted_spans)} spans. Response: {response.status_code}"
+            )
         except requests.HTTPError as e:
             if e.response.status_code == 401:
                 logger.error(

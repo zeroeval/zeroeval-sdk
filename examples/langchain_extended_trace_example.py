@@ -1,6 +1,6 @@
 """examples/langchain_extended_trace_example.py
 
-Showcase ZeroEval's *extended* LangChain integration added in May-2025.  
+Showcase ZeroEval's *extended* LangChain integration added in May-2025.
 We exercise the newly-instrumented abstractions:
 
 • Tools – `BaseTool.run` / `arun`
@@ -23,8 +23,8 @@ poetry add langchain-openai  # or: pip install langchain-openai
 
 from __future__ import annotations
 
-import os
 import asyncio
+import os
 import time
 from typing import List
 
@@ -48,17 +48,18 @@ os.environ.setdefault(
 # -----------------------------------------------------------------------------
 # LangChain imports (requires `langchain-openai` extra)
 # -----------------------------------------------------------------------------
-from langchain_openai import ChatOpenAI  # type: ignore
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.tools import BaseTool
-from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage  # type: ignore
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.tools import BaseTool
+from langchain_openai import ChatOpenAI  # type: ignore
 
 # -----------------------------------------------------------------------------
 # 1️⃣  Custom Tool example
 # -----------------------------------------------------------------------------
+
 
 class EchoTool(BaseTool):
     """Very simple synchronous / asynchronous echo tool."""
@@ -66,10 +67,10 @@ class EchoTool(BaseTool):
     name: str = "echo"
     description: str = "Echoes back the given text."
 
-    def _run(self, text: str) -> str:  # noqa: D401
+    def _run(self, text: str) -> str:
         return f"Echo: {text}"
 
-    async def _arun(self, text: str) -> str:  # noqa: D401
+    async def _arun(self, text: str) -> str:
         return self._run(text)
 
 
@@ -79,6 +80,7 @@ echo_tool = EchoTool()
 # 2️⃣  Custom Retriever example
 # -----------------------------------------------------------------------------
 
+
 class SimpleRetriever(BaseRetriever):
     """In-memory keyword retriever (sync + async)."""
 
@@ -86,10 +88,10 @@ class SimpleRetriever(BaseRetriever):
         super().__init__()
         self._docs = docs
 
-    def _get_relevant_documents(self, query: str) -> List[Document]:  # noqa: D401
+    def _get_relevant_documents(self, query: str) -> List[Document]:
         return [d for d in self._docs if query.lower() in d.page_content.lower()]
 
-    async def _aget_relevant_documents(self, query: str) -> List[Document]:  # noqa: D401
+    async def _aget_relevant_documents(self, query: str) -> List[Document]:
         # Pretend to be costly 😉
         await asyncio.sleep(0.05)
         return self._get_relevant_documents(query)
@@ -107,16 +109,19 @@ retriever = SimpleRetriever(documents)
 # -----------------------------------------------------------------------------
 model = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a friendly, concise assistant."),
-    ("human", "{question}"),
-])
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", "You are a friendly, concise assistant."),
+        ("human", "{question}"),
+    ]
+)
 
 chain = prompt | model | StrOutputParser()
 
 # -----------------------------------------------------------------------------
 # Helper coroutine to demo async paths
 # -----------------------------------------------------------------------------
+
 
 async def async_demo() -> None:
     print("\n🔹 EchoTool.arun() …")
@@ -127,6 +132,7 @@ async def async_demo() -> None:
     docs = await retriever.aget_relevant_documents("capital")
     for d in docs:
         print("-", d.page_content)
+
 
 # -----------------------------------------------------------------------------
 # Main driver code
@@ -161,4 +167,4 @@ if __name__ == "__main__":
     # --- Async paths ---------------------------------------------------------
     asyncio.run(async_demo())
 
-    print("\n✅ Done! Check your ZeroEval dashboard for the full call graph.") 
+    print("\n✅ Done! Check your ZeroEval dashboard for the full call graph.")

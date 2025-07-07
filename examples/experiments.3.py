@@ -1,17 +1,16 @@
-import zeroeval as ze
+import random
 import time
+
+import zeroeval as ze
 from zeroeval.observability.decorators import span
 from zeroeval.observability.tracer import tracer
-import random
 
-tracer.configure(
-    flush_interval=5.0,   
-    max_spans=50         
-)
+tracer.configure(flush_interval=5.0, max_spans=50)
 
 ze.init(api_key="sk_ze_sDaLKEbmov2O0eFML2ZNwIt40yvBJEIgFHyHXMmquPY")
 
 dataset = ze.Dataset.pull("Capitals")
+
 
 @span(name="task")
 def task(row):
@@ -23,16 +22,17 @@ def task(row):
         ("step1", step1),
         ("step2", step2),
         ("step3", step3),
-        ("step_risky", step_risky)
+        ("step_risky", step_risky),
     ]:
         choice = random.choices([0, 1, 2, 3], weights=[0.2, 0.5, 0.1, 0.2])[0]
-        
+
         if choice >= 1:
             func(row)
         if choice == 2:
             func(row)  # Second execution
 
     return {"something": "hey", "other": 4}
+
 
 def step_risky(row):
     """
@@ -43,11 +43,13 @@ def step_risky(row):
         error_step(row)
     return "success"
 
+
 def error_step(row):
     """
     This is a step that returns the input with random sleep time.
     """
     raise Exception("This is an error step")
+
 
 @span(name="step1")
 def step1(row):
@@ -58,6 +60,7 @@ def step1(row):
     step2(row)
     return {"something": "hey", "other": 4}
 
+
 @span(name="deeper_step")
 def deeper_step(row):
     """
@@ -65,6 +68,7 @@ def deeper_step(row):
     """
     time.sleep(random.uniform(0.5, 1.5))
     return {"something": "hey", "other": 4}
+
 
 @span(name="deep_step")
 def deep_step(row):
@@ -75,6 +79,7 @@ def deep_step(row):
     deeper_step(row)
     return {"something": "hey", "other": 4}
 
+
 @span(name="step2")
 def step2(row):
     """
@@ -84,6 +89,7 @@ def step2(row):
     deep_step(row)
     return {"something": "hey", "other": 4}
 
+
 @span(name="step3")
 def step3(row):
     """
@@ -92,12 +98,14 @@ def step3(row):
     time.sleep(random.uniform(0.3, 0.7))
     return {"something": "hey", "other": 4}
 
+
 def eval1(row, output):
     """
     Eval number one
     """
     print(row)
     return True
+
 
 def eval2(row, output):
     """
@@ -106,17 +114,15 @@ def eval2(row, output):
     print(row)
     return "hey"
 
+
 def eval3(row, output):
     """
     Eval number three
     """
     print(row)
-    return [4,2,4,1]
+    return [4, 2, 4, 1]
 
-experiment = ze.Experiment(
-    dataset=dataset,
-    task=task,
-    evaluators=[eval1, eval2, eval3]
-)
+
+experiment = ze.Experiment(dataset=dataset, task=task, evaluators=[eval1, eval2, eval3])
 
 experiment.run()

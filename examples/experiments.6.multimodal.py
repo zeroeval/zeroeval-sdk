@@ -9,21 +9,22 @@ The pipeline:
    simple Word-Error-Rate (WER) metric.
 
 NOTE:
-• Ensure the `OPENAI_API_KEY` environment variable is set before running.                
-• Rows without a reference transcript will skip evaluation (return `wer=None`).           
+• Ensure the `OPENAI_API_KEY` environment variable is set before running.
+• Rows without a reference transcript will skip evaluation (return `wer=None`).
 """
+
 from __future__ import annotations
 
 import base64
-import os
 import io
+import mimetypes
 from pathlib import Path
-from typing import Dict, Any, Tuple, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import openai
-import zeroeval as ze
 import requests
-import mimetypes
+
+import zeroeval as ze
 
 # -----------------------------------------------------------------------------
 # SDK / client initialisation
@@ -50,6 +51,7 @@ except Exception as exc:
 # Helpers
 # -----------------------------------------------------------------------------
 
+
 def _load_audio(source: str) -> Tuple[bytes, str]:
     """Load audio bytes & mime type from either:
 
@@ -63,7 +65,11 @@ def _load_audio(source: str) -> Tuple[bytes, str]:
     if source.startswith(("http://", "https://")):
         response = requests.get(source, timeout=30)
         response.raise_for_status()
-        mime_type = response.headers.get("Content-Type") or mimetypes.guess_type(source)[0] or "audio/wav"
+        mime_type = (
+            response.headers.get("Content-Type")
+            or mimetypes.guess_type(source)[0]
+            or "audio/wav"
+        )
         return response.content, mime_type
 
     # Case 2 – Data URI
@@ -79,6 +85,7 @@ def _load_audio(source: str) -> Tuple[bytes, str]:
         return path.read_bytes(), mime_type
 
     raise ValueError("Unsupported audio source format for 'audio_clip'.")
+
 
 def _compute_wer(reference: str, hypothesis: str) -> float:
     """Compute Word-Error-Rate (WER) using dynamic programming.
@@ -107,17 +114,19 @@ def _compute_wer(reference: str, hypothesis: str) -> float:
             else:
                 cost = 1  # substitution
             dp[i][j] = min(
-                dp[i - 1][j] + 1,      # deletion
-                dp[i][j - 1] + 1,      # insertion
-                dp[i - 1][j - 1] + cost  # substitution / match
+                dp[i - 1][j] + 1,  # deletion
+                dp[i][j - 1] + 1,  # insertion
+                dp[i - 1][j - 1] + cost,  # substitution / match
             )
 
     wer = dp[n][m] / max(1, n)
     return wer
 
+
 # -----------------------------------------------------------------------------
 # Task – model inference
 # -----------------------------------------------------------------------------
+
 
 def transcribe_audio(row: Dict[str, Any]) -> Dict[str, str]:
     """Run Whisper on the `audio_clip` field and return both transcript and detected language."""
@@ -144,15 +153,14 @@ def transcribe_audio(row: Dict[str, Any]) -> Dict[str, str]:
         file=audio_file,
         response_format="verbose_json",
     )
-    
-    return {
-        "transcript": response.text.strip(),
-        "detected_language": response.language
-    }
+
+    return {"transcript": response.text.strip(), "detected_language": response.language}
+
 
 # -----------------------------------------------------------------------------
 # Evaluators – WER metrics
 # -----------------------------------------------------------------------------
+
 
 def evaluate_wer(row: Dict[str, Any], result: Dict[str, str]):
     """Return Word Error Rate (WER) only."""
@@ -164,6 +172,7 @@ def evaluate_wer(row: Dict[str, Any], result: Dict[str, str]):
     wer = _compute_wer(reference, generated_transcript)
     return wer
 
+
 def evaluate_accuracy_score(row: Dict[str, Any], result: Dict[str, str]):
     """Return accuracy score (1 - WER) only."""
     reference: str = row.get("expected_transcript", "")
@@ -174,18 +183,19 @@ def evaluate_accuracy_score(row: Dict[str, Any], result: Dict[str, str]):
     wer = _compute_wer(reference, generated_transcript)
     return max(0.0, 1.0 - wer)
 
+
 def evaluate_language_detection(row: Dict[str, Any], result: Dict[str, str]):
     """Return 1.0 if detected language matches expected language, 0.0 otherwise."""
     expected_language: str = row.get("language", "").lower()
     detected_language: str = result.get("detected_language", "").lower()
-    
+
     if not expected_language or not detected_language:
         return None  # Skip evaluation if language info is missing
-    
+
     # Map common language names to match Whisper's output format
     language_mapping = {
         "english": "en",
-        "spanish": "es", 
+        "spanish": "es",
         "french": "fr",
         "german": "de",
         "italian": "it",
@@ -194,17 +204,20 @@ def evaluate_language_detection(row: Dict[str, Any], result: Dict[str, str]):
         "japanese": "ja",
         "chinese": "zh",
         "korean": "ko",
-        "arabic": "ar"
+        "arabic": "ar",
     }
-    
+
     # Normalize expected language
     expected_normalized = language_mapping.get(expected_language, expected_language)
-    
+
     # Check for exact match or partial match
-    if detected_language == expected_normalized or expected_normalized in detected_language:
+    if (
+        detected_language == expected_normalized
+        or expected_normalized in detected_language
+    ):
         return 1.0
-    else:
-        return 0.0
+    return 0.0
+
 
 # -----------------------------------------------------------------------------
 # Build & run experiment
@@ -220,4 +233,4 @@ experiment = ze.Experiment(
 if __name__ == "__main__":
     print("Running ASR experiment…")
     experiment.run()
-    print("Experiment completed!") 
+    print("Experiment completed!")

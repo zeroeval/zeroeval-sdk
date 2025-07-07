@@ -1,6 +1,9 @@
 import zeroeval as ze
 
-ze.init(api_key="sk_ze_kaKGNsyBh4pdlQ3Zr0L7uvyzPMvsng-md7Qj3_34lJ0", api_url="http://localhost:8000")
+ze.init(
+    api_key="sk_ze_kaKGNsyBh4pdlQ3Zr0L7uvyzPMvsng-md7Qj3_34lJ0",
+    api_url="http://localhost:8000",
+)
 
 dataset = ze.Dataset(
     name="Capitals (Complete)",
@@ -201,8 +204,8 @@ dataset = ze.Dataset(
         {"input": "North Macedonia", "output": "Skopje"},
         {"input": "Solomon Islands", "output": "Honiara"},
         {"input": "Tonga", "output": "Nukuʻalofa"},
-        {"input": "Andorra", "output": "Andorra la Vella"}
-    ]
+        {"input": "Andorra", "output": "Andorra la Vella"},
+    ],
 )
 
 dataset.push(create_new_version=True)

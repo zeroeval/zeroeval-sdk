@@ -1,8 +1,10 @@
 import pytest
-from zeroeval.observability.tracer import Tracer
+
 from zeroeval.observability import span
+from zeroeval.observability.tracer import Tracer
 
 
+@pytest.mark.observability
 def test_create_simple_trace(tracer: Tracer):
     """Tests that a simple parent-child trace is created and flushed correctly."""
     # Act
@@ -24,6 +26,7 @@ def test_create_simple_trace(tracer: Tracer):
     assert child["trace_id"] == parent["trace_id"]
 
 
+@pytest.mark.observability
 def test_tracer_is_thread_safe(tracer: Tracer):
     """Tests that the tracer handles spans from multiple threads correctly."""
     import threading
@@ -55,11 +58,12 @@ def test_tracer_is_thread_safe(tracer: Tracer):
         assert child["trace_id"] == parent["trace_id"]
 
 
+@pytest.mark.observability
 def test_tracer_shutdown(tracer: Tracer):
     """Tests that the tracer stops accepting spans after shutdown."""
     with span(name="span_before_shutdown"):
         pass
-    
+
     tracer.shutdown()
 
     # This span should be ignored and return a no-op span
@@ -72,6 +76,7 @@ def test_tracer_shutdown(tracer: Tracer):
     assert mock_writer.spans[0]["name"] == "span_before_shutdown"
 
 
+@pytest.mark.observability
 def test_auto_flush_on_max_spans(tracer: Tracer):
     """Tests that the buffer is flushed automatically when it reaches max capacity."""
     tracer._max_spans = 5  # Set a low limit for testing
@@ -84,11 +89,11 @@ def test_auto_flush_on_max_spans(tracer: Tracer):
     # The 5th span should trigger a flush
     mock_writer = tracer._writer
     assert len(mock_writer.spans) == 5
-    
+
     # Another span should not be in the buffer yet
     with span(name="one_more"):
         pass
-    
+
     assert len(mock_writer.spans) == 5
     tracer.flush()
-    assert len(mock_writer.spans) == 6 
+    assert len(mock_writer.spans) == 6

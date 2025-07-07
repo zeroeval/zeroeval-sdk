@@ -1,7 +1,6 @@
-from functools import wraps
 import inspect
-import types
 import time
+import types
 from typing import Any, Callable
 
 from ..base import Integration
@@ -27,7 +26,7 @@ class LangChainIntegration(Integration):
     PACKAGE_NAME = "langchain_core"
 
     @classmethod
-    def is_available(cls) -> bool:  # noqa: D401
+    def is_available(cls) -> bool:
         """Return True if *either* langchain-core or langchain is importable."""
         import importlib
 
@@ -44,7 +43,9 @@ class LangChainIntegration(Integration):
     # ---------------------------------------------------------------------
     def setup(self) -> None:
         """Patch Runnable methods once LangChain is importable."""
-        from langchain_core.runnables.base import Runnable  # pylint: disable=import-error
+        from langchain_core.runnables.base import (
+            Runnable,  # pylint: disable=import-error
+        )
 
         # Gather the base class and *all* subclasses so that overrides on custom
         # Runnables (e.g. RunnableSequence) are instrumented as well.
@@ -72,7 +73,9 @@ class LangChainIntegration(Integration):
                 # Only patch if the attribute exists on the target class.
                 if hasattr(cls, method_name):
                     try:
-                        self._patch_method(cls, method_name, self._build_runnable_wrapper)
+                        self._patch_method(
+                            cls, method_name, self._build_runnable_wrapper
+                        )
                     except Exception as exc:  # pragma: no cover – best-effort
                         print(
                             f"[ZeroEval] Failed patching {cls.__name__}.{method_name}: {exc}"
@@ -88,11 +91,11 @@ class LangChainIntegration(Integration):
         integration_self = self  # capture for closure
 
         @classmethod  # type: ignore[misc]
-        def _ze_init_subclass(cls, **kwargs):  # noqa: D401, ANN001  pylint: disable=unused-argument
+        def _ze_init_subclass(cls, **kwargs):
             # Call LangChain\'s original __init_subclass__ first
             try:
                 # Handle both regular methods and builtin methods
-                if hasattr(original_init_subclass, '__get__'):
+                if hasattr(original_init_subclass, "__get__"):
                     # It's a regular method, use descriptor protocol
                     bound_init = original_init_subclass.__get__(cls, cls)
                     bound_init(**kwargs)  # type: ignore[misc]
@@ -102,7 +105,7 @@ class LangChainIntegration(Integration):
             except TypeError:
                 # Some versions accept no kwargs at all.
                 try:
-                    if hasattr(original_init_subclass, '__get__'):
+                    if hasattr(original_init_subclass, "__get__"):
                         bound_init = original_init_subclass.__get__(cls, cls)
                         bound_init()
                     else:
@@ -132,7 +135,7 @@ class LangChainIntegration(Integration):
 
         # Avoid double-hooking if someone else already replaced it
         if getattr(Runnable.__init_subclass__, "__ze_patched__", False) is False:
-            setattr(_ze_init_subclass, "__ze_patched__", True)
+            _ze_init_subclass.__ze_patched__ = True
             Runnable.__init_subclass__ = _ze_init_subclass
 
         # ------------------------------------------------------------------
@@ -153,7 +156,9 @@ class LangChainIntegration(Integration):
             pass
 
         try:
-            from langchain_core.language_models.base import BaseLanguageModel  # pylint: disable=import-error
+            from langchain_core.language_models.base import (
+                BaseLanguageModel,  # pylint: disable=import-error
+            )
 
             self._instrument_class_methods(
                 BaseLanguageModel,
@@ -166,7 +171,9 @@ class LangChainIntegration(Integration):
             pass
 
         try:
-            from langchain_core.retrievers import BaseRetriever  # pylint: disable=import-error
+            from langchain_core.retrievers import (
+                BaseRetriever,  # pylint: disable=import-error
+            )
 
             self._instrument_class_methods(
                 BaseRetriever,
@@ -190,7 +197,9 @@ class LangChainIntegration(Integration):
         if is_async:
 
             async def async_wrapper(runnable_self, *args: Any, **kwargs: Any):  # type: ignore
-                span = self._start_runnable_span(runnable_self, original.__name__, kwargs)
+                span = self._start_runnable_span(
+                    runnable_self, original.__name__, kwargs
+                )
                 start_time = time.time()
                 try:
                     result = await original(runnable_self, *args, **kwargs)
@@ -233,7 +242,7 @@ class LangChainIntegration(Integration):
     # ------------------------------------------------------------------
     # Generator wrappers
     # ------------------------------------------------------------------
-    def _wrap_sync_generator(self, gen: types.GeneratorType, span, start_time: float):  # noqa: ANN001
+    def _wrap_sync_generator(self, gen: types.GeneratorType, span, start_time: float):
         """Yield from *gen* while updating *span* metrics."""
         first_chunk_time = None
         collected_output = []
@@ -244,7 +253,9 @@ class LangChainIntegration(Integration):
                 for chunk in gen:
                     if first_chunk_time is None:
                         first_chunk_time = time.time()
-                        span.attributes["latency"] = round(first_chunk_time - start_time, 4)
+                        span.attributes["latency"] = round(
+                            first_chunk_time - start_time, 4
+                        )
                     collected_output.append(chunk)
                     yield chunk
             except Exception as exc:
@@ -255,7 +266,9 @@ class LangChainIntegration(Integration):
 
         return _wrapper()
 
-    def _wrap_async_generator(self, agen: types.AsyncGeneratorType, span, start_time: float):  # noqa: ANN001
+    def _wrap_async_generator(
+        self, agen: types.AsyncGeneratorType, span, start_time: float
+    ):
         """Yield from *agen* while updating *span* metrics (async)."""
         first_chunk_time = None
         collected_output = []
@@ -266,7 +279,9 @@ class LangChainIntegration(Integration):
                 async for chunk in agen:
                     if first_chunk_time is None:
                         first_chunk_time = time.time()
-                        span.attributes["latency"] = round(first_chunk_time - start_time, 4)
+                        span.attributes["latency"] = round(
+                            first_chunk_time - start_time, 4
+                        )
                     collected_output.append(chunk)
                     yield chunk
             except Exception as exc:
@@ -280,14 +295,18 @@ class LangChainIntegration(Integration):
     # ------------------------------------------------------------------
     # Span helpers
     # ------------------------------------------------------------------
-    def _start_runnable_span(self, runnable_self, method_name: str, kwargs: dict):  # noqa: ANN001
+    def _start_runnable_span(self, runnable_self, method_name: str, kwargs: dict):
         """Create + return a Span for a Runnable invocation."""
         # Determine a suitable kind based on the LangChain abstraction
         kind: str = "runnable"
         try:
+            from langchain_core.language_models.base import (
+                BaseLanguageModel,  # pylint: disable=import-error
+            )
+            from langchain_core.retrievers import (
+                BaseRetriever,  # pylint: disable=import-error
+            )
             from langchain_core.tools import BaseTool  # pylint: disable=import-error
-            from langchain_core.language_models.base import BaseLanguageModel  # pylint: disable=import-error
-            from langchain_core.retrievers import BaseRetriever  # pylint: disable=import-error
 
             if isinstance(runnable_self, BaseTool):
                 kind = "tool"
@@ -315,9 +334,13 @@ class LangChainIntegration(Integration):
                 if k in kwargs:
                     attributes[k] = kwargs[k]
 
-        return self.tracer.start_span(name=f"langchain.{method_name}", attributes=attributes, tags={"integration": "langchain"})
+        return self.tracer.start_span(
+            name=f"langchain.{method_name}",
+            attributes=attributes,
+            tags={"integration": "langchain"},
+        )
 
-    def _finalise_span(self, span, start_time: float, args, kwargs, output):  # noqa: ANN001
+    def _finalise_span(self, span, start_time: float, args, kwargs, output):
         """Attach IO + latency + throughput then close span."""
         elapsed = time.time() - start_time
         span.attributes["latency"] = round(elapsed, 4)
@@ -330,7 +353,7 @@ class LangChainIntegration(Integration):
 
         self.tracer.end_span(span)
 
-    def _record_error(self, span, exc: Exception):  # noqa: ANN001
+    def _record_error(self, span, exc: Exception):
         """Populate error fields on *span*."""
         span.set_error(
             code=exc.__class__.__name__,
@@ -357,7 +380,9 @@ class LangChainIntegration(Integration):
                 # Only patch if the attribute exists on the target class.
                 if hasattr(cls, method_name):
                     try:
-                        self._patch_method(cls, method_name, self._build_runnable_wrapper)
+                        self._patch_method(
+                            cls, method_name, self._build_runnable_wrapper
+                        )
                     except Exception as exc:  # pragma: no cover – best-effort
                         print(
                             f"[ZeroEval] Failed patching {cls.__name__}.{method_name}: {exc}"
@@ -371,11 +396,11 @@ class LangChainIntegration(Integration):
         integration_self = self  # capture for closure
 
         @classmethod  # type: ignore[misc]
-        def _ze_init_subclass(cls, **kwargs):  # noqa: D401, ANN001
+        def _ze_init_subclass(cls, **kwargs):
             # Call the original hook first
             try:
                 # Handle both regular methods and builtin methods
-                if hasattr(original_init_subclass, '__get__'):
+                if hasattr(original_init_subclass, "__get__"):
                     # It's a regular method, use descriptor protocol
                     bound_init = original_init_subclass.__get__(cls, cls)
                     bound_init(**kwargs)  # type: ignore[misc]
@@ -385,7 +410,7 @@ class LangChainIntegration(Integration):
             except TypeError:
                 # Some versions accept no kwargs at all.
                 try:
-                    if hasattr(original_init_subclass, '__get__'):
+                    if hasattr(original_init_subclass, "__get__"):
                         bound_init = original_init_subclass.__get__(cls, cls)
                         bound_init()
                     else:
@@ -406,5 +431,5 @@ class LangChainIntegration(Integration):
                         pass  # silently ignore – best-effort
 
         if getattr(base_cls.__init_subclass__, "__ze_patched__", False) is False:
-            setattr(_ze_init_subclass, "__ze_patched__", True)
-            base_cls.__init_subclass__ = _ze_init_subclass 
+            _ze_init_subclass.__ze_patched__ = True
+            base_cls.__init_subclass__ = _ze_init_subclass

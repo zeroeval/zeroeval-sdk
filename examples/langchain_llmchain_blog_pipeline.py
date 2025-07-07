@@ -42,7 +42,11 @@ from zeroeval.observability.tracer import tracer
 # -----------------------------------------------------------------------------
 tracer.configure(flush_interval=1.0, max_spans=50)
 
-ze.init(api_key=os.getenv("ZEROEVAL_API_KEY", "sk_ze_3sGv8bqxdz0PShPu6-5c3TRlgPhD7w1QCnJB-bCzHpQ"))
+ze.init(
+    api_key=os.getenv(
+        "ZEROEVAL_API_KEY", "sk_ze_3sGv8bqxdz0PShPu6-5c3TRlgPhD7w1QCnJB-bCzHpQ"
+    )
+)
 
 # OpenAI key for the underlying LLM provider that LangChain will call.
 os.environ.setdefault(
@@ -53,9 +57,9 @@ os.environ.setdefault(
 # -----------------------------------------------------------------------------
 # LangChain imports
 # -----------------------------------------------------------------------------
-from langchain_openai import ChatOpenAI  # type: ignore
-from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI  # type: ignore
 
 # -----------------------------------------------------------------------------
 # Build two runnable chains (Prompt → Model → Parser)
@@ -66,14 +70,14 @@ outline_prompt = PromptTemplate(
     input_variables=["topic"],
     template=(
         "Generate a detailed outline (with bullet points) for a comprehensive "
-        "blog post on the topic: \"{topic}\".\n\nOutline:\n"
+        'blog post on the topic: "{topic}".\n\nOutline:\n'
     ),
 )
 
 article_prompt = PromptTemplate(
     input_variables=["topic", "outline"],
     template=(
-        "Write a ~600-word blog post on the topic \"{topic}\" following the "
+        'Write a ~600-word blog post on the topic "{topic}" following the '
         "outline below. Ensure an engaging introduction, informative body, and "
         "concise conclusion.\n\nOutline:\n{outline}\n\nBlog post:\n"
     ),
@@ -97,4 +101,4 @@ if __name__ == "__main__":
     article_text: str = article_chain.invoke({"topic": topic, "outline": outline_text})
     print(article_text)
 
-    print("\n✅ Done! Check your ZeroEval dashboard for the new spans.") 
+    print("\n✅ Done! Check your ZeroEval dashboard for the new spans.")

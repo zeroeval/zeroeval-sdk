@@ -1,23 +1,23 @@
 import json
+import logging
 from functools import wraps
 from typing import Any, Callable
+
 from ..base import Integration
-import inspect
-import logging
-import types
 
 # use the package logger so callers can enable it if they want
 logger = logging.getLogger(__name__)
 
+
 class OpenAIIntegration(Integration):
     """Integration for OpenAI's API client."""
-    
+
     PACKAGE_NAME = "openai"
 
     def _serialize_messages(self, messages: Any) -> Any:
         if not messages:
             return messages
-        
+
         serializable_messages = []
         for message in messages:
             if hasattr(message, "model_dump"):
@@ -36,30 +36,23 @@ class OpenAIIntegration(Integration):
     def setup(self) -> None:
         try:
             import openai
+
             # Patch the OpenAI class itself
-            self._patch_method(
-                openai.OpenAI,
-                "__init__",
-                self._wrap_init
-            )
+            self._patch_method(openai.OpenAI, "__init__", self._wrap_init)
             # Patch the *async* client as well
-            self._patch_method(
-                openai.AsyncOpenAI,
-                "__init__",
-                self._wrap_init
-            )
+            self._patch_method(openai.AsyncOpenAI, "__init__", self._wrap_init)
         except Exception as e:
             print(f"Failed to setup OpenAI integration: {e}")
-            pass
 
     def _wrap_init(self, original: Callable) -> Callable:
         @wraps(original)
         def wrapper(client_instance, *args: Any, **kwargs: Any) -> Any:
             # Call the real __init__
             result = original(client_instance, *args, **kwargs)
-            
+
             # Decide once: are we dealing with the async or sync client?
             import openai
+
             if isinstance(client_instance, openai.AsyncOpenAI):
                 logger.debug("Patching AsyncOpenAI.create with async wrapper")
                 patched = self._wrap_chat_completion_async
@@ -69,15 +62,17 @@ class OpenAIIntegration(Integration):
 
             # replace .create
             self._patch_method(client_instance.chat.completions, "create", patched)
-            
+
             return result
+
         return wrapper
 
     # ------------------------------------------------------------------+
     #  Async  wrapper –   client = openai.AsyncOpenAI                   |
     # ------------------------------------------------------------------+
-    def _wrap_chat_completion_async(self, original: Callable) -> Callable:  # noqa: C901 (length)
-        import time, json, inspect
+    def _wrap_chat_completion_async(self, original: Callable) -> Callable:
+        import json
+        import time
 
         @wraps(original)
         async def wrapper(*args: Any, **kwargs: Any):  # type: ignore[return-type]
@@ -85,7 +80,9 @@ class OpenAIIntegration(Integration):
             is_streaming = kwargs.get("stream", False)
 
             # openai-native models only
-            if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
+            if is_streaming and (
+                not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]
+            ):
                 kwargs["stream_options"] = {"include_usage": True}
 
             span = self.tracer.start_span(
@@ -107,7 +104,9 @@ class OpenAIIntegration(Integration):
 
                 # ---------------- STREAMING (ASYNC) -----------------
                 if is_streaming:
-                    logger.debug("Async wrapper -> returning *async generator* passthrough")
+                    logger.debug(
+                        "Async wrapper -> returning *async generator* passthrough"
+                    )
 
                     async def _relay():  # captures variables from outer scope
                         full_response: str = ""
@@ -119,7 +118,9 @@ class OpenAIIntegration(Integration):
                                 # 1️⃣  "meta" packets with neither `choices` nor `usage`
                                 #     (e.g.   {"event":"message_start", ...} )
                                 #
-                                if not getattr(chunk, "choices", None) and not getattr(chunk, "usage", None):
+                                if not getattr(chunk, "choices", None) and not getattr(
+                                    chunk, "usage", None
+                                ):
                                     # just pass it through – stream is *not* finished yet
                                     yield chunk
                                     continue
@@ -127,8 +128,10 @@ class OpenAIIntegration(Integration):
                                 #
                                 # 2️⃣  Usage-only packet – last real packet of the stream
                                 #
-                                if not getattr(chunk, "choices", None) and getattr(chunk, "usage", None):
-                                    usage = chunk.usage            # type: ignore[attr-defined]
+                                if not getattr(chunk, "choices", None) and getattr(
+                                    chunk, "usage", None
+                                ):
+                                    usage = chunk.usage  # type: ignore[attr-defined]
                                     span.attributes.update(
                                         {
                                             "inputTokens": usage.prompt_tokens,
@@ -161,7 +164,9 @@ class OpenAIIntegration(Integration):
                         finally:
                             # Finalise span once the async generator is exhausted
                             elapsed = time.time() - start_time
-                            throughput = len(full_response) / elapsed if elapsed > 0 else 0
+                            throughput = (
+                                len(full_response) / elapsed if elapsed > 0 else 0
+                            )
                             span.attributes.update({"throughput": round(throughput, 2)})
                             span.set_io(
                                 input_data=json.dumps(
@@ -178,20 +183,29 @@ class OpenAIIntegration(Integration):
                 usage = getattr(response, "usage", None)
                 if usage:
                     span.attributes.update(
-                        {"inputTokens": usage.prompt_tokens, "outputTokens": usage.completion_tokens}
+                        {
+                            "inputTokens": usage.prompt_tokens,
+                            "outputTokens": usage.completion_tokens,
+                        }
                     )
                 message = response.choices[0].message if response.choices else None
                 output = message.content if message else None
                 throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
                 span.attributes["throughput"] = round(throughput, 2)
                 span.set_io(
-                    input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
+                    input_data=json.dumps(
+                        self._serialize_messages(kwargs.get("messages"))
+                    ),
                     output_data=output,
                 )
                 tracer.end_span(span)
                 return response
             except Exception as e:
-                span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                span.set_error(
+                    code=type(e).__name__,
+                    message=str(e),
+                    stack=getattr(e, "__traceback__", None),
+                )
                 tracer.end_span(span)
                 raise
 
@@ -200,15 +214,18 @@ class OpenAIIntegration(Integration):
     # ------------------------------------------------------------------+
     #  Sync wrapper – client = openai.OpenAI                            |
     # ------------------------------------------------------------------+
-    def _wrap_chat_completion_sync(self, original: Callable) -> Callable:  # noqa: C901 (length)
-        import time, json
+    def _wrap_chat_completion_sync(self, original: Callable) -> Callable:
+        import json
+        import time
 
         @wraps(original)
         def wrapper(*args: Any, **kwargs: Any):
             start_time = time.time()
             is_streaming = kwargs.get("stream", False)
 
-            if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
+            if is_streaming and (
+                not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]
+            ):
                 kwargs["stream_options"] = {"include_usage": True}
 
             span = self.tracer.start_span(
@@ -228,7 +245,9 @@ class OpenAIIntegration(Integration):
             try:
                 response = original(*args, **kwargs)
                 if is_streaming:
-                    logger.debug("Sync wrapper -> returning _StreamingResponseProxy (sync)")
+                    logger.debug(
+                        "Sync wrapper -> returning _StreamingResponseProxy (sync)"
+                    )
                     return _StreamingResponseProxy(
                         response, span, tracer, self, kwargs, start_time, is_async=False
                     )
@@ -238,29 +257,48 @@ class OpenAIIntegration(Integration):
                 usage = getattr(response, "usage", None)
                 if usage:
                     span.attributes.update(
-                        {"inputTokens": usage.prompt_tokens, "outputTokens": usage.completion_tokens}
+                        {
+                            "inputTokens": usage.prompt_tokens,
+                            "outputTokens": usage.completion_tokens,
+                        }
                     )
                 message = response.choices[0].message if response.choices else None
                 output = message.content if message else None
                 throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
                 span.attributes["throughput"] = round(throughput, 2)
                 span.set_io(
-                    input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
+                    input_data=json.dumps(
+                        self._serialize_messages(kwargs.get("messages"))
+                    ),
                     output_data=output,
                 )
                 tracer.end_span(span)
                 return response
             except Exception as e:
-                span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                span.set_error(
+                    code=type(e).__name__,
+                    message=str(e),
+                    stack=getattr(e, "__traceback__", None),
+                )
                 tracer.end_span(span)
                 raise
 
         return wrapper
 
+
 class _StreamingResponseProxy:
     """Proxy that mimics OpenAI's streaming response object while capturing metrics for both sync and async streams."""
 
-    def __init__(self, _resp, span, tracer, integration_instance, request_kwargs, start_time, is_async=False):
+    def __init__(
+        self,
+        _resp,
+        span,
+        tracer,
+        integration_instance,
+        request_kwargs,
+        start_time,
+        is_async=False,
+    ):
         self._resp = _resp
         self.span = span
         self.tracer = tracer
@@ -273,7 +311,9 @@ class _StreamingResponseProxy:
         self._stream_has_finished: bool = False
 
     def __enter__(self):
-        entered = self._resp.__enter__() if hasattr(self._resp, "__enter__") else self._resp
+        entered = (
+            self._resp.__enter__() if hasattr(self._resp, "__enter__") else self._resp
+        )
         self._resp = entered
         return self
 
@@ -282,7 +322,9 @@ class _StreamingResponseProxy:
             self._resp.__exit__(exc_type, exc_val, exc_tb)
 
         if exc_type is not None:
-            self.span.set_error(code=exc_type.__name__, message=str(exc_val), stack=exc_tb)
+            self.span.set_error(
+                code=exc_type.__name__, message=str(exc_val), stack=exc_tb
+            )
 
         if not self._stream_has_finished:
             self._finalise_span()
@@ -298,7 +340,9 @@ class _StreamingResponseProxy:
             await self._resp.__aexit__(exc_type, exc_val, exc_tb)
 
         if exc_type is not None:
-            self.span.set_error(code=exc_type.__name__, message=str(exc_val), stack=exc_tb)
+            self.span.set_error(
+                code=exc_type.__name__, message=str(exc_val), stack=exc_tb
+            )
 
         if not self._stream_has_finished:
             self._finalise_span()
@@ -306,6 +350,7 @@ class _StreamingResponseProxy:
 
     def _process_chunk(self, chunk):
         import time
+
         if not getattr(chunk, "choices", None):
             usage = getattr(chunk, "usage", None)
             if usage:
@@ -321,7 +366,9 @@ class _StreamingResponseProxy:
         if delta and getattr(delta, "content", None):
             if self._first_token_time is None:
                 self._first_token_time = time.time()
-                self.span.attributes["latency"] = round(self._first_token_time - self.start_time, 4)
+                self.span.attributes["latency"] = round(
+                    self._first_token_time - self.start_time, 4
+                )
             self._full_response += delta.content
 
     # ------------------------------------------------------------------
@@ -354,7 +401,9 @@ class _StreamingResponseProxy:
     async def __anext__(self):
         if not self._is_async:
             # delegate to sync __next__ in a thread
-            import asyncio, functools
+            import asyncio
+            import functools
+
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, functools.partial(self.__next__))
 
@@ -372,6 +421,7 @@ class _StreamingResponseProxy:
 
     def _finalise_span(self):
         import time
+
         if self.span.end_time is not None:
             return
 
@@ -379,7 +429,11 @@ class _StreamingResponseProxy:
         throughput = len(self._full_response) / elapsed_time if elapsed_time > 0 else 0
         self.span.attributes.update({"throughput": round(throughput, 2)})
         self.span.set_io(
-            input_data=json.dumps(self.integration_instance._serialize_messages(self.request_kwargs.get("messages"))),
+            input_data=json.dumps(
+                self.integration_instance._serialize_messages(
+                    self.request_kwargs.get("messages")
+                )
+            ),
             output_data=self._full_response,
         )
         self.tracer.end_span(self.span)

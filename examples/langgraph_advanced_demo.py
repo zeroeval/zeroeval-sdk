@@ -9,17 +9,16 @@ This example demonstrates the expanded ZeroEval LangGraph integration that trace
 - Streaming with node information
 """
 
-import os
 import asyncio
-from typing import TypedDict, Annotated, Literal
-from operator import add
+import os
+from typing import Annotated, Literal, TypedDict
 
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import tool
-from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 
 # Initialize ZeroEval tracer before building graphs
 import zeroeval as ze
@@ -30,7 +29,11 @@ tracer.configure(flush_interval=1.0, max_spans=100)
 ze.init(api_key="sk_ze_uGb9IzYU5gGxuEMpvo93DLObRbggfZz9g9eWjpzki4I")
 
 # Set up OpenAI API key
-os.environ.setdefault("OPENAI_API_KEY", "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")
+os.environ.setdefault(
+    "OPENAI_API_KEY",
+    "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",
+)
+
 
 # -----------------------------------------------------------------------------
 # Define the graph state
@@ -82,11 +85,8 @@ def reasoning_node(state: AgentState) -> AgentState:
     """Initial reasoning about the user's request."""
     last_message = state["messages"][-1]
     reasoning = f"Analyzing request: '{last_message.content}'"
-    
-    return {
-        "reasoning_steps": [reasoning],
-        "should_continue": True
-    }
+
+    return {"reasoning_steps": [reasoning], "should_continue": True}
 
 
 def agent_node(state: AgentState) -> AgentState:
@@ -94,20 +94,23 @@ def agent_node(state: AgentState) -> AgentState:
     if model is None:
         # Fallback for demo without API key
         return {
-            "messages": [AIMessage(content="I would use tools to help answer your question.")],
-            "should_continue": False
+            "messages": [
+                AIMessage(content="I would use tools to help answer your question.")
+            ],
+            "should_continue": False,
         }
-    
+
     # Call the model
     response = model.invoke(state["messages"])
-    
+
     # Check if the model wants to use tools
     has_tool_calls = hasattr(response, "tool_calls") and len(response.tool_calls) > 0
-    
+
     return {
         "messages": [response],
-        "tool_calls_count": state.get("tool_calls_count", 0) + (1 if has_tool_calls else 0),
-        "should_continue": has_tool_calls
+        "tool_calls_count": state.get("tool_calls_count", 0)
+        + (1 if has_tool_calls else 0),
+        "should_continue": has_tool_calls,
     }
 
 
@@ -115,27 +118,26 @@ def synthesize_node(state: AgentState) -> AgentState:
     """Synthesize final response from all information gathered."""
     tool_count = state.get("tool_calls_count", 0)
     synthesis = f"Synthesized response using {tool_count} tool calls."
-    
+
     if tool_count == 0:
         # If no tools were used, we already have the final answer
         return state
-    
+
     # Add a final synthesis message
     return {
         "messages": [AIMessage(content=synthesis)],
-        "reasoning_steps": state["reasoning_steps"] + ["Final synthesis completed"]
+        "reasoning_steps": state["reasoning_steps"] + ["Final synthesis completed"],
     }
 
 
 def should_continue(state: AgentState) -> Literal["tools", "synthesize"]:
     """Conditional edge that routes based on whether tools are needed."""
     last_message = state["messages"][-1]
-    
+
     # Check if the last message has tool calls
     if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
         return "tools"
-    else:
-        return "synthesize"
+    return "synthesize"
 
 
 # -----------------------------------------------------------------------------
@@ -155,12 +157,7 @@ workflow.add_edge("reasoning", "agent")
 
 # Conditional routing from agent
 workflow.add_conditional_edges(
-    "agent",
-    should_continue,
-    {
-        "tools": "tools",
-        "synthesize": "synthesize"
-    }
+    "agent", should_continue, {"tools": "tools", "synthesize": "synthesize"}
 )
 
 # After tools, go back to agent
@@ -182,49 +179,54 @@ app = workflow.compile()
 # -----------------------------------------------------------------------------
 async def run_examples():
     print("🚀 LangGraph Advanced Tracing Demo\n")
-    
+
     # Example 1: Simple question (no tools)
     print("=" * 60)
     print("Example 1: Simple question without tools")
     print("=" * 60)
-    
-    result = await app.ainvoke({
-        "messages": [HumanMessage(content="What is the capital of France?")]
-    })
-    
+
+    result = await app.ainvoke(
+        {"messages": [HumanMessage(content="What is the capital of France?")]}
+    )
+
     print(f"Final response: {result['messages'][-1].content}")
     print(f"Tool calls: {result.get('tool_calls_count', 0)}")
     print()
-    
+
     # Example 2: Question requiring tools
     print("=" * 60)
     print("Example 2: Question requiring tool usage")
     print("=" * 60)
-    
-    result = await app.ainvoke({
-        "messages": [HumanMessage(content="Search for information about quantum computing and calculate 2^10")]
-    })
-    
+
+    result = await app.ainvoke(
+        {
+            "messages": [
+                HumanMessage(
+                    content="Search for information about quantum computing and calculate 2^10"
+                )
+            ]
+        }
+    )
+
     print(f"Final response: {result['messages'][-1].content}")
     print(f"Tool calls: {result.get('tool_calls_count', 0)}")
     print(f"Reasoning steps: {len(result.get('reasoning_steps', []))}")
     print()
-    
+
     # Example 3: Streaming execution
     print("=" * 60)
     print("Example 3: Streaming with node visibility")
     print("=" * 60)
-    
+
     print("Streaming nodes: ", end="", flush=True)
     async for event in app.astream(
-        {"messages": [HumanMessage(content="What is 15 * 23?")]},
-        stream_mode="values"
+        {"messages": [HumanMessage(content="What is 15 * 23?")]}, stream_mode="values"
     ):
         # The enhanced integration will capture which nodes are executed
         node_executed = list(event.keys())
         if node_executed and node_executed[0] not in ["__root__", "messages"]:
             print(f"[{node_executed[0]}] ", end="", flush=True)
-    
+
     print("\n\nDone! Check your ZeroEval dashboard to see:")
     print("- 🎯 Parent spans for each graph execution")
     print("- 📍 Individual spans for each node (reasoning, agent, tools, synthesize)")
@@ -234,4 +236,4 @@ async def run_examples():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_examples()) 
+    asyncio.run(run_examples())

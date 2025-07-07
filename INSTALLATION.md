@@ -6,8 +6,8 @@
 # pip
 pip install zeroeval
 
-# poetry
-poetry add zeroeval
+# uv
+uv add zeroeval
 ```
 
 That's it! The SDK automatically detects and instruments any supported frameworks you have installed.
@@ -49,12 +49,18 @@ To run the examples in this repository, you'll need to install the frameworks th
 ```bash
 # For OpenAI examples
 pip install openai
+# or with uv
+uv add openai
 
 # For LangChain examples
 pip install langchain langchain-openai
+# or with uv
+uv add langchain langchain-openai
 
 # For LangGraph examples
 pip install langgraph
+# or with uv
+uv add langgraph
 ```
 
 ## Checking Active Integrations

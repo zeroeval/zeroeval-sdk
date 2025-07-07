@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 from typing import Dict, Union
 
 import requests
@@ -39,7 +39,9 @@ def _send_signals_immediately(
             "entity_id": entity_id,
             "name": name,
             "value": value,
-            "signal_type": "numerical" if isinstance(value, (int, float)) else "boolean",
+            "signal_type": "numerical"
+            if isinstance(value, (int, float))
+            else "boolean",
         }
         for name, value in signals.items()
     ]
@@ -98,4 +100,4 @@ def set_signal(
             f"Unsupported target type '{type(target).__name__}' for signal. Must be Span or str."
         )
 
-    return _send_signals_immediately(entity_type, entity_id, signals) 
+    return _send_signals_immediately(entity_type, entity_id, signals)

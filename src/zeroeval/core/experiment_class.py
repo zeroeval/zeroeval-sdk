@@ -1,10 +1,14 @@
-from typing import List, Callable, Any, Optional
-from .dataset_class import Dataset
-from .writer import ExperimentResultWriter, ExperimentResultBackendWriter
-from .evaluator_class import Evaluation, Evaluator
 import inspect
 import traceback
+from typing import Any, Callable, List, Optional
+
 from zeroeval.observability.tracer import tracer
+
+from .dataset_class import Dataset
+from .evaluator_class import Evaluation, Evaluator
+from .writer import ExperimentResultBackendWriter, ExperimentResultWriter
+
+
 class Experiment:
     """
     Represents an experiment that can run a 'task' (the user's function)
@@ -12,12 +16,12 @@ class Experiment:
     """
 
     def __init__(
-        self, 
-        dataset: Dataset, 
-        task: Callable[[Any], Any], 
+        self,
+        dataset: Dataset,
+        task: Callable[[Any], Any],
         evaluators: Optional[List[Callable[[Any, Any], Any]]] = None,
         name: Optional[str] = None,
-        description: Optional[str] = None
+        description: Optional[str] = None,
     ):
         self.dataset = dataset
         self.task = task
@@ -25,14 +29,16 @@ class Experiment:
         self._evaluator_objs = []
 
         # If user didn't provide a name, try using the function's __name__
-        self.name = name or (task.__name__ if hasattr(task, "__name__") else "unnamed_experiment")
+        self.name = name or (
+            task.__name__ if hasattr(task, "__name__") else "unnamed_experiment"
+        )
 
         # If user didn't provide a description, fall back to docstring of task (if any)
         self.description = description or (task.__doc__ or "")
 
         # We'll treat the default writer as a backend writer.
         self._writer: ExperimentResultWriter = ExperimentResultBackendWriter()
-        self.results: List['ExperimentResult'] = []
+        self.results: List[ExperimentResult] = []
 
         # Will be set once the experiment is persisted to the backend
         self._backend_id: Optional[str] = None
@@ -40,7 +46,9 @@ class Experiment:
         # New attribute storing whether we should trace the task calls
         self.trace_task = True
 
-    def run_task(self, subset: Optional[List[dict]] = None, raise_on_error: bool = False) -> List['ExperimentResult']:
+    def run_task(
+        self, subset: Optional[List[dict]] = None, raise_on_error: bool = False
+    ) -> List["ExperimentResult"]:
         """
         Run the task function on each row (either a given subset or the entire dataset).
         Store the output in self.results and automatically write each result to the backend.
@@ -51,31 +59,37 @@ class Experiment:
             return []
 
         # If subset is given, we assume it includes 'row_id' if needed
-        rows_to_run = subset if subset is not None else self.dataset._get_all_full_rows()
+        rows_to_run = (
+            subset if subset is not None else self.dataset._get_all_full_rows()
+        )
         self.results = []
 
         for row_data in rows_to_run:
             row_id = row_data.get("row_id") if isinstance(row_data, dict) else None
             # "data" sub-dict or entire row
-            row_content = row_data["data"] if isinstance(row_data, dict) and "data" in row_data else row_data
+            row_content = (
+                row_data["data"]
+                if isinstance(row_data, dict) and "data" in row_data
+                else row_data
+            )
 
-            # If tracing is enabled, wrap the task in a span. 
+            # If tracing is enabled, wrap the task in a span.
             if self.trace_task:
                 from zeroeval.observability.decorators import span
+
                 with span(name=f"experiment:{self.name}") as current_span:
                     try:
                         task_output = self.task(row_content)
                     except Exception as e:
                         if raise_on_error:
                             raise e
-                        else:
-                            task_output = None
-                            # Properly capture error details
-                            current_span.set_error(
-                                code=e.__class__.__name__,
-                                message=str(e),
-                                stack=traceback.format_exc()
-                            )
+                        task_output = None
+                        # Properly capture error details
+                        current_span.set_error(
+                            code=e.__class__.__name__,
+                            message=str(e),
+                            stack=traceback.format_exc(),
+                        )
                 trace_id = current_span.trace_id
             else:
                 task_output = self.task(row_content)
@@ -86,7 +100,7 @@ class Experiment:
                 row_data=row_data,
                 row_id=row_id,
                 result=task_output,
-                trace_id=trace_id  # <-- Pass the captured trace ID along
+                trace_id=trace_id,  # <-- Pass the captured trace ID along
             )
             experiment_result._write(self._writer)
             self.results.append(experiment_result)
@@ -94,10 +108,10 @@ class Experiment:
         return self.results
 
     def run_evaluators(
-        self, 
-        evaluators: Optional[List[Callable[[Any, Any], Any]]] = None, 
-        results: Optional[List['ExperimentResult']] = None
-    ) -> List['ExperimentResult']:
+        self,
+        evaluators: Optional[List[Callable[[Any, Any], Any]]] = None,
+        results: Optional[List["ExperimentResult"]] = None,
+    ) -> List["ExperimentResult"]:
         """
         Run the specified evaluators on a list of results (or on self.results if none provided).
         Each evaluator is a function: evaluator(row_data, result).
@@ -107,13 +121,16 @@ class Experiment:
         if results is None:
             results = self.results
 
-        
         for evaluator in evaluators:
-            evaluator_obj = Evaluator(evaluator.__name__, inspect.getsource(evaluator), evaluator.__doc__, self._backend_id)
+            evaluator_obj = Evaluator(
+                evaluator.__name__,
+                inspect.getsource(evaluator),
+                evaluator.__doc__,
+                self._backend_id,
+            )
             evaluator_obj._write()
 
             for experiment_result in results:
-
                 row_data_for_eval = (
                     experiment_result.row_data["data"]
                     if isinstance(experiment_result.row_data, dict)
@@ -123,13 +140,20 @@ class Experiment:
 
                 dataset_row_id = experiment_result.row_id
 
-                evaluation_output = evaluator(row_data_for_eval, experiment_result.result)
-                evaluation = Evaluation(evaluator_obj, evaluation_output, experiment_result._backend_id, dataset_row_id)
+                evaluation_output = evaluator(
+                    row_data_for_eval, experiment_result.result
+                )
+                evaluation = Evaluation(
+                    evaluator_obj,
+                    evaluation_output,
+                    experiment_result._backend_id,
+                    dataset_row_id,
+                )
                 evaluation._write()
 
         return results
 
-    def run(self, subset: Optional[List[dict]] = None) -> List['ExperimentResult']:
+    def run(self, subset: Optional[List[dict]] = None) -> List["ExperimentResult"]:
         """
         Run tasks and evaluators together, evaluating each task result immediately.
         """
@@ -143,22 +167,28 @@ class Experiment:
         evaluator_objects = []
         for evaluator in self.evaluators:
             evaluator_obj = Evaluator(
-                evaluator.__name__, 
-                inspect.getsource(evaluator), 
-                evaluator.__doc__, 
-                self._backend_id
+                evaluator.__name__,
+                inspect.getsource(evaluator),
+                evaluator.__doc__,
+                self._backend_id,
             )
             evaluator_obj._write()
             evaluator_objects.append(evaluator_obj)
 
         # Process rows one at a time
-        rows_to_run = subset if subset is not None else self.dataset._get_all_full_rows()
+        rows_to_run = (
+            subset if subset is not None else self.dataset._get_all_full_rows()
+        )
         self.results = []
 
         for row_data in rows_to_run:
             # Run task for this row
             row_id = row_data.get("row_id") if isinstance(row_data, dict) else None
-            row_content = row_data["data"] if isinstance(row_data, dict) and "data" in row_data else row_data
+            row_content = (
+                row_data["data"]
+                if isinstance(row_data, dict) and "data" in row_data
+                else row_data
+            )
 
             # Run task with tracing if enabled
             if self.trace_task:
@@ -173,24 +203,25 @@ class Experiment:
                 row_data=row_data,
                 row_id=row_id,
                 result=result,
-                trace_id=trace_id
+                trace_id=trace_id,
             )
             experiment_result._write(self._writer)
             self.results.append(experiment_result)
 
             # Immediately run evaluators on this result
             row_data_for_eval = (
-                row_data["data"] if isinstance(row_data, dict) and "data" in row_data 
+                row_data["data"]
+                if isinstance(row_data, dict) and "data" in row_data
                 else row_data
             )
-            
+
             for evaluator, evaluator_obj in zip(self.evaluators, evaluator_objects):
                 evaluation_output = evaluator(row_data_for_eval, result)
                 evaluation = Evaluation(
-                    evaluator_obj, 
-                    evaluation_output, 
-                    experiment_result._backend_id, 
-                    row_id
+                    evaluator_obj,
+                    evaluation_output,
+                    experiment_result._backend_id,
+                    row_id,
                 )
                 evaluation._write()
 
@@ -199,6 +230,7 @@ class Experiment:
     def _run_traced_task(self, row_content: Any) -> tuple[Any, Optional[str]]:
         """Helper method to run a task with tracing enabled."""
         from zeroeval.observability.decorators import span
+
         with span(name=f"experiment:{self.name}") as current_span:
             try:
                 task_output = self.task(row_content)
@@ -209,12 +241,12 @@ class Experiment:
                 current_span.set_error(
                     code=e.__class__.__name__,
                     message=str(e),
-                    stack=traceback.format_exc()
+                    stack=traceback.format_exc(),
                 )
         tracer.flush()
         return task_output, current_span.trace_id
 
-    def _write(self, writer: 'ExperimentResultWriter') -> Optional[str]:
+    def _write(self, writer: "ExperimentResultWriter") -> Optional[str]:
         """Writes the experiment to the writer if it hasn't been written yet."""
         if not self._backend_id:
             assigned_id = writer._write(self)
@@ -228,13 +260,14 @@ class ExperimentResult:
     Represents the result of running the experiment's task on a single row.
     Includes optional row_id for referencing dataset rows in a backend.
     """
+
     def __init__(
         self,
         experiment_id: str,
         row_data: Optional[dict],
         row_id: Optional[str],
         result: Any,
-        trace_id: Optional[str] = None  # <-- Store the trace ID
+        trace_id: Optional[str] = None,  # <-- Store the trace ID
     ):
         self.experiment_id = experiment_id
         self.row_data = row_data
@@ -245,6 +278,6 @@ class ExperimentResult:
         # New field to hold the trace ID if tracing was enabled
         self.trace_id = trace_id
 
-    def _write(self, writer: 'ExperimentResultWriter'):
+    def _write(self, writer: "ExperimentResultWriter"):
         """Write this ExperimentResult to the writer."""
         self._backend_id = writer._write(self)

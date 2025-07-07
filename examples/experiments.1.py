@@ -11,6 +11,7 @@ def task(row):
     """
     return row["input"]
 
+
 def exact_match(row, output):
     """
     This is an evaluator that returns the exact match between the input and the output.
@@ -18,11 +19,8 @@ def exact_match(row, output):
     print(row)
     return row["input"] == output
 
-experiment = ze.Experiment(
-    dataset=dataset,
-    task=task,
-    evaluators=[exact_match]
-)
+
+experiment = ze.Experiment(dataset=dataset, task=task, evaluators=[exact_match])
 
 
 # test_results = experiment.run(dataset[:1])
@@ -30,4 +28,3 @@ experiment = ze.Experiment(
 
 results = experiment.run_task()
 results = experiment.run_evaluators([exact_match])
-

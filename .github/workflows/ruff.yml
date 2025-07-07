@@ -1,0 +1,46 @@
+name: 🔍 Code Quality (Ruff)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  ruff:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: 🔧 Set up Python
+      run: uv python install 3.11
+
+    - name: 📦 Install dependencies
+      run: uv sync --dev
+
+    - name: 🔍 Run Ruff Linter
+      run: |
+        echo "::group::🔍 Ruff Linting"
+        uv run ruff check . --output-format=github
+        echo "::endgroup::"
+
+    - name: 🎨 Check Ruff Formatting
+      run: |
+        echo "::group::🎨 Ruff Formatting"
+        uv run ruff format --check .
+        echo "::endgroup::"
+
+    - name: ✅ Code Quality Summary
+      if: success()
+      run: |
+        echo "::notice::✅ All code quality checks passed!"
+        echo "- Linting: PASSED"
+        echo "- Formatting: PASSED" 

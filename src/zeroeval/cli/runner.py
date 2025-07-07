@@ -3,6 +3,7 @@ import os
 
 from zeroeval.core.decorators import registered_experiments
 
+
 def run_script(script_path: str):
     """
     Imports the user script and runs the decorated functions with extra logic.
@@ -20,8 +21,10 @@ def run_script(script_path: str):
         model = metadata.get("model", None)
 
         # Example: Print info and run the function
-        print(f"Running experiment function '{fn.__name__}' "
-              f"with dataset='{dataset}' and model='{model}'")
+        print(
+            f"Running experiment function '{fn.__name__}' "
+            f"with dataset='{dataset}' and model='{model}'"
+        )
 
         # 3. Execute the function
         fn()

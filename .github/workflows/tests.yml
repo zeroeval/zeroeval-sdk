@@ -1,0 +1,64 @@
+name: 🧪 Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: 🔧 Set up Python ${{ matrix.python-version }}
+      run: uv python install ${{ matrix.python-version }}
+
+    - name: 📦 Install dependencies
+      run: uv sync --dev
+
+    - name: 🧪 Run Core Tests
+      run: |
+        echo "::group::🧪 Core SDK Tests"
+        uv run pytest tests/ -m "core" -v --tb=short --color=yes
+        echo "::endgroup::"
+
+    - name: 🔗 Run Compatibility Tests
+      run: |
+        echo "::group::🔗 Compatibility Tests"
+        uv run pytest tests/ -m "compatibility" -v --tb=short --color=yes
+        echo "::endgroup::"
+
+    - name: 👁️ Run Observability Tests
+      run: |
+        echo "::group::👁️ Observability Tests"
+        uv run pytest tests/ -m "observability" -v --tb=short --color=yes
+        echo "::endgroup::"
+
+    - name: 🏃‍♂️ Run All Tests (Summary)
+      run: |
+        echo "::group::🏃‍♂️ Full Test Suite"
+        uv run pytest tests/ -v --tb=short --color=yes --durations=10
+        echo "::endgroup::"
+
+    - name: ✅ Test Summary
+      if: success()
+      run: |
+        echo "::notice::✅ All tests passed on Python ${{ matrix.python-version }}!"
+        echo "- Core tests: PASSED"
+        echo "- Compatibility tests: PASSED"
+        echo "- Observability tests: PASSED" 

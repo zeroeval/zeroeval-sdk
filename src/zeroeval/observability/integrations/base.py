@@ -1,13 +1,14 @@
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, Optional, Type
 import importlib
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, Optional
+
 
 class Integration(ABC):
     """Base class for all tracing integrations."""
-    
+
     # Required package for this integration
     PACKAGE_NAME: str = None
-    
+
     def __init__(self, tracer):
         self.tracer = tracer
         self._original_functions: Dict[str, Callable] = {}
@@ -29,13 +30,12 @@ class Integration(ABC):
     @abstractmethod
     def setup(self) -> None:
         """Setup the integration by applying all necessary patches."""
-        pass
 
     def safe_setup(self) -> bool:
         """Safely attempt to setup the integration, catching and storing any errors."""
         if self._setup_attempted:
             return self._setup_successful
-            
+
         self._setup_attempted = True
         try:
             self.setup()
@@ -53,7 +53,7 @@ class Integration(ABC):
     def teardown(self) -> None:
         """Teardown the integration by removing all patches."""
         for key, original_func in self._original_functions.items():
-            obj_name, method_name = key.rsplit('.', 1)
+            obj_name, method_name = key.rsplit(".", 1)
             try:
                 obj = self._get_object_by_path(obj_name)
                 setattr(obj, method_name, original_func)
@@ -61,7 +61,9 @@ class Integration(ABC):
                 pass
         self._original_functions.clear()
 
-    def _patch_method(self, target_object: Any, method_name: str, wrapper: Callable) -> None:
+    def _patch_method(
+        self, target_object: Any, method_name: str, wrapper: Callable
+    ) -> None:
         """Helper method to patch an object's method."""
         original = getattr(target_object, method_name)
 
@@ -79,7 +81,7 @@ class Integration(ABC):
 
         patched = wrapper(original)
         # Mark so we can recognise it later and avoid double wrapping
-        setattr(patched, "__ze_patched__", True)
+        patched.__ze_patched__ = True
 
         setattr(target_object, method_name, patched)
 
@@ -92,6 +94,6 @@ class Integration(ABC):
 
     def _get_object_by_path(self, obj_path: str) -> Any:
         """Helper to get an object by its module path."""
-        module_path, obj_name = obj_path.rsplit('.', 1)
+        module_path, obj_name = obj_path.rsplit(".", 1)
         module = importlib.import_module(module_path)
         return getattr(module, obj_name)

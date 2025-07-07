@@ -1,19 +1,18 @@
-import zeroeval as ze
-import time
-import random
-import openai
 import base64
+import random
+import time
 from pathlib import Path
+
+import openai
+
+import zeroeval as ze
 from zeroeval.observability.decorators import span
 from zeroeval.observability.tracer import tracer
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-tracer.configure(
-    flush_interval=1.0,
-    max_spans=50
-)
+tracer.configure(flush_interval=1.0, max_spans=50)
 
 # Initialise SDKs (replace the keys below with your own for real usage)
 ze.init(api_key="sk_ze_sDaLKEbmov2O0eFML2ZNwIt40yvBJEIgFHyHXMmquPY")
@@ -24,6 +23,7 @@ openai_client = openai.OpenAI(
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
 
 def _image_path_to_data_uri(image_path: str) -> str:
     """Convert a local image file to a base64 data-URI suitable for GPT-4o vision."""
@@ -38,12 +38,14 @@ def _image_path_to_data_uri(image_path: str) -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("utf-8")
     return f"data:{mime_type};base64,{encoded}"
 
+
 # -----------------------------------------------------------------------------
 # Dataset
 # -----------------------------------------------------------------------------
 print("Pulling `Medical_Xray_Dataset` from workspace…")
 dataset = ze.Dataset.pull("Medical_Xray_Dataset")
 print(f"Pulled dataset with {len(dataset)} records.")
+
 
 # -----------------------------------------------------------------------------
 # Task & Steps
@@ -55,35 +57,38 @@ def diagnosis_step(row):
     patient_id = row.get("patient_id", "UNKNOWN")
 
     # Build the multimodal message payload
-    user_content = [{"type": "text", "text": f"Patient ID {patient_id}. Symptoms: {symptoms}. Provide a concise diagnosis and recommended treatment."}]
+    user_content = [
+        {
+            "type": "text",
+            "text": f"Patient ID {patient_id}. Symptoms: {symptoms}. Provide a concise diagnosis and recommended treatment.",
+        }
+    ]
 
     # Attach chest X-ray if we have one
     image_path = row.get("chest_xray")
     if image_path:
         # If the path looks like a remote URL, pass it straight through.
-        if isinstance(image_path, str) and image_path.startswith(("http://", "https://")):
-            user_content.append({
-                "type": "image_url",
-                "image_url": {"url": image_path}
-            })
+        if isinstance(image_path, str) and image_path.startswith(
+            ("http://", "https://")
+        ):
+            user_content.append({"type": "image_url", "image_url": {"url": image_path}})
         else:
             # Treat it as a local file path -> convert to base-64 data URI
             try:
                 data_uri = _image_path_to_data_uri(image_path)
-                user_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": data_uri}
-                })
+                user_content.append(
+                    {"type": "image_url", "image_url": {"url": data_uri}}
+                )
             except Exception as exc:
                 print(f"[WARN] Unable to process image for patient {patient_id}: {exc}")
 
     response = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": user_content}]
+        model="gpt-4o-mini", messages=[{"role": "user", "content": user_content}]
     )
     # Random sleep to emulate variable model latency / throttling
     time.sleep(random.uniform(0.2, 0.5))
     return response.choices[0].message.content
+
 
 # -----------------------------------------------------------------------------
 # Experiment-level task wrapper
@@ -98,6 +103,7 @@ def task(row):
     time.sleep(random.uniform(0.05, 0.15))
     return result
 
+
 # -----------------------------------------------------------------------------
 # Simple evaluator
 # -----------------------------------------------------------------------------
@@ -108,6 +114,7 @@ def evaluator_placeholder(row, output):
     time.sleep(random.uniform(0.02, 0.08))
     return random.random()
 
+
 # -----------------------------------------------------------------------------
 # Experiment
 # -----------------------------------------------------------------------------
@@ -116,10 +123,10 @@ experiment = ze.Experiment(
     task=task,
     evaluators=[evaluator_placeholder],
     name="Multimodal_Diagnosis_with_GPT4o",
-    description="Uses GPT-4o vision capabilities to perform medical diagnoses from symptoms + chest X-ray images."
+    description="Uses GPT-4o vision capabilities to perform medical diagnoses from symptoms + chest X-ray images.",
 )
 
 if __name__ == "__main__":
     print("Running multimodal diagnosis experiment with GPT-4o…")
     experiment.run()
-    print("Experiment finished!") 
+    print("Experiment finished!")
