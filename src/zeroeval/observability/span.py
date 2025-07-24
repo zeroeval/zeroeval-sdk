@@ -147,10 +147,6 @@ class Span:
             "status": self.status
         }
         
-        # Add session_name if it exists
-        if self.session_name:
-            span_dict["session_name"] = self.session_name
-        
         return span_dict
 
     def end(self, error: Optional[Exception] = None) -> None:
