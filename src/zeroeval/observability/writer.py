@@ -50,23 +50,62 @@ class SpanBackendWriter(SpanWriter):
         api_url = self._get_api_url()
         api_key = self._get_api_key()
 
+        # Sort so that for each session, the first span with a non-empty session name appears
+        # before any spans without a name.  This makes the backend upsert receive the proper
+        # name even when multiple spans share the same session in the same flush batch.
+        spans_sorted = sorted(
+            spans,
+            key=lambda s: (s.get("session_id"), bool((s.get("session_name") or "").strip())),
+            reverse=True,
+        )
+
         formatted_spans = []
-        for span in spans:
+        for span in spans_sorted:
             try:
+                # DEBUG: Log session information for this span
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Formatting span '%s' (session_id=%s, session_name=%s)",
+                        span.get("name"),
+                        span.get("session_id"),
+                        repr(span.get("session_name")),
+                    )
+
                 # Convert traceback object to string if present
                 error_stack = str(span.get("error_stack")) if span.get("error_stack") else None
                 
-                # Prepare session data if session_name or session_tags are provided
+                # Prepare session data if session_id is provided
+                # Only send session metadata when we have meaningful information (name or tags)
                 session_data = None
                 if span.get("session_id"):
-                    if span.get("session_name") or span.get("session_tags"):
-                        session_data = {
-                            "id": span["session_id"],
-                            "name": span.get("session_name"),
-                        }
-                        # Attach tags if provided
-                        if span.get("session_tags"):
-                            session_data["tags"] = span["session_tags"]
+                    session_name = span.get("session_name")
+                    session_tags = span.get("session_tags")
+
+                    # Build the payload only if we have a non-null name or at least one tag.
+                    if session_name is not None or session_tags:
+                        session_data = {"id": span["session_id"]}
+
+                        # Include name only when it is explicitly provided (avoid null overwrite).
+                        if session_name is not None:
+                            session_data["name"] = session_name
+
+                        # Include tags if they exist and are non empty.
+                        if session_tags:
+                            session_data["tags"] = session_tags
+
+                # DEBUG: Log whether session_data will be included
+                if logger.isEnabledFor(logging.DEBUG):
+                    if session_data:
+                        logger.debug(
+                            "Session object to be sent for session_id %s: %s",
+                            span.get("session_id"),
+                            session_data,
+                        )
+                    else:
+                        logger.debug(
+                            "No session metadata sent for session_id %s (no name/tags)",
+                            span.get("session_id"),
+                        )
                 
                 formatted_span = {
                     "id": span["span_id"],
@@ -98,7 +137,11 @@ class SpanBackendWriter(SpanWriter):
                     formatted_span["session"] = session_data
                 formatted_spans.append(formatted_span)
             except Exception:
-                logger.error(f"Failed to format span: {span.get('name', 'unnamed')}", exc_info=True)
+                logger.error(
+                    "Failed to format span during write: %s",
+                    span.get("name", "unnamed"),
+                    exc_info=True,
+                )
                 continue
 
         if not formatted_spans:
