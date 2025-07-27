@@ -40,8 +40,6 @@ response = client.chat.completions.create(
 )
 ```
 
-**Note:** If you're using LiveKit Agents, disable this integration to prevent conflicts with LiveKit's OpenAI plugin. See the LiveKit section below.
-
 ### 2. LangChain
 
 Comprehensive tracing for all LangChain components:
@@ -156,34 +154,6 @@ langgraph.invoke (500ms)
 ├── langgraph.node.tools (150ms)
 └── langchain.tool.run (140ms) [Tool execution]
 ```
-
-### 4. LiveKit (Compatibility Mode)
-
-**Current Status:** LiveKit compatibility mode prevents conflicts between ZeroEval's OpenAI instrumentation and LiveKit's OpenAI plugin.
-
-**Important:** When using LiveKit Agents, you MUST disable the OpenAI integration:
-
-```python
-import zeroeval as ze
-
-# REQUIRED: Disable OpenAI auto-patching for LiveKit compatibility
-ze.init(
-    api_key="YOUR_API_KEY",
-    disabled_integrations=["openai"]
-)
-```
-
-**Why is this necessary?**
-LiveKit's OpenAI plugin uses a custom implementation that returns async context managers from its `chat()` method. ZeroEval's automatic OpenAI patching would interfere with this behavior, causing runtime errors.
-
-**What still works:**
-
-- All ZeroEval manual instrumentation (`@ze.span`, `ze.set_signal`, etc.)
-- All other integrations (LangChain, LangGraph, etc.)
-- Custom tracing and observability features
-
-**Future Plans:**
-We're working on a dedicated LiveKit integration that will properly instrument LiveKit's OpenAI calls without breaking compatibility. Stay tuned!
 
 ## Auto-Instrumentation Details
 
