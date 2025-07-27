@@ -40,6 +40,8 @@ response = client.chat.completions.create(
 )
 ```
 
+**Note:** If you're using LiveKit Agents, disable this integration to prevent conflicts with LiveKit's OpenAI plugin. See the LiveKit section below.
+
 ### 2. LangChain
 
 Comprehensive tracing for all LangChain components:
@@ -155,6 +157,34 @@ langgraph.invoke (500ms)
 └── langchain.tool.run (140ms) [Tool execution]
 ```
 
+### 4. LiveKit (Compatibility Mode)
+
+**Current Status:** LiveKit compatibility mode prevents conflicts between ZeroEval's OpenAI instrumentation and LiveKit's OpenAI plugin.
+
+**Important:** When using LiveKit Agents, you MUST disable the OpenAI integration:
+
+```python
+import zeroeval as ze
+
+# REQUIRED: Disable OpenAI auto-patching for LiveKit compatibility
+ze.init(
+    api_key="YOUR_API_KEY",
+    disabled_integrations=["openai"]
+)
+```
+
+**Why is this necessary?**
+LiveKit's OpenAI plugin uses a custom implementation that returns async context managers from its `chat()` method. ZeroEval's automatic OpenAI patching would interfere with this behavior, causing runtime errors.
+
+**What still works:**
+
+- All ZeroEval manual instrumentation (`@ze.span`, `ze.set_signal`, etc.)
+- All other integrations (LangChain, LangGraph, etc.)
+- Custom tracing and observability features
+
+**Future Plans:**
+We're working on a dedicated LiveKit integration that will properly instrument LiveKit's OpenAI calls without breaking compatibility. Stay tuned!
+
 ## Auto-Instrumentation Details
 
 The ZeroEval tracer automatically:
@@ -170,14 +200,27 @@ The ZeroEval tracer automatically:
 While integrations are automatic, you can disable specific ones if needed:
 
 ```python
+import zeroeval as ze
+
+# Method 1: Disable during initialization (recommended)
+ze.init(
+    api_key="YOUR_API_KEY",
+    disabled_integrations=["openai", "langgraph"]  # Disable specific integrations
+)
+
+# Method 2: Via environment variable
+# Set ZEROEVAL_DISABLED_INTEGRATIONS=openai,langgraph before running
+
+# Method 3: Configure after initialization
 from zeroeval.observability.tracer import tracer
-
-# Before any imports of the libraries you want to exclude
-tracer.configure(disabled_integrations=["langgraph"])
-
-# Now import your libraries
-import langgraph  # Will not be instrumented
+tracer.configure(integrations={"openai": False, "langgraph": False})
 ```
+
+**Common Use Cases for Disabling:**
+
+- **LiveKit Users**: Disable `openai` to prevent conflicts with LiveKit's OpenAI plugin
+- **Custom Instrumentation**: Disable auto-instrumentation when you have custom tracing
+- **Performance**: Disable integrations you're not using to reduce overhead
 
 ## Performance Impact
 

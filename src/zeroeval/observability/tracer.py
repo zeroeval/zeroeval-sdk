@@ -109,11 +109,25 @@ class Tracer:
         self._flush_thread = threading.Thread(target=self._flush_periodically, daemon=True)
         self._flush_thread.start()
 
-        # Auto-setup integrations
-        self._setup_available_integrations()
+        # Don't auto-setup integrations here - wait for init() to be called
+        self._integrations_initialized = False
         
         # Register shutdown hook
         atexit.register(self.shutdown)
+    
+    def ensure_integrations_initialized(self) -> None:
+        """Ensure integrations are initialized, but only once."""
+        if not self._integrations_initialized:
+            # Re-read disabled integrations from environment in case they were set by init()
+            disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
+            if disabled_env:
+                disabled_names = {name.strip() for name in disabled_env.split(',') if name.strip()}
+                for name in disabled_names:
+                    self._integrations_config[name] = False
+                logger.info(f"Integrations disabled via environment variable: {disabled_names}")
+            
+            self._setup_available_integrations()
+            self._integrations_initialized = True
     
     def _setup_available_integrations(self) -> None:
         """Automatically set up all available integrations."""
@@ -121,12 +135,14 @@ class Tracer:
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
+        from .integrations.livekit.integration import LiveKitIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
             LangChainIntegration,  # Auto-instrument LangChain
             LangGraphIntegration,  # Auto-instrument LangGraph
+            LiveKitIntegration,  # Auto-instrument LiveKit
         ]
         
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
@@ -161,6 +177,12 @@ class Tracer:
             logger.info(f"Active integrations: {list(self._integrations.keys())}")
         else:
             logger.info("No active integrations found.")
+    
+    def reinitialize_integrations(self):
+        """Reinitialize integrations. Useful after init() sets up logging."""
+        logger.info("Reinitializing integrations...")
+        self._integrations.clear()
+        self._setup_available_integrations()
 
     def _print_user_friendly_error(self, integration_name: str, error: Exception) -> None:
         """Print user-friendly error messages for common integration issues."""
@@ -275,6 +297,9 @@ class Tracer:
         session_tags: Optional[dict[str, str]] = None
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
+        # Ensure integrations are initialized before starting any spans
+        self.ensure_integrations_initialized()
+        
         if self.is_shutting_down():
             logger.warning("Tracer is shutting down. Discarding new span.")
             # Return a no-op span if tracer is shutting down

@@ -107,71 +107,10 @@ class OpenAIIntegration(Integration):
 
                 # ---------------- STREAMING (ASYNC) -----------------
                 if is_streaming:
-                    logger.debug("Async wrapper -> returning *async generator* passthrough")
-
-                    async def _relay():  # captures variables from outer scope
-                        full_response: str = ""
-                        first_token_time: float | None = None
-
-                        try:
-                            async for chunk in response:
-                                #
-                                # 1️⃣  "meta" packets with neither `choices` nor `usage`
-                                #     (e.g.   {"event":"message_start", ...} )
-                                #
-                                if not getattr(chunk, "choices", None) and not getattr(chunk, "usage", None):
-                                    # just pass it through – stream is *not* finished yet
-                                    yield chunk
-                                    continue
-
-                                #
-                                # 2️⃣  Usage-only packet – last real packet of the stream
-                                #
-                                if not getattr(chunk, "choices", None) and getattr(chunk, "usage", None):
-                                    usage = chunk.usage            # type: ignore[attr-defined]
-                                    span.attributes.update(
-                                        {
-                                            "inputTokens": usage.prompt_tokens,
-                                            "outputTokens": usage.completion_tokens,
-                                        }
-                                    )
-                                    yield chunk
-                                    # do *not* continue; we want to stay in the loop until
-                                    # the server closes the connection so that we fire the
-                                    # finally-clause below.
-                                    continue
-
-                                # Content chunk
-                                delta = chunk.choices[0].delta
-                                if delta and getattr(delta, "content", None):
-                                    if first_token_time is None:
-                                        first_token_time = time.time()
-                                        span.attributes["latency"] = round(
-                                            first_token_time - start_time, 4
-                                        )
-                                    full_response += delta.content
-                                yield chunk
-                        except Exception as exc:
-                            span.set_error(
-                                code=exc.__class__.__name__,
-                                message=str(exc),
-                                stack=getattr(exc, "__traceback__", None),
-                            )
-                            raise
-                        finally:
-                            # Finalise span once the async generator is exhausted
-                            elapsed = time.time() - start_time
-                            throughput = len(full_response) / elapsed if elapsed > 0 else 0
-                            span.attributes.update({"throughput": round(throughput, 2)})
-                            span.set_io(
-                                input_data=json.dumps(
-                                    self._serialize_messages(kwargs.get("messages"))
-                                ),
-                                output_data=full_response,
-                            )
-                            tracer.end_span(span)
-
-                    return _relay()  # returns an *awaitable* async generator
+                    logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
+                    return _StreamingResponseProxy(
+                        response, span, tracer, self, kwargs, start_time, is_async=True
+                    )
 
                 # ---------- non-streaming ----------
                 elapsed = time.time() - start_time
@@ -262,6 +201,7 @@ class _StreamingResponseProxy:
     """Proxy that mimics OpenAI's streaming response object while capturing metrics for both sync and async streams."""
 
     def __init__(self, _resp, span, tracer, integration_instance, request_kwargs, start_time, is_async=False):
+        import time
         self._resp = _resp
         self.span = span
         self.tracer = tracer
@@ -304,6 +244,56 @@ class _StreamingResponseProxy:
         if not self._stream_has_finished:
             self._finalise_span()
         return False
+
+    async def __aiter__(self):
+        """Support async iteration for async streaming responses."""
+        if not self._is_async:
+            raise TypeError("Cannot use async iteration on sync response")
+        
+        async for chunk in self._resp:
+            # Process chunk and track metrics
+            if not getattr(chunk, "choices", None) and not getattr(chunk, "usage", None):
+                # Meta packets - just pass through
+                yield chunk
+                continue
+                
+            if not getattr(chunk, "choices", None) and getattr(chunk, "usage", None):
+                # Usage-only packet
+                usage = chunk.usage
+                self.span.attributes.update({
+                    "inputTokens": usage.prompt_tokens,
+                    "outputTokens": usage.completion_tokens,
+                })
+                yield chunk
+                continue
+                
+            # Content chunk
+            delta = chunk.choices[0].delta
+            if delta and getattr(delta, "content", None):
+                if self._first_token_time is None:
+                    self._first_token_time = time.time()
+                    self.span.attributes["latency"] = round(
+                        self._first_token_time - self.start_time, 4
+                    )
+                self._full_response += delta.content
+            yield chunk
+        
+        # Finalize after iteration completes
+        if not self._stream_has_finished:
+            self._finalise_span()
+
+    def __iter__(self):
+        """Support sync iteration for sync streaming responses."""
+        if self._is_async:
+            raise TypeError("Cannot use sync iteration on async response")
+            
+        for chunk in self._resp:
+            self._process_chunk(chunk)
+            yield chunk
+        
+        # Finalize after iteration completes
+        if not self._stream_has_finished:
+            self._finalise_span()
 
     def _process_chunk(self, chunk):
         import time
