@@ -2,14 +2,29 @@ import base64
 import mimetypes
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union, Callable
+import csv
 
 from .init import _validate_init
 from .reader import DatasetBackendReader
 from .writer import DatasetBackendWriter
 
 if TYPE_CHECKING:
-    pass
+    from .run import Run
+
+
+class DotDict(dict):
+    """Dictionary that supports dot notation access."""
+    
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"No attribute '{key}'")
+    
+    def __setattr__(self, key, value):
+        self[key] = value
+
 
 class Dataset:
     """
@@ -24,37 +39,64 @@ class Dataset:
         version_number (int): The version number in the backend
     """
     
-    def __init__(self, name: str, data: list[dict[str, Any]], description: Optional[str] = None):
+    def __init__(self, name_or_path: str, data: Optional[list[dict[str, Any]]] = None, description: Optional[str] = None):
         """
-        Initialize a Dataset with a name and data.
+        Initialize a Dataset with a name and data, or load from a CSV file.
         
         Args:
-            name (str): The name of the dataset
-            data (list): A list of dictionaries containing the data
-            description (str): A description of the dataset
+            name_or_path (str): Dataset name OR path to a CSV file
+            data (list, optional): List of dictionaries containing the data
+            description (str, optional): Description of the dataset
+            
+        Usage:
+            # From CSV file
+            ds = Dataset("/path/to/data.csv")
+            
+            # From list of dicts
+            ds = Dataset("my_dataset", data=[...])
             
         Raises:
-            TypeError: If name is not a string or data is not a list
-            ValueError: If any item in data is not a dictionary
+            TypeError: If name_or_path is not a string
+            ValueError: If data format is invalid
         """
-        if not isinstance(name, str):
-            raise TypeError("Dataset name must be a string")
+        if not isinstance(name_or_path, str):
+            raise TypeError("First argument must be a string (dataset name or file path)")
         
-        if not isinstance(data, list):
-            raise TypeError("Dataset data must be a list")
+        # Check if it's a file path
+        if data is None and (name_or_path.endswith('.csv') or os.path.exists(name_or_path)):
+            # Load from CSV
+            self._name = Path(name_or_path).stem  # Use filename without extension as name
+            self._description = description or f"Dataset loaded from {name_or_path}"
+            self._data = self._load_csv(name_or_path)
+        else:
+            # Traditional initialization
+            self._name = name_or_path
+            self._description = description
             
-        if not all(isinstance(item, dict) for item in data):
-            raise ValueError("All items in data must be dictionaries")
+            if data is None:
+                raise ValueError("Must provide data when not loading from a file")
             
-        self._name = name
-        self._description = description
-        # Keep the full rows (possibly including row_id, data, etc.)
-        self._data = data.copy()  # avoid external modifications
+            if not isinstance(data, list):
+                raise TypeError("Dataset data must be a list")
+                
+            if not all(isinstance(item, dict) for item in data):
+                raise ValueError("All items in data must be dictionaries")
+                
+            self._data = data.copy()  # avoid external modifications
         
         self._writer = DatasetBackendWriter()
         self._backend_id = None
         self._version_id = None
         self._version_number = None
+    
+    def _load_csv(self, file_path: str) -> list[dict[str, Any]]:
+        """Load data from a CSV file."""
+        data = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                data.append(dict(row))  # Convert OrderedDict to regular dict
+        return data
 
     def add_rows(self, new_rows: list[dict[str, Any]]) -> None:
         """
@@ -119,27 +161,114 @@ class Dataset:
             return self
         self._writer.write(self, create_new_version=create_new_version)
         return self
+    
+
+
+    def run(self, task_func: Callable, run_number: int = 1, total_runs: int = 1, experiment_id: Optional[str] = None) -> "Run":
+        """
+        Run a task function on this dataset without mutating it.
+        
+        Args:
+            task_func: A @task decorated function
+            run_number: The run number (for multiple runs)
+            total_runs: Total number of runs (for multiple runs)
+            experiment_id: Optional experiment ID to share across runs
+            
+        Returns:
+            Run object containing results that can be evaluated
+            
+        Example:
+            @task(outputs=["pred"])
+            def solve(row):
+                return {"pred": llm_answer(row.question)}
+                
+            results = dataset.run(solve)
+            results.eval([exact_match])
+        """
+        from .run import Run
+        from zeroeval.observability.decorators import span
+        import traceback
+        
+        # Validate that it's a task
+        if not hasattr(task_func, '_is_task'):
+            raise TypeError(f"{task_func.__name__} is not a @task decorated function")
+            
+        # Prepare result rows
+        result_rows = []
+        
+        for row_data in self._data:
+            # Make a copy to avoid mutating original data
+            row_copy = row_data.copy()
+            
+            # Extract the actual data if nested
+            if 'data' in row_copy and isinstance(row_copy['data'], dict):
+                # Flatten the structure for easier access
+                actual_data = row_copy['data'].copy()
+                # Keep row_id if present
+                if 'row_id' in row_copy:
+                    actual_data['row_id'] = row_copy['row_id']
+            else:
+                actual_data = row_copy
+            
+            # Convert to DotDict for dot notation access
+            dot_row = DotDict(actual_data)
+            
+            # Run the task with tracing
+            with span(name=f"task:{task_func._task_name}") as current_span:
+                try:
+                    task_output = task_func(dot_row)
+                    # Merge task output with row data
+                    actual_data.update(task_output)
+                except Exception as e:
+                    # Capture error but continue processing
+                    current_span.set_error(
+                        code=e.__class__.__name__,
+                        message=str(e),
+                        stack=traceback.format_exc()
+                    )
+                    actual_data["_error"] = str(e)
+                    
+            result_rows.append(actual_data)
+            
+        # Create and return Run object
+        return Run(
+            dataset_name=self.name,
+            dataset_id=getattr(self, "_backend_id", ""),
+            dataset_version_id=getattr(self, "_version_id", ""),
+            task_name=task_func._task_name,
+            task_code=task_func._task_code,
+            rows=result_rows,
+            outputs=task_func._outputs,
+            run_number=run_number,
+            total_runs=total_runs,
+            task_func=task_func,
+            dataset_ref=self,
+            experiment_id=experiment_id
+        )
 
     @classmethod
     def pull(
         cls,
-        dataset_name: str,
-        version_number: Optional[int] = None,
-        workspace_name: Optional[str] = None
+        name: str,
+        version_number: Optional[int] = None
     ) -> "Dataset":
         """
-        Pull a dataset by dataset name, optionally specifying version_number.
+        Pull a dataset by name, optionally specifying version_number.
         
-        This uses the DatasetBackendReader to:
-          1) Resolve workspace ID from API key
-          2) Fetch metadata and rows from the backend
+        The workspace is automatically resolved from your API key.
+        
+        Args:
+            name: Name of the dataset to pull
+            version_number: Optional specific version to pull (defaults to latest)
+            
+        Returns:
+            Dataset instance with the pulled data
         """
         if not _validate_init():
             return None
 
         reader = DatasetBackendReader()
-        # The reader will handle workspace resolution from API key internally
-        return reader.pull_by_name(None, dataset_name, version_number=version_number)
+        return reader.pull_by_name(name, version_number=version_number)
     
     @property
     def version_id(self):
@@ -309,14 +438,40 @@ class Dataset:
         except IndexError:
             raise IndexError(f"Row index {row_index} is out of range")
 
-    def __getitem__(self, idx: int) -> dict[str, Any]:
+    def __getitem__(self, key: Union[int, slice]) -> Union[DotDict, "Dataset"]:
         """
-        By design, return *only* the 'data' part to the user,
-        hiding row_id from direct indexing.
+        Supports indexing and slicing of the dataset.
+        
+        Args:
+            key: An integer index or slice object
+            
+        Returns:
+            - For integer index: A single row as DotDict
+            - For slice: A new Dataset with the sliced rows
+            
+        Examples:
+            row = dataset[0]      # Get first row
+            subset = dataset[:10] # Get first 10 rows
+            subset = dataset[5:]  # Get all rows from index 5
         """
-        row = self._data[idx]
-        # Return the data portion if present, else the row as-is
-        return row.get("data", row)
+        if isinstance(key, int):
+            # Single row access
+            return DotDict(self._data[key])
+        elif isinstance(key, slice):
+            # Slice access - return a new Dataset
+            sliced_data = self._data[key]
+            subset = Dataset(
+                f"{self._name}_slice",
+                data=sliced_data,
+                description=f"Slice of {self._name}"
+            )
+            # Preserve backend metadata if available
+            subset._backend_id = self._backend_id
+            subset._version_id = self._version_id
+            subset._version_number = self._version_number
+            return subset
+        else:
+            raise TypeError(f"Dataset indices must be integers or slices, not {type(key).__name__}")
     
     def __setitem__(self, idx: int, value: dict[str, Any]):
         """
@@ -344,11 +499,14 @@ class Dataset:
 
     def __iter__(self):
         """
-        By design, yield only the 'data' portion for iteration,
-        so normal iteration does not expose row_id.
+        Makes the dataset iterable, yielding DotDict instances for each row.
+        
+        Example:
+            for row in dataset:
+                print(row.name, row.score)
         """
         for row in self._data:
-            yield row.get("data", row)
+            yield DotDict(row)
             
     def __len__(self):
         """

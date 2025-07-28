@@ -7,11 +7,12 @@ class Evaluator:
     """
     A class that defines an evaluator for an experiment.
     """
-    def __init__(self, name: str, code: str, description: str, experiment_id: str):
+    def __init__(self, name: str, code: str, description: str, experiment_id: str, evaluation_mode: str = "row"):
         self.name = name
         self.code = code
         self.description = description  
         self.experiment_id = experiment_id
+        self.evaluation_mode = evaluation_mode
         self._backend_id = None
         # Default to console writer for now, can be changed to backend writer later
         self._writer: EvaluatorWriter = EvaluatorBackendWriter()

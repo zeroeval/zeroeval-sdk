@@ -33,7 +33,7 @@ def init(
     api_key: str = None, 
     workspace_name: str = "Personal Workspace",
     debug: bool = False,
-    api_url: str = "https://api.zeroeval.com"
+    api_url: str = None
 ):
     """
     Initialize the ZeroEval SDK.
@@ -46,10 +46,13 @@ def init(
                                 environment variable.
         api_url (str, optional): The URL of the ZeroEval API.
     """
+    # Set workspace name (always use the provided value)
     os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
-    if api_key:
+    
+    # Only override environment variables if values are explicitly provided
+    if api_key is not None:
         os.environ["ZEROEVAL_API_KEY"] = api_key
-    if api_url:
+    if api_url is not None:
         os.environ["ZEROEVAL_API_URL"] = api_url    
     # Configure logging
     logger = logging.getLogger("zeroeval")
