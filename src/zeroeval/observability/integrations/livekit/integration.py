@@ -740,9 +740,9 @@ class LiveKitIntegration(Integration):
             # Create a span for this metric
             span = self.tracer.start_span(
                 name=span_name,
+                kind=metrics_type.lower().replace("metrics", ""),  # Set kind as parameter
                 attributes={
                     "service.name": "livekit",
-                    "kind": metrics_type.lower().replace("metrics", ""),
                 },
                 tags={"integration": "livekit", "metrics_type": metrics_type},
                 session_id=session_id,
@@ -1253,9 +1253,9 @@ class LiveKitIntegration(Integration):
                         if session_id:
                             span = integration.tracer.start_span(
                                 name="cartesia.tts.stream_start",
+                                kind="tts",  # Set kind as parameter, not attribute
                                 attributes={
                                     "service.name": "cartesia",
-                                    "kind": "tts",
                                     "provider": "cartesia",
                                     "streaming": True,
                                 },
@@ -1316,9 +1316,9 @@ class LiveKitIntegration(Integration):
                     
                     span = integration.tracer.start_span(
                         name="cartesia.tts.synthesize",
+                        kind="tts",  # Set kind as parameter, not attribute
                         attributes={
                             "service.name": "cartesia",
-                            "kind": "tts",
                             "provider": "cartesia",  # Required by tts_span_metrics
                             "streaming": True,       # Required by tts_span_metrics
                         },
