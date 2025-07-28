@@ -46,8 +46,11 @@ class LiveKitIntegration(Integration):
         self._original_function_tool = None
         self._original_deepgram_stt = None
         self._original_deepgram_stream = None
+        self._original_cartesia_tts = None
+        self._original_cartesia_stream = None
         self._ended_span_ids = set()  # Track which span IDs have been ended
         self._stream_sessions = weakref.WeakValueDictionary()  # Track stream sessions
+        self._original_agent_stt_node = None
     
     @property
     def name(self) -> str:
@@ -87,6 +90,9 @@ class LiveKitIntegration(Integration):
             # Try to patch Deepgram if available
             self._try_patch_deepgram()
             
+            # Try to patch Cartesia if available
+            self._try_patch_cartesia()
+            
             logger.info("LiveKit integration: All patches applied successfully")
             
         except ImportError as e:
@@ -108,6 +114,21 @@ class LiveKitIntegration(Integration):
             logger.debug("LiveKit integration: Deepgram plugin not available, skipping patches")
         except Exception as e:
             logger.warning(f"LiveKit integration: Failed to patch Deepgram: {e}")
+    
+    def _try_patch_cartesia(self):
+        """Try to patch Cartesia TTS if available."""
+        try:
+            import livekit.plugins.cartesia
+            from livekit.plugins.cartesia import tts as cartesia_tts
+            
+            # Patch Cartesia TTS class
+            self._patch_cartesia_tts(cartesia_tts)
+            logger.info("LiveKit integration: Cartesia TTS patches applied")
+            
+        except ImportError:
+            logger.debug("LiveKit integration: Cartesia plugin not available, skipping patches")
+        except Exception as e:
+            logger.warning(f"LiveKit integration: Failed to patch Cartesia: {e}")
     
     def _patch_agent_session_class(self, AgentSession) -> None:
         """Patch AgentSession class methods."""
@@ -920,6 +941,11 @@ class LiveKitIntegration(Integration):
             STT = deepgram_stt_module.STT
             SpeechStream = deepgram_stt_module.SpeechStream
             
+            # Check if already patched
+            if hasattr(STT.stream, '_ze_patched') and STT.stream._ze_patched:
+                logger.debug("LiveKit integration: Deepgram STT already patched, skipping")
+                return
+            
             # Store originals
             if not self._original_deepgram_stt:
                 self._original_deepgram_stt = {
@@ -1041,6 +1067,9 @@ class LiveKitIntegration(Integration):
                         self_stt, buffer, **kwargs
                     )
             
+            # Mark as patched
+            wrapped_recognize_impl._ze_patched = True
+            
             # Patch streaming
             @wraps(self._original_deepgram_stt['stream'])
             def wrapped_stream(self_stt, **kwargs):
@@ -1095,89 +1124,330 @@ class LiveKitIntegration(Integration):
                 
                 return stream
             
+            # Mark as patched
+            wrapped_stream._ze_patched = True
+            
             # Apply patches
             STT._recognize_impl = wrapped_recognize_impl
             STT.stream = wrapped_stream
             
             # Patch SpeechStream methods
-            original_process_stream_event = self._original_deepgram_stream['_process_stream_event']
-            original_aclose = self._original_deepgram_stream['aclose']
+            if not hasattr(SpeechStream._process_stream_event, '_ze_patched') or not SpeechStream._process_stream_event._ze_patched:
+                self._patch_deepgram_stream_process(SpeechStream)
+            if not hasattr(SpeechStream.aclose, '_ze_patched') or not SpeechStream.aclose._ze_patched:
+                self._patch_deepgram_stream_close(SpeechStream)
             
-            @wraps(original_process_stream_event)
-            def wrapped_process_stream_event(self_stream, data):
-                """Wrap stream event processing to capture results."""
-                # Call original
-                result = original_process_stream_event(self_stream, data)
-                
-                # Try to find session from our tracking
-                session = integration._stream_sessions.get(id(self_stream))
-                if session and hasattr(self_stream, '_ze_stream_span_id'):
-                    session_id = getattr(session, "_ze_session_id", None)
-                    current_turn_span = getattr(session, "_ze_current_turn_span", None)
-                    
-                    # Also check various possible event types for Deepgram
-                    event_type = data.get('type', '')
-                    is_transcript_event = event_type in ['Results', 'Result', 'transcript', 'transcription']
-                    
-                    # Commented out: Now handled in on_final_transcript to properly associate with user turns
-                    # if session_id and (is_transcript_event or 'alternatives' in data.get('channel', {})):
-                    #     # Only create spans for final transcripts
-                    #     is_final = data.get('is_final', False)
-                    #     
-                    #     if is_final:
-                    #         ... span creation code ...
-                
-                return result
-            
-            @wraps(original_aclose)
-            async def wrapped_aclose(self_stream):
-                """Wrap stream close to track stream lifecycle."""
-                # Find session and create end span
-                session = integration._stream_sessions.get(id(self_stream))
-                if session and hasattr(self_stream, '_ze_stream_span_id'):
-                    session_id = getattr(session, "_ze_session_id", None)
-                    current_turn_span = getattr(session, "_ze_current_turn_span", None)
-                    
-                    if session_id:
-                        duration_ms = int((time.time() - self_stream._ze_start_time) * 1000)
-                        
-                        span = integration.tracer.start_span(
-                            name="deepgram.stt.stream_end",
-                            attributes={
-                                "service.name": "deepgram",
-                                "kind": "stt",
-                                "stt.provider": "deepgram",
-                                "stt.streaming": True,
-                                "stt.stream_id": self_stream._ze_stream_span_id,
-                                "stt.duration_ms": duration_ms,
-                            },
-                            tags={"integration": "livekit", "deepgram": "true"},
-                            session_id=session_id,
-                            session_name=getattr(session, "_ze_session_name", None),
-                        )
-                        
-                        # Make it a child of current turn if available
-                        if current_turn_span:
-                            span.parent_id = current_turn_span.span_id
-                            span.trace_id = current_turn_span.trace_id
-                        
-                        # End span immediately
-                        if span.span_id not in integration._ended_span_ids:
-                            integration._ended_span_ids.add(span.span_id)
-                            integration.tracer.end_span(span)
-                    
-                    # Clean up tracking
-                    integration._stream_sessions.pop(id(self_stream), None)
-                
-                # Call original
-                return await original_aclose(self_stream)
-            
-            # Apply stream patches
-            SpeechStream._process_stream_event = wrapped_process_stream_event
-            SpeechStream.aclose = wrapped_aclose
+            logger.debug("LiveKit integration: Deepgram patches applied successfully")
             
         except Exception as e:
             logger.error(f"Failed to patch Deepgram STT: {e}")
+    
+    def _patch_cartesia_tts(self, cartesia_tts_module) -> None:
+        """Patch Cartesia TTS for observability."""
+        try:
+            TTS = cartesia_tts_module.TTS
+            SynthesizeStream = cartesia_tts_module.SynthesizeStream
+            
+            # Import the default value
+            try:
+                from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS
+            except ImportError:
+                DEFAULT_API_CONNECT_OPTIONS = None
+            
+            # Check if already patched
+            if hasattr(TTS.stream, '_ze_patched') and TTS.stream._ze_patched:
+                logger.debug("LiveKit integration: Cartesia TTS already patched, skipping")
+                return
+            
+            # Store originals - ensure we get the unbound methods
+            try:
+                # Try to get unbound method if it's a bound method
+                stream_method = TTS.stream.__func__ if hasattr(TTS.stream, '__func__') else TTS.stream
+                run_method = SynthesizeStream._run.__func__ if hasattr(SynthesizeStream._run, '__func__') else SynthesizeStream._run
+                init_method = TTS.__init__.__func__ if hasattr(TTS.__init__, '__func__') else TTS.__init__
+            except AttributeError:
+                # Fallback to direct assignment if __func__ access fails
+                stream_method = TTS.stream
+                run_method = SynthesizeStream._run
+                init_method = TTS.__init__
+                
+            self._original_cartesia_tts = {
+                'stream': stream_method,
+                '__init__': init_method,
+            }
+            self._original_cartesia_stream = {
+                '_run': run_method,
+            }
+            
+            integration = self
+            
+            # Patch TTS __init__ to store activity reference
+            @wraps(self._original_cartesia_tts['__init__'])
+            def wrapped_init(self_tts, *args, **kwargs):
+                """Wrap TTS init to capture context."""
+                # Call original init
+                original_init = integration._original_cartesia_tts['__init__']
+                if hasattr(original_init, '__func__'):
+                    result = original_init(self_tts, *args, **kwargs)
+                else:
+                    result = original_init(self_tts, *args, **kwargs)
+                
+                # Try to capture the current session/activity context
+                session = integration._find_session_from_context()
+                if session:
+                    self_tts._ze_session = session
+                    logger.debug(f"Cartesia TTS: Captured session during init")
+                
+                return result
+            
+            # Mark as patched
+            wrapped_init._ze_patched = True
+            
+            # Patch stream creation
+            @wraps(self._original_cartesia_tts['stream'])
+            def wrapped_stream(self_tts, *, conn_options=None):
+                """Wrap Cartesia's stream method."""
+                # Create the original stream without any modification
+                if conn_options is None and DEFAULT_API_CONNECT_OPTIONS is not None:
+                    conn_options = DEFAULT_API_CONNECT_OPTIONS
+                
+                # Call the original method
+                original_stream = integration._original_cartesia_tts['stream']
+                if hasattr(original_stream, '__func__'):
+                    stream = original_stream(self_tts, conn_options=conn_options)
+                else:
+                    stream = original_stream(self_tts, conn_options=conn_options)
+                
+                # Only try to store session reference for later use, don't modify the stream
+                try:
+                    session = integration._find_session_from_context()
+                    if not session and hasattr(self_tts, '_ze_session'):
+                        session = self_tts._ze_session
+                    
+                    if session:
+                        # Store session reference for the stream (weakref to avoid memory leaks)
+                        integration._stream_sessions[id(stream)] = session
+                        
+                        # Create a simple span for stream creation
+                        session_id = getattr(session, "_ze_session_id", None)
+                        if session_id:
+                            span = integration.tracer.start_span(
+                                name="cartesia.tts.stream_start",
+                                attributes={
+                                    "service.name": "cartesia",
+                                    "kind": "tts",
+                                    "tts.provider": "cartesia",
+                                },
+                                tags={"integration": "livekit", "cartesia": "true"},
+                                session_id=session_id,
+                                session_name=getattr(session, "_ze_session_name", None),
+                            )
+                            
+                            # Link to current turn if available
+                            current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                            if current_turn_span:
+                                span.parent_id = current_turn_span.span_id
+                                span.trace_id = current_turn_span.trace_id
+                            
+                            # End immediately
+                            if span.span_id not in integration._ended_span_ids:
+                                integration._ended_span_ids.add(span.span_id)
+                                integration.tracer.end_span(span)
+                except Exception as e:
+                    logger.debug(f"Cartesia: Failed to track stream creation: {e}")
+                
+                return stream
+            
+            # Mark as patched
+            wrapped_stream._ze_patched = True
+            
+            # Patch stream processing
+            @wraps(self._original_cartesia_stream['_run'])
+            async def wrapped_run(self_stream, output_emitter):
+                """Wrap Cartesia's stream _run method."""
+                # Get session from stream if available
+                session = getattr(self_stream, '_ze_session', None)
+                if not session and id(self_stream) in integration._stream_sessions:
+                    session = integration._stream_sessions[id(self_stream)]
+                
+                logger.debug(f"Cartesia _run: Found session from stream: {session is not None}")
+                
+                session_id = getattr(session, "_ze_session_id", None) if session else None
+                current_turn_span = getattr(session, "_ze_current_turn_span", None) if session else None
+                
+                logger.debug(f"Cartesia _run: Session ID: {session_id}, Current turn span: {current_turn_span is not None}")
+                
+                if session_id:
+                    logger.debug(f"Cartesia: Creating synthesis span for session {session_id}")
+                    
+                    # Get TTS options from the stream
+                    tts_opts = getattr(self_stream, '_opts', None)
+                    
+                    span = integration.tracer.start_span(
+                        name="cartesia.tts.synthesize",
+                        attributes={
+                            "service.name": "cartesia",
+                            "kind": "tts",
+                            "tts.provider": "cartesia",
+                            "tts.streaming": True,
+                        },
+                        tags={"integration": "livekit", "cartesia": "true"},
+                        session_id=session_id,
+                        session_name=getattr(session, "_ze_session_name", None),
+                    )
+                    
+                    # Add TTS options if available
+                    if tts_opts:
+                        span.attributes.update({
+                            "tts.model": str(tts_opts.model) if hasattr(tts_opts, 'model') else None,
+                            "tts.language": str(tts_opts.language) if hasattr(tts_opts, 'language') else None,
+                            "tts.voice": str(tts_opts.voice) if hasattr(tts_opts, 'voice') and isinstance(tts_opts.voice, str) else "embedding",
+                            "tts.sample_rate": tts_opts.sample_rate if hasattr(tts_opts, 'sample_rate') else None,
+                            "tts.encoding": str(tts_opts.encoding) if hasattr(tts_opts, 'encoding') else None,
+                            "tts.word_timestamps": tts_opts.word_timestamps if hasattr(tts_opts, 'word_timestamps') else None,
+                            "tts.speed": tts_opts.speed if hasattr(tts_opts, 'speed') else None,
+                            "tts.emotion": str(tts_opts.emotion) if hasattr(tts_opts, 'emotion') else None,
+                        })
+                    
+                    # Make it a child of current turn if available
+                    if current_turn_span:
+                        span.parent_id = current_turn_span.span_id
+                        span.trace_id = current_turn_span.trace_id
+                    
+                    start_time = time.time()
+                    
+                    try:
+                        # Run the original method WITHOUT any wrapping or monitoring
+                        original_run = integration._original_cartesia_stream['_run']
+                        if hasattr(original_run, '__func__'):
+                            # It's a bound method, we stored __func__
+                            result = await original_run(self_stream, output_emitter)
+                        else:
+                            # It's already unbound or a function
+                            result = await original_run(self_stream, output_emitter)
+                        
+                        # Add basic metadata after completion
+                        span.attributes.update({
+                            "tts.duration_ms": int((time.time() - start_time) * 1000),
+                        })
+                        
+                        return result
+                    except Exception as e:
+                        span.set_error(
+                            code=type(e).__name__,
+                            message=str(e),
+                            stack=getattr(e, "__traceback__", None),
+                        )
+                        raise
+                    finally:
+                        if span.span_id not in integration._ended_span_ids:
+                            integration._ended_span_ids.add(span.span_id)
+                            integration.tracer.end_span(span)
+                else:
+                    # No session context, just call original
+                    original_run = integration._original_cartesia_stream['_run']
+                    if hasattr(original_run, '__func__'):
+                        return await original_run(self_stream, output_emitter)
+                    else:
+                        return await original_run(self_stream, output_emitter)
+            
+            # Mark as patched
+            wrapped_run._ze_patched = True
+            
+            # Apply patches
+            TTS.__init__ = wrapped_init
+            TTS.stream = wrapped_stream
+            SynthesizeStream._run = wrapped_run
+            
+            logger.debug("LiveKit integration: Cartesia patches applied successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to patch Cartesia TTS: {e}")
+    
+    def _patch_deepgram_stream_process(self, SpeechStream) -> None:
+        """Patch Deepgram SpeechStream._process_stream_event."""
+        original_process_stream_event = SpeechStream._process_stream_event
+        integration = self
+        
+        @wraps(original_process_stream_event)
+        def wrapped_process_stream_event(self_stream, data):
+            """Wrap stream event processing to capture results."""
+            # Call original
+            result = original_process_stream_event(self_stream, data)
+            
+            # Try to find session from our tracking
+            session = integration._stream_sessions.get(id(self_stream))
+            if session and hasattr(self_stream, '_ze_stream_span_id'):
+                session_id = getattr(session, "_ze_session_id", None)
+                current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                
+                # Also check various possible event types for Deepgram
+                event_type = data.get('type', '')
+                is_transcript_event = event_type in ['Results', 'Result', 'transcript', 'transcription']
+                
+                # Commented out: Now handled in on_final_transcript to properly associate with user turns
+                # if session_id and (is_transcript_event or 'alternatives' in data.get('channel', {})):
+                #     # Only create spans for final transcripts
+                #     is_final = data.get('is_final', False)
+                #     
+                #     if is_final:
+                #         ... span creation code ...
+            
+            return result
+        
+        wrapped_process_stream_event._ze_patched = True
+        SpeechStream._process_stream_event = wrapped_process_stream_event
+    
+    def _patch_deepgram_stream_close(self, SpeechStream) -> None:
+        """Patch Deepgram SpeechStream.aclose."""
+        original_aclose = SpeechStream.aclose
+        integration = self
+        
+        @wraps(original_aclose)
+        async def wrapped_aclose(self_stream):
+            """Wrap stream close to track stream lifecycle."""
+            # Find session and create end span
+            session = integration._stream_sessions.get(id(self_stream))
+            if session and hasattr(self_stream, '_ze_stream_span_id'):
+                session_id = getattr(session, "_ze_session_id", None)
+                current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                
+                if session_id:
+                    duration_ms = int((time.time() - self_stream._ze_start_time) * 1000)
+                    
+                    span = integration.tracer.start_span(
+                        name="deepgram.stt.stream_end",
+                        attributes={
+                            "service.name": "deepgram",
+                            "kind": "stt",
+                            "stt.provider": "deepgram",
+                            "stt.streaming": True,
+                            "stt.stream_id": self_stream._ze_stream_span_id,
+                            "stt.duration_ms": duration_ms,
+                        },
+                        tags={"integration": "livekit", "deepgram": "true"},
+                        session_id=session_id,
+                        session_name=getattr(session, "_ze_session_name", None),
+                    )
+                    
+                    # Make it a child of current turn if available
+                    if current_turn_span:
+                        span.parent_id = current_turn_span.span_id
+                        span.trace_id = current_turn_span.trace_id
+                    
+                    # End span immediately
+                    if span.span_id not in integration._ended_span_ids:
+                        integration._ended_span_ids.add(span.span_id)
+                        integration.tracer.end_span(span)
+                
+                # Clean up tracking
+                integration._stream_sessions.pop(id(self_stream), None)
+            
+            # Call original
+            return await original_aclose(self_stream)
+        
+        wrapped_aclose._ze_patched = True
+        SpeechStream.aclose = wrapped_aclose
     
     def _patch_agent_stt_node(self) -> None:
         """Patch Agent's stt_node to intercept STT stream creation with session context."""
@@ -1295,10 +1565,32 @@ class LiveKitIntegration(Integration):
                     if hasattr(self_obj, '_session') and hasattr(self_obj._session, '_ze_session_id'):
                         return self_obj._session
                 
+                # Check for activity objects (common in voice agents)
+                if 'activity' in frame_locals and hasattr(frame_locals['activity'], 'session'):
+                    if hasattr(frame_locals['activity'].session, '_ze_session_id'):
+                        return frame_locals['activity'].session
+                
                 # Check for context objects
                 if 'ctx' in frame_locals and hasattr(frame_locals['ctx'], 'session'):
                     if hasattr(frame_locals['ctx'].session, '_ze_session_id'):
                         return frame_locals['ctx'].session
+                
+                # Check for self_tts which might have a reference to activity/session
+                if 'self_tts' in frame_locals and hasattr(frame_locals['self_tts'], '_activity'):
+                    if hasattr(frame_locals['self_tts']._activity, 'session'):
+                        if hasattr(frame_locals['self_tts']._activity.session, '_ze_session_id'):
+                            return frame_locals['self_tts']._activity.session
+                
+                # Check for wrapped_tts in voice agent contexts
+                if 'wrapped_tts' in frame_locals:
+                    wrapped = frame_locals['wrapped_tts']
+                    # Check if it has a stored session
+                    if hasattr(wrapped, '_ze_session'):
+                        return wrapped._ze_session
+                    # Check if it's part of an activity
+                    if hasattr(wrapped, 'activity') and hasattr(wrapped.activity, 'session'):
+                        if hasattr(wrapped.activity.session, '_ze_session_id'):
+                            return wrapped.activity.session
         except Exception as e:
             logger.debug(f"Failed to find session from context: {e}")
         
