@@ -153,6 +153,7 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 "result": str(res.result),
                 "result_type": "text",
                 "trace_id": res.trace_id if res.trace_id else "",
+                "run_number": getattr(res, "run_number", 1),  # Default to 1 for backwards compatibility
             }
             try:
                 response = requests.post(endpoint, json=payload, headers=self._headers)
@@ -165,17 +166,29 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
 
 
 class DatasetBackendWriter(_BackendWriter, DatasetWriter):
-    """Writes datasets to the ZeroEval backend API."""
+    """Writes datasets to the ZeroEval backend API using v1 endpoints."""
 
     def __init__(self):
         super().__init__()
+        # Override to use v1 API which doesn't need workspace resolution
+        self._use_v1_api = True
+
+    def _ensure_auth_setup(self):
+        """Ensure API key is set for v1 API."""
+        if self._api_key is None:
+            self._api_key = os.environ.get("ZEROEVAL_API_KEY")
+            if not self._api_key:
+                raise ValueError("ZEROEVAL_API_KEY environment variable not set")
+
+        if self._headers is None:
+            self._headers = {"Authorization": f"Bearer {self._api_key}"}
 
     def write(self, dataset: "Dataset", create_new_version: bool = False) -> None:
         self._ensure_auth_setup()
 
-        create_url = f"{self.api_url}/workspaces/{self._workspace_id}/datasets"
+        # Use v1 API endpoint
+        create_url = f"{self.api_url}/v1/datasets"
         create_payload = {
-            "workspace_name": os.environ.get("ZEROEVAL_WORKSPACE_NAME"),
             "name": dataset.name,
             "description": dataset.description or "",
         }
@@ -185,48 +198,26 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
                 create_url, json=create_payload, headers=self._headers
             )
 
-            if response.status_code == 409 and create_new_version or response.status_code == 409:
-                existing_id = self._find_existing_dataset_id(dataset.name)
-                if not existing_id:
-                    raise ValueError(
-                        "Dataset conflict but not found. Check workspace name."
-                    )
-                self._post_data_to_existing_dataset(existing_id, dataset)
-                dataset._backend_id = existing_id
+            if response.status_code == 409:
+                # Dataset already exists, add data to it
+                self._post_data_to_existing_dataset_v1(dataset.name, dataset)
             elif response.status_code == 404:
                 raise ValueError("Workspace not found or no access")
             else:
                 response.raise_for_status()
                 dataset_info = response.json()
                 dataset._backend_id = dataset_info["id"]
-                self._post_data_to_existing_dataset(dataset._backend_id, dataset)
+                self._post_data_to_existing_dataset_v1(dataset.name, dataset)
 
         except requests.HTTPError as e:
             self._handle_http_error(e)
         except requests.RequestException as e:
             raise RuntimeError(f"Connection error: {str(e)}")
 
-    def _find_existing_dataset_id(self, dataset_name: str) -> Optional[str]:
-        """Find dataset ID by name in the workspace."""
-        self._ensure_auth_setup()
-        try:
-            response = requests.get(
-                f"{self.api_url}/workspaces/{self._workspace_id}/datasets",
-                headers=self._headers,
-            )
-            response.raise_for_status()
-            datasets = response.json()
-
-            return next(
-                (ds["id"] for ds in datasets if ds["name"] == dataset_name), None
-            )
-        except requests.RequestException as e:
-            raise RuntimeError(f"Failed to lookup existing dataset: {str(e)}")
-
-    def _post_data_to_existing_dataset(
-        self, dataset_id: str, dataset: "Dataset"
+    def _post_data_to_existing_dataset_v1(
+        self, dataset_name: str, dataset: "Dataset"
     ) -> None:
-        """Create a new version of the dataset with the given data."""
+        """Create a new version of the dataset with the given data using v1 API."""
         self._ensure_auth_setup()
         data_as_strings = [
             {k: json.dumps(v) if not isinstance(v, str) else v for k, v in row.items()}
@@ -234,7 +225,7 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
         ]
 
         response = requests.post(
-            f"{self.api_url}/workspaces/{self._workspace_id}/datasets/{dataset_id}/data",
+            f"{self.api_url}/v1/datasets/{dataset_name}/data",
             json={"data": data_as_strings},
             headers=self._headers,
         )
@@ -278,10 +269,11 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
                 "experiment_id": evaluator_or_evaluation.experiment_id,
                 "name": evaluator_or_evaluation.name,
                 "description": evaluator_or_evaluation.description,
+                "evaluation_mode": evaluator_or_evaluation.evaluation_mode,
             }
 
             try:
-                endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
+                endpoint = f"{self.api_url}/v1/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
                 response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 evaluator_data = response.json()
@@ -309,7 +301,7 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
             }
 
             try:
-                endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{experiment_id}/evaluators/{evaluator_id}/evaluations"
+                endpoint = f"{self.api_url}/v1/experiments/{experiment_id}/evaluations"
                 response = requests.post(endpoint, json=payload, headers=self._headers)
                 response.raise_for_status()
                 evaluation_data = response.json()
