@@ -120,6 +120,7 @@ class SpanBackendWriter(SpanWriter):
                     "trace_id": span["trace_id"],
                     "parent_span_id": span["parent_id"],
                     "name": span["name"],
+                    "kind": span.get("kind", "generic"),
                     "started_at": span.get("start_time"),
                     "ended_at": span.get("end_time"),
                     "duration_ms": span["duration_ms"],
