@@ -50,10 +50,13 @@ def init(
                                 Use lowercase names: 'openai', 'langchain', 'langgraph', 'livekit'
                                 Use this when you have compatibility issues with automatic patching.
     """
+    # Set workspace name (always use the provided value)
     os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
-    if api_key:
+    
+    # Only override environment variables if values are explicitly provided
+    if api_key is not None:
         os.environ["ZEROEVAL_API_KEY"] = api_key
-    if api_url:
+    if api_url is not None:
         os.environ["ZEROEVAL_API_URL"] = api_url    
     
     # Set disabled integrations in environment variable for tracer to pick up
