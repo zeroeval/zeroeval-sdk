@@ -267,6 +267,14 @@ class LiveKitIntegration(Integration):
                         if confidences:
                             turn_span.attributes["stt.avg_confidence"] = sum(confidences) / len(confidences)
                         
+                        # Include all raw data from transcripts
+                        all_raw_data = []
+                        for t in self_session._ze_user_turn_transcripts:
+                            if 'raw_data' in t:
+                                all_raw_data.append(t['raw_data'])
+                        if all_raw_data:
+                            turn_span.attributes["stt.raw_data"] = json.dumps(all_raw_data)
+                        
                         logger.info(f"Added {len(self_session._ze_user_turn_transcripts)} transcripts to user turn: {all_transcripts[:100]}...")
                     
                     # Store info about this turn for delayed transcript association
@@ -331,6 +339,35 @@ class LiveKitIntegration(Integration):
             if session_id and is_deepgram and ev.alternatives:
                 transcript_text = ev.alternatives[0].text if ev.alternatives else ""
                 
+                # Extract raw event data first (before any conditionals)
+                raw_event_data = {}
+                try:
+                    # Try to convert the event to a dict representation
+                    if hasattr(ev, '__dict__'):
+                        raw_event_data = {k: v for k, v in ev.__dict__.items() if not k.startswith('_')}
+                    
+                    # Add alternatives data
+                    if ev.alternatives:
+                        raw_event_data['alternatives'] = []
+                        for alt in ev.alternatives:
+                            alt_data = {}
+                            if hasattr(alt, '__dict__'):
+                                alt_data = {k: v for k, v in alt.__dict__.items() if not k.startswith('_')}
+                            else:
+                                # Try to extract common attributes
+                                for attr in ['text', 'confidence', 'language', 'speaker_id', 'words', 'start_time', 'end_time']:
+                                    if hasattr(alt, attr):
+                                        alt_data[attr] = getattr(alt, attr)
+                            raw_event_data['alternatives'].append(alt_data)
+                    
+                    # Add any other event attributes
+                    for attr in ['type', 'is_final', 'request_id', 'created_at', 'duration', 'metadata']:
+                        if hasattr(ev, attr):
+                            raw_event_data[attr] = getattr(ev, attr)
+                except Exception as e:
+                    logger.debug(f"Failed to serialize Deepgram event data: {e}")
+                    raw_event_data = {"error": f"Failed to serialize: {str(e)}"}
+                
                 # Try to get the active user turn span or the last closed one
                 user_turn_span = getattr(session, "_ze_user_turn_span", None)
                 last_user_turn_info = getattr(session, "_ze_last_user_turn_info", None)
@@ -352,20 +389,50 @@ class LiveKitIntegration(Integration):
                             'text': transcript_text,
                             'confidence': ev.alternatives[0].confidence if hasattr(ev.alternatives[0], 'confidence') else None,
                             'language': ev.alternatives[0].language if hasattr(ev.alternatives[0], 'language') else None,
-                            'timestamp': time.time()
+                            'timestamp': time.time(),
+                            'raw_data': raw_event_data  # Include raw data in accumulation
                         })
+                    
+                    # Create base attributes
+                    span_attributes = {
+                        "service.name": "deepgram",
+                        "kind": "stt_result",
+                        "stt.provider": "deepgram",
+                        "stt.is_final": True,
+                        "stt.transcript": transcript_text,
+                        "stt.raw_data": json.dumps(raw_event_data),  # Still include raw data for completeness
+                    }
+                    
+                    # Extract top-level event attributes
+                    if 'type' in raw_event_data:
+                        span_attributes["stt.type"] = raw_event_data['type']
+                    if 'request_id' in raw_event_data:
+                        span_attributes["stt.request_id"] = raw_event_data['request_id']
+                    if 'recognition_usage' in raw_event_data:
+                        span_attributes["stt.recognition_usage"] = raw_event_data['recognition_usage']
+                    
+                    # Extract first alternative's details
+                    if raw_event_data.get('alternatives') and len(raw_event_data['alternatives']) > 0:
+                        first_alt = raw_event_data['alternatives'][0]
+                        if 'confidence' in first_alt:
+                            span_attributes["stt.confidence"] = first_alt['confidence']
+                        if 'language' in first_alt:
+                            span_attributes["stt.language"] = first_alt['language']
+                        if 'speaker_id' in first_alt:
+                            span_attributes["stt.speaker_id"] = first_alt['speaker_id']
+                        if 'start_time' in first_alt:
+                            span_attributes["stt.start_time"] = first_alt['start_time']
+                        if 'end_time' in first_alt:
+                            span_attributes["stt.end_time"] = first_alt['end_time']
+                        
+                        # If there are words, include word count
+                        if 'words' in first_alt and isinstance(first_alt['words'], list):
+                            span_attributes["stt.word_count"] = len(first_alt['words'])
                     
                     # Also create a child span for the transcript
                     span = integration.tracer.start_span(
                         name="deepgram.stt.transcript",
-                        attributes={
-                            "service.name": "deepgram",
-                            "kind": "stt_result",
-                            "stt.provider": "deepgram",
-                            "stt.is_final": True,
-                            "stt.transcript": transcript_text,
-                            "stt.speaker_id": ev.alternatives[0].speaker_id if hasattr(ev.alternatives[0], 'speaker_id') else None,
-                        },
+                        attributes=span_attributes,
                         tags={"integration": "livekit", "deepgram": "true", "turn_type": "user"},
                         session_id=session_id,
                         session_name=getattr(session, "_ze_session_name", None),
@@ -374,14 +441,6 @@ class LiveKitIntegration(Integration):
                     # Make it a child of the user turn
                     span.parent_id = user_turn_span.span_id
                     span.trace_id = user_turn_span.trace_id
-                    
-                    # Add confidence if available
-                    if hasattr(ev.alternatives[0], 'confidence'):
-                        span.attributes["stt.confidence"] = ev.alternatives[0].confidence
-                    
-                    # Add language if available
-                    if hasattr(ev.alternatives[0], 'language'):
-                        span.attributes["stt.language"] = ev.alternatives[0].language
                     
                     # End the span immediately
                     if span.span_id not in integration._ended_span_ids:
@@ -398,20 +457,50 @@ class LiveKitIntegration(Integration):
                             'text': transcript_text,
                             'confidence': ev.alternatives[0].confidence if hasattr(ev.alternatives[0], 'confidence') else None,
                             'language': ev.alternatives[0].language if hasattr(ev.alternatives[0], 'language') else None,
-                            'timestamp': time.time()
+                            'timestamp': time.time(),
+                            'raw_data': raw_event_data  # Include raw data in accumulation
                         })
+                    
+                    # Create base attributes (same extraction as above)
+                    span_attributes = {
+                        "service.name": "deepgram",
+                        "kind": "stt_result",
+                        "stt.provider": "deepgram",
+                        "stt.is_final": True,
+                        "stt.transcript": transcript_text,
+                        "stt.user_turn_id": last_user_turn_info.get('speech_id'),
+                        "stt.raw_data": json.dumps(raw_event_data),  # Still include raw data for completeness
+                    }
+                    
+                    # Extract top-level event attributes
+                    if 'type' in raw_event_data:
+                        span_attributes["stt.type"] = raw_event_data['type']
+                    if 'request_id' in raw_event_data:
+                        span_attributes["stt.request_id"] = raw_event_data['request_id']
+                    if 'recognition_usage' in raw_event_data:
+                        span_attributes["stt.recognition_usage"] = raw_event_data['recognition_usage']
+                    
+                    # Extract first alternative's details
+                    if raw_event_data.get('alternatives') and len(raw_event_data['alternatives']) > 0:
+                        first_alt = raw_event_data['alternatives'][0]
+                        if 'confidence' in first_alt:
+                            span_attributes["stt.confidence"] = first_alt['confidence']
+                        if 'language' in first_alt:
+                            span_attributes["stt.language"] = first_alt['language']
+                        if 'speaker_id' in first_alt:
+                            span_attributes["stt.speaker_id"] = first_alt['speaker_id']
+                        if 'start_time' in first_alt:
+                            span_attributes["stt.start_time"] = first_alt['start_time']
+                        if 'end_time' in first_alt:
+                            span_attributes["stt.end_time"] = first_alt['end_time']
+                        
+                        # If there are words, include word count
+                        if 'words' in first_alt and isinstance(first_alt['words'], list):
+                            span_attributes["stt.word_count"] = len(first_alt['words'])
                     
                     span = integration.tracer.start_span(
                         name="deepgram.stt.transcript",
-                        attributes={
-                            "service.name": "deepgram",
-                            "kind": "stt_result",
-                            "stt.provider": "deepgram",
-                            "stt.is_final": True,
-                            "stt.transcript": transcript_text,
-                            "stt.user_turn_id": last_user_turn_info.get('speech_id'),
-                            "stt.speaker_id": ev.alternatives[0].speaker_id if hasattr(ev.alternatives[0], 'speaker_id') else None,
-                        },
+                        attributes=span_attributes,
                         tags={"integration": "livekit", "deepgram": "true", "turn_type": "user", "delayed": "true"},
                         session_id=session_id,
                         session_name=getattr(session, "_ze_session_name", None),
@@ -421,14 +510,6 @@ class LiveKitIntegration(Integration):
                     if 'trace_id' in last_user_turn_info:
                         span.trace_id = last_user_turn_info['trace_id']
                         span.parent_id = last_user_turn_info.get('span_id')
-                    
-                    # Add confidence if available
-                    if hasattr(ev.alternatives[0], 'confidence'):
-                        span.attributes["stt.confidence"] = ev.alternatives[0].confidence
-                    
-                    # Add language if available
-                    if hasattr(ev.alternatives[0], 'language'):
-                        span.attributes["stt.language"] = ev.alternatives[0].language
                     
                     # End the span immediately
                     if span.span_id not in integration._ended_span_ids:
@@ -879,14 +960,48 @@ class LiveKitIntegration(Integration):
                         )
                         
                         # Add result metadata
-                        if result and hasattr(result, 'alternatives') and result.alternatives:
-                            first_alt = result.alternatives[0]
-                            if hasattr(first_alt, 'text'):
-                                span.attributes["stt.transcript"] = first_alt.text  # Include full transcript
-                            if hasattr(first_alt, 'confidence'):
-                                span.attributes["stt.confidence"] = first_alt.confidence
-                            if hasattr(first_alt, 'language'):
-                                span.attributes["stt.detected_language"] = first_alt.language
+                        if result:
+                            # Serialize the entire result data
+                            raw_result_data = {}
+                            try:
+                                # Try to convert the result to a dict representation
+                                if hasattr(result, '__dict__'):
+                                    raw_result_data = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
+                                
+                                # Add alternatives data
+                                if hasattr(result, 'alternatives') and result.alternatives:
+                                    raw_result_data['alternatives'] = []
+                                    for alt in result.alternatives:
+                                        alt_data = {}
+                                        if hasattr(alt, '__dict__'):
+                                            alt_data = {k: v for k, v in alt.__dict__.items() if not k.startswith('_')}
+                                        else:
+                                            # Try to extract common attributes
+                                            for attr in ['text', 'confidence', 'language', 'words', 'start_time', 'end_time']:
+                                                if hasattr(alt, attr):
+                                                    alt_data[attr] = getattr(alt, attr)
+                                        raw_result_data['alternatives'].append(alt_data)
+                                
+                                # Add any other result attributes
+                                for attr in ['type', 'is_final', 'request_id', 'created_at', 'duration', 'metadata', 'channel']:
+                                    if hasattr(result, attr):
+                                        raw_result_data[attr] = getattr(result, attr)
+                                
+                                # Store the raw data
+                                span.attributes["stt.raw_data"] = json.dumps(raw_result_data)
+                            except Exception as e:
+                                logger.debug(f"Failed to serialize Deepgram result data: {e}")
+                                span.attributes["stt.raw_data"] = json.dumps({"error": f"Failed to serialize: {str(e)}"})
+                            
+                            # Also add specific attributes for quick access
+                            if hasattr(result, 'alternatives') and result.alternatives:
+                                first_alt = result.alternatives[0]
+                                if hasattr(first_alt, 'text'):
+                                    span.attributes["stt.transcript"] = first_alt.text  # Include full transcript
+                                if hasattr(first_alt, 'confidence'):
+                                    span.attributes["stt.confidence"] = first_alt.confidence
+                                if hasattr(first_alt, 'language'):
+                                    span.attributes["stt.detected_language"] = first_alt.language
                         
                         span.attributes["stt.duration_ms"] = int((time.time() - start_time) * 1000)
                         
