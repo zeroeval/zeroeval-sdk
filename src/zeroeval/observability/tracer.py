@@ -294,7 +294,8 @@ class Tracer:
         session_name: Optional[str] = None,
         tags: Optional[dict[str, str]] = None,
         trace_tags: Optional[dict[str, str]] = None,
-        session_tags: Optional[dict[str, str]] = None
+        session_tags: Optional[dict[str, str]] = None,
+        is_new_trace: bool = False
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
         # Ensure integrations are initialized before starting any spans
@@ -307,6 +308,10 @@ class Tracer:
 
         stack = self._active_spans_ctx.get()
         parent_span = stack[-1] if stack else None
+        
+        # If is_new_trace is True, ignore parent span for creating a new trace
+        if is_new_trace:
+            parent_span = None
         
         # --- decide final session id and name -------------------------------------
         if session_id:
@@ -332,10 +337,10 @@ class Tracer:
             session_tags=session_tags or {}
         )
         
-        logger.info(f"Starting span: {span.name}")
+        logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
         
-        # If there's a parent span, both spans should share the same trace ID
-        if parent_span:
+        # If there's a parent span and not creating a new trace, share the same trace ID
+        if parent_span and not is_new_trace:
             span.trace_id = parent_span.trace_id
         
         # ---------------------------------------------------------------
