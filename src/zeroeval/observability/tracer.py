@@ -455,13 +455,19 @@ class Tracer:
         """Attach *tags* to every span within a session."""
         if not tags:
             return
-        self._session_level_tags.setdefault(session_id, {}).update(tags)
+        
+        # Filter out None values from tags
+        filtered_tags = {k: v for k, v in tags.items() if v is not None}
+        if not filtered_tags:
+            return
+            
+        self._session_level_tags.setdefault(session_id, {}).update(filtered_tags)
         # Update active spans only.
         stack = self._active_spans_ctx.get()
         for sp in stack:
             if sp.session_id == session_id:
-                sp.session_tags.update(tags)
-                sp.tags.update(tags)
+                sp.session_tags.update(filtered_tags)
+                sp.tags.update(filtered_tags)
 
     def is_active_trace(self, trace_id: str) -> bool:
         """
