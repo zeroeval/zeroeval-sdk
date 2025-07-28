@@ -109,11 +109,25 @@ class Tracer:
         self._flush_thread = threading.Thread(target=self._flush_periodically, daemon=True)
         self._flush_thread.start()
 
-        # Auto-setup integrations
-        self._setup_available_integrations()
+        # Don't auto-setup integrations here - wait for init() to be called
+        self._integrations_initialized = False
         
         # Register shutdown hook
         atexit.register(self.shutdown)
+    
+    def ensure_integrations_initialized(self) -> None:
+        """Ensure integrations are initialized, but only once."""
+        if not self._integrations_initialized:
+            # Re-read disabled integrations from environment in case they were set by init()
+            disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
+            if disabled_env:
+                disabled_names = {name.strip() for name in disabled_env.split(',') if name.strip()}
+                for name in disabled_names:
+                    self._integrations_config[name] = False
+                logger.info(f"Integrations disabled via environment variable: {disabled_names}")
+            
+            self._setup_available_integrations()
+            self._integrations_initialized = True
     
     def _setup_available_integrations(self) -> None:
         """Automatically set up all available integrations."""
@@ -121,12 +135,14 @@ class Tracer:
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
+        from .integrations.livekit.integration import LiveKitIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
             LangChainIntegration,  # Auto-instrument LangChain
             LangGraphIntegration,  # Auto-instrument LangGraph
+            LiveKitIntegration,  # Auto-instrument LiveKit
         ]
         
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
@@ -161,6 +177,12 @@ class Tracer:
             logger.info(f"Active integrations: {list(self._integrations.keys())}")
         else:
             logger.info("No active integrations found.")
+    
+    def reinitialize_integrations(self):
+        """Reinitialize integrations. Useful after init() sets up logging."""
+        logger.info("Reinitializing integrations...")
+        self._integrations.clear()
+        self._setup_available_integrations()
 
     def _print_user_friendly_error(self, integration_name: str, error: Exception) -> None:
         """Print user-friendly error messages for common integration issues."""
@@ -272,9 +294,13 @@ class Tracer:
         session_name: Optional[str] = None,
         tags: Optional[dict[str, str]] = None,
         trace_tags: Optional[dict[str, str]] = None,
-        session_tags: Optional[dict[str, str]] = None
+        session_tags: Optional[dict[str, str]] = None,
+        is_new_trace: bool = False
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
+        # Ensure integrations are initialized before starting any spans
+        self.ensure_integrations_initialized()
+        
         if self.is_shutting_down():
             logger.warning("Tracer is shutting down. Discarding new span.")
             # Return a no-op span if tracer is shutting down
@@ -282,6 +308,10 @@ class Tracer:
 
         stack = self._active_spans_ctx.get()
         parent_span = stack[-1] if stack else None
+        
+        # If is_new_trace is True, ignore parent span for creating a new trace
+        if is_new_trace:
+            parent_span = None
         
         # --- decide final session id and name -------------------------------------
         if session_id:
@@ -307,10 +337,10 @@ class Tracer:
             session_tags=session_tags or {}
         )
         
-        logger.info(f"Starting span: {span.name}")
+        logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
         
-        # If there's a parent span, both spans should share the same trace ID
-        if parent_span:
+        # If there's a parent span and not creating a new trace, share the same trace ID
+        if parent_span and not is_new_trace:
             span.trace_id = parent_span.trace_id
         
         # ---------------------------------------------------------------
@@ -430,13 +460,19 @@ class Tracer:
         """Attach *tags* to every span within a session."""
         if not tags:
             return
-        self._session_level_tags.setdefault(session_id, {}).update(tags)
+        
+        # Filter out None values from tags
+        filtered_tags = {k: v for k, v in tags.items() if v is not None}
+        if not filtered_tags:
+            return
+            
+        self._session_level_tags.setdefault(session_id, {}).update(filtered_tags)
         # Update active spans only.
         stack = self._active_spans_ctx.get()
         for sp in stack:
             if sp.session_id == session_id:
-                sp.session_tags.update(tags)
-                sp.tags.update(tags)
+                sp.session_tags.update(filtered_tags)
+                sp.tags.update(filtered_tags)
 
     def is_active_trace(self, trace_id: str) -> bool:
         """
