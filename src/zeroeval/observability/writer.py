@@ -50,6 +50,13 @@ class SpanBackendWriter(SpanWriter):
         api_url = self._get_api_url()
         api_key = self._get_api_key()
 
+        # Define filter_null_values function before its first use
+        def filter_null_values(d):
+            """Remove keys with None/null values from a dictionary."""
+            if not d:
+                return {}
+            return {k: v for k, v in d.items() if v is not None}
+
         # Sort so that for each session, the first span with a non-empty session name appears
         # before any spans without a name.  This makes the backend upsert receive the proper
         # name even when multiple spans share the same session in the same flush batch.
@@ -91,7 +98,7 @@ class SpanBackendWriter(SpanWriter):
 
                         # Include tags if they exist and are non empty.
                         if session_tags:
-                            session_data["tags"] = session_tags
+                            session_data["tags"] = filter_null_values(session_tags)
 
                 # DEBUG: Log whether session_data will be included
                 if logger.isEnabledFor(logging.DEBUG):
@@ -127,9 +134,9 @@ class SpanBackendWriter(SpanWriter):
                     "error_message": span.get("error_message"),
                     "error_stack": error_stack,
                     "experiment_result_id": span.get("experiment_result_id"),
-                    "tags": span.get("tags", {}),
-                    "trace_tags": span.get("trace_tags", {}),
-                    "session_tags": span.get("session_tags", {})
+                    "tags": filter_null_values(span.get("tags", {})),
+                    "trace_tags": filter_null_values(span.get("trace_tags", {})),
+                    "session_tags": filter_null_values(span.get("session_tags", {}))
                 }
                 
                 # Add session object if we have session name or tags

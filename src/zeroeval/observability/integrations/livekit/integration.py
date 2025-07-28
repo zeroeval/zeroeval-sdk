@@ -167,12 +167,27 @@ class LiveKitIntegration(Integration):
             
             # Store session metadata for later use when creating spans
             self_session._ze_session_name = f"LiveKit Voice Session - {kwargs.get('room', {}).name if kwargs.get('room') else 'Unknown Room'}"
-            self_session._ze_session_tags = {
-                "integration": "livekit",
-                "llm": kwargs.get("llm", None).__class__.__name__ if kwargs.get("llm") else None,
-                "stt": kwargs.get("stt", None).__class__.__name__ if kwargs.get("stt") else None,
-                "tts": kwargs.get("tts", None).__class__.__name__ if kwargs.get("tts") else None,
-            }
+            # Build session tags, omitting keys with None values
+            self_session._ze_session_tags = {"integration": "livekit"}
+            
+            # Safely add component tags only if they have valid class names
+            llm = kwargs.get("llm")
+            if llm and hasattr(llm, "__class__") and hasattr(llm.__class__, "__name__"):
+                llm_name = llm.__class__.__name__
+                if llm_name:  # Only add if the name is not None or empty
+                    self_session._ze_session_tags["llm"] = llm_name
+            
+            stt = kwargs.get("stt")
+            if stt and hasattr(stt, "__class__") and hasattr(stt.__class__, "__name__"):
+                stt_name = stt.__class__.__name__
+                if stt_name:  # Only add if the name is not None or empty
+                    self_session._ze_session_tags["stt"] = stt_name
+            
+            tts = kwargs.get("tts")
+            if tts and hasattr(tts, "__class__") and hasattr(tts.__class__, "__name__"):
+                tts_name = tts.__class__.__name__
+                if tts_name:  # Only add if the name is not None or empty
+                    self_session._ze_session_tags["tts"] = tts_name
             
             # Patch the instance's on method to intercept event handlers
             integration._patch_session_instance_methods(self_session)
