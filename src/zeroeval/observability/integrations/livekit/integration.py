@@ -7,6 +7,7 @@ import time
 import uuid
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
+import weakref
 
 from ..base import Integration
 
@@ -43,7 +44,10 @@ class LiveKitIntegration(Integration):
         self._original_agent_session = None
         self._original_agent_activity = None
         self._original_function_tool = None
+        self._original_deepgram_stt = None
+        self._original_deepgram_stream = None
         self._ended_span_ids = set()  # Track which span IDs have been ended
+        self._stream_sessions = weakref.WeakValueDictionary()  # Track stream sessions
     
     @property
     def name(self) -> str:
@@ -77,12 +81,33 @@ class LiveKitIntegration(Integration):
             self._patch_agent_activity_class(AgentActivity)
             self._patch_function_tool_module(livekit.agents.llm)
             
+            # Try to patch Agent's stt_node for Deepgram tracking
+            self._patch_agent_stt_node()
+            
+            # Try to patch Deepgram if available
+            self._try_patch_deepgram()
+            
             logger.info("LiveKit integration: All patches applied successfully")
             
         except ImportError as e:
             logger.warning(f"LiveKit integration: Failed to import modules: {e}")
         except Exception as e:
             logger.error(f"LiveKit integration: Error during patching: {e}")
+    
+    def _try_patch_deepgram(self):
+        """Try to patch Deepgram STT if available."""
+        try:
+            import livekit.plugins.deepgram
+            from livekit.plugins.deepgram import stt as deepgram_stt
+            
+            # Patch Deepgram STT class
+            self._patch_deepgram_stt(deepgram_stt)
+            logger.info("LiveKit integration: Deepgram STT patches applied")
+            
+        except ImportError:
+            logger.debug("LiveKit integration: Deepgram plugin not available, skipping patches")
+        except Exception as e:
+            logger.warning(f"LiveKit integration: Failed to patch Deepgram: {e}")
     
     def _patch_agent_session_class(self, AgentSession) -> None:
         """Patch AgentSession class methods."""
@@ -627,3 +652,416 @@ class LiveKitIntegration(Integration):
                 llm_module.function_tool = self._original_function_tool
             except Exception:
                 pass
+    
+    def _patch_deepgram_stt(self, deepgram_stt_module) -> None:
+        """Patch Deepgram STT for observability."""
+        try:
+            STT = deepgram_stt_module.STT
+            SpeechStream = deepgram_stt_module.SpeechStream
+            
+            # Store originals
+            if not self._original_deepgram_stt:
+                self._original_deepgram_stt = {
+                    '_recognize_impl': STT._recognize_impl,
+                    'stream': STT.stream,
+                }
+                self._original_deepgram_stream = {
+                    '__init__': SpeechStream.__init__,
+                    '_process_stream_event': SpeechStream._process_stream_event,
+                    'aclose': SpeechStream.aclose,
+                }
+            
+            integration = self
+            
+            # Patch non-streaming recognize
+            @wraps(self._original_deepgram_stt['_recognize_impl'])
+            async def wrapped_recognize_impl(self_stt, buffer, **kwargs):
+                """Wrap Deepgram's non-streaming recognize method."""
+                # Try to find session context by walking the call stack
+                session = integration._find_session_from_context()
+                session_id = getattr(session, "_ze_session_id", None) if session else None
+                current_turn_span = getattr(session, "_ze_current_turn_span", None) if session else None
+                
+                if session_id:
+                    logger.debug(f"Deepgram: Creating recognize span for session {session_id}")
+                    span = integration.tracer.start_span(
+                        name="deepgram.stt.recognize",
+                        attributes={
+                            "service.name": "deepgram",
+                            "kind": "stt",
+                            "stt.provider": "deepgram",
+                            "stt.streaming": False,
+                            "stt.model": str(self_stt._opts.model),
+                            "stt.language": str(self_stt._opts.language) if self_stt._opts.language else None,
+                            "stt.detect_language": self_stt._opts.detect_language,
+                            "stt.interim_results": self_stt._opts.interim_results,
+                            "stt.smart_format": self_stt._opts.smart_format,
+                            "stt.sample_rate": self_stt._opts.sample_rate,
+                            "stt.buffer_size": len(buffer) if hasattr(buffer, '__len__') else None,
+                        },
+                        tags={"integration": "livekit", "deepgram": "true"},
+                        session_id=session_id,
+                        session_name=getattr(session, "_ze_session_name", None),
+                    )
+                    
+                    # Make it a child of current turn if available
+                    if current_turn_span:
+                        span.parent_id = current_turn_span.span_id
+                        span.trace_id = current_turn_span.trace_id
+                    
+                    start_time = time.time()
+                    
+                    try:
+                        result = await integration._original_deepgram_stt['_recognize_impl'](
+                            self_stt, buffer, **kwargs
+                        )
+                        
+                        # Add result metadata
+                        if result and hasattr(result, 'alternatives') and result.alternatives:
+                            first_alt = result.alternatives[0]
+                            if hasattr(first_alt, 'text'):
+                                span.attributes["stt.transcript"] = first_alt.text  # Include full transcript
+                            if hasattr(first_alt, 'confidence'):
+                                span.attributes["stt.confidence"] = first_alt.confidence
+                            if hasattr(first_alt, 'language'):
+                                span.attributes["stt.detected_language"] = first_alt.language
+                        
+                        span.attributes["stt.duration_ms"] = int((time.time() - start_time) * 1000)
+                        
+                        return result
+                    except Exception as e:
+                        span.set_error(
+                            code=type(e).__name__,
+                            message=str(e),
+                            stack=getattr(e, "__traceback__", None),
+                        )
+                        raise
+                    finally:
+                        if span.span_id not in integration._ended_span_ids:
+                            integration._ended_span_ids.add(span.span_id)
+                            integration.tracer.end_span(span)
+                else:
+                    # No session context, just call original
+                    return await integration._original_deepgram_stt['_recognize_impl'](
+                        self_stt, buffer, **kwargs
+                    )
+            
+            # Patch streaming
+            @wraps(self._original_deepgram_stt['stream'])
+            def wrapped_stream(self_stt, **kwargs):
+                """Wrap Deepgram's stream method."""
+                # Create the original stream
+                stream = integration._original_deepgram_stt['stream'](self_stt, **kwargs)
+                
+                # Try to find session context
+                session = integration._find_session_from_context()
+                if session:
+                    # Store session reference for the stream
+                    integration._stream_sessions[id(stream)] = session
+                    
+                    # Create span for stream creation
+                    session_id = getattr(session, "_ze_session_id", None)
+                    current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                    
+                    if session_id:
+                        logger.debug(f"Deepgram: Creating stream span for session {session_id}")
+                        span = integration.tracer.start_span(
+                            name="deepgram.stt.stream_start",
+                            attributes={
+                                "service.name": "deepgram",
+                                "kind": "stt",
+                                "stt.provider": "deepgram",
+                                "stt.streaming": True,
+                                "stt.model": str(self_stt._opts.model),
+                                "stt.language": str(self_stt._opts.language) if self_stt._opts.language else None,
+                                "stt.detect_language": self_stt._opts.detect_language,
+                                "stt.interim_results": self_stt._opts.interim_results,
+                                "stt.smart_format": self_stt._opts.smart_format,
+                                "stt.sample_rate": self_stt._opts.sample_rate,
+                            },
+                            tags={"integration": "livekit", "deepgram": "true"},
+                            session_id=session_id,
+                            session_name=getattr(session, "_ze_session_name", None),
+                        )
+                        
+                        # Make it a child of current turn if available
+                        if current_turn_span:
+                            span.parent_id = current_turn_span.span_id
+                            span.trace_id = current_turn_span.trace_id
+                        
+                        # Store span ID for the stream
+                        stream._ze_stream_span_id = span.span_id
+                        stream._ze_start_time = time.time()
+                        
+                        # End the span immediately (stream lifecycle tracked separately)
+                        if span.span_id not in integration._ended_span_ids:
+                            integration._ended_span_ids.add(span.span_id)
+                            integration.tracer.end_span(span)
+                
+                return stream
+            
+            # Apply patches
+            STT._recognize_impl = wrapped_recognize_impl
+            STT.stream = wrapped_stream
+            
+            # Patch SpeechStream methods
+            original_process_stream_event = self._original_deepgram_stream['_process_stream_event']
+            original_aclose = self._original_deepgram_stream['aclose']
+            
+            @wraps(original_process_stream_event)
+            def wrapped_process_stream_event(self_stream, data):
+                """Wrap stream event processing to capture results."""
+                # Call original
+                result = original_process_stream_event(self_stream, data)
+                
+                # Try to find session from our tracking
+                session = integration._stream_sessions.get(id(self_stream))
+                if session and hasattr(self_stream, '_ze_stream_span_id'):
+                    session_id = getattr(session, "_ze_session_id", None)
+                    current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                    
+                    # Also check various possible event types for Deepgram
+                    event_type = data.get('type', '')
+                    is_transcript_event = event_type in ['Results', 'Result', 'transcript', 'transcription']
+                    
+                    if session_id and (is_transcript_event or 'alternatives' in data.get('channel', {})):
+                        # Only create spans for final transcripts
+                        is_final = data.get('is_final', False)
+                        
+                        if is_final:
+                            # Extract transcript data first
+                            transcript_text = ""
+                            confidence = None
+                            word_count = 0
+                            
+                            try:
+                                if 'channel' in data and data['channel'].get('alternatives'):
+                                    first_alt = data['channel']['alternatives'][0]
+                                    transcript_text = first_alt.get('transcript', '')
+                                    confidence = first_alt.get('confidence')
+                                    if 'words' in first_alt:
+                                        word_count = len(first_alt['words'])
+                            except Exception as e:
+                                logger.debug(f"Failed to extract Deepgram transcript data: {e}")
+                            
+                            span = integration.tracer.start_span(
+                                name="deepgram.stt.transcript",
+                                attributes={
+                                    "service.name": "deepgram",
+                                    "kind": "stt_result",
+                                    "stt.provider": "deepgram",
+                                    "stt.is_final": is_final,
+                                    "stt.stream_id": self_stream._ze_stream_span_id,
+                                    "stt.transcript": transcript_text,  # Always include the transcript
+                                },
+                                tags={"integration": "livekit", "deepgram": "true"},
+                                session_id=session_id,
+                                session_name=getattr(session, "_ze_session_name", None),
+                            )
+                            
+                            # Make it a child of current turn if available
+                            if current_turn_span:
+                                span.parent_id = current_turn_span.span_id
+                                span.trace_id = current_turn_span.trace_id
+                            
+                            # Add optional attributes if available
+                            if confidence is not None:
+                                span.attributes["stt.confidence"] = confidence
+                            if word_count > 0:
+                                span.attributes["stt.word_count"] = word_count
+                            
+                            # Add metadata if available
+                            try:
+                                if 'metadata' in data:
+                                    metadata = data['metadata']
+                                    if 'duration' in metadata:
+                                        span.attributes["stt.audio_duration"] = metadata['duration']
+                                    if 'channels' in metadata:
+                                        span.attributes["stt.channels"] = metadata['channels']
+                            except Exception as e:
+                                logger.debug(f"Failed to extract Deepgram metadata: {e}")
+                            
+                            # Store raw response data for debugging
+                            span.attributes["stt.raw_response"] = json.dumps(data)[:1000]  # Truncate for safety
+                            
+                            # End span immediately
+                            if span.span_id not in integration._ended_span_ids:
+                                integration._ended_span_ids.add(span.span_id)
+                                integration.tracer.end_span(span)
+                
+                return result
+            
+            @wraps(original_aclose)
+            async def wrapped_aclose(self_stream):
+                """Wrap stream close to track stream lifecycle."""
+                # Find session and create end span
+                session = integration._stream_sessions.get(id(self_stream))
+                if session and hasattr(self_stream, '_ze_stream_span_id'):
+                    session_id = getattr(session, "_ze_session_id", None)
+                    current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                    
+                    if session_id:
+                        duration_ms = int((time.time() - self_stream._ze_start_time) * 1000)
+                        
+                        span = integration.tracer.start_span(
+                            name="deepgram.stt.stream_end",
+                            attributes={
+                                "service.name": "deepgram",
+                                "kind": "stt",
+                                "stt.provider": "deepgram",
+                                "stt.streaming": True,
+                                "stt.stream_id": self_stream._ze_stream_span_id,
+                                "stt.duration_ms": duration_ms,
+                            },
+                            tags={"integration": "livekit", "deepgram": "true"},
+                            session_id=session_id,
+                            session_name=getattr(session, "_ze_session_name", None),
+                        )
+                        
+                        # Make it a child of current turn if available
+                        if current_turn_span:
+                            span.parent_id = current_turn_span.span_id
+                            span.trace_id = current_turn_span.trace_id
+                        
+                        # End span immediately
+                        if span.span_id not in integration._ended_span_ids:
+                            integration._ended_span_ids.add(span.span_id)
+                            integration.tracer.end_span(span)
+                    
+                    # Clean up tracking
+                    integration._stream_sessions.pop(id(self_stream), None)
+                
+                # Call original
+                return await original_aclose(self_stream)
+            
+            # Apply stream patches
+            SpeechStream._process_stream_event = wrapped_process_stream_event
+            SpeechStream.aclose = wrapped_aclose
+            
+        except Exception as e:
+            logger.error(f"Failed to patch Deepgram STT: {e}")
+    
+    def _patch_agent_stt_node(self) -> None:
+        """Patch Agent's stt_node to intercept STT stream creation with session context."""
+        try:
+            from livekit.agents.voice import Agent
+            
+            # Store original if not already done
+            if not hasattr(Agent.default.stt_node, '_ze_original'):
+                Agent.default.stt_node._ze_original = Agent.default.stt_node
+            
+            integration = self
+            original_stt_node = Agent.default.stt_node._ze_original
+            
+            @wraps(original_stt_node)
+            async def wrapped_stt_node(agent, audio, model_settings):
+                """Wrapped stt_node that tracks Deepgram usage."""
+                activity = agent._get_activity_or_raise()
+                session = activity.session if hasattr(activity, 'session') else activity._session
+                
+                # Check if using Deepgram
+                is_deepgram = False
+                if activity.stt and hasattr(activity.stt, '__class__'):
+                    stt_class_name = activity.stt.__class__.__name__
+                    stt_module = activity.stt.__class__.__module__
+                    is_deepgram = 'deepgram' in stt_module.lower()
+                
+                if is_deepgram and session and hasattr(session, '_ze_session_id'):
+                    # Store session in a context var for Deepgram to find
+                    import contextvars
+                    if not hasattr(integration, '_session_context'):
+                        integration._session_context = contextvars.ContextVar('ze_session')
+                    
+                    token = integration._session_context.set(session)
+                    try:
+                        # Create a span for STT streaming session
+                        session_id = session._ze_session_id
+                        current_turn_span = getattr(session, "_ze_current_turn_span", None)
+                        
+                        span = integration.tracer.start_span(
+                            name="deepgram.stt.streaming_session",
+                            attributes={
+                                "service.name": "deepgram",
+                                "kind": "stt",
+                                "stt.provider": "deepgram",
+                                "stt.streaming": True,
+                            },
+                            tags={"integration": "livekit", "deepgram": "true"},
+                            session_id=session_id,
+                            session_name=getattr(session, "_ze_session_name", None),
+                        )
+                        
+                        # Make it a child of current turn if available
+                        if current_turn_span:
+                            span.parent_id = current_turn_span.span_id
+                            span.trace_id = current_turn_span.trace_id
+                        
+                        start_time = time.time()
+                        
+                        try:
+                            # Call original and yield results
+                            async for event in original_stt_node(agent, audio, model_settings):
+                                yield event
+                        except asyncio.CancelledError:
+                            # This is expected when the stream is cancelled
+                            logger.debug("STT streaming session cancelled")
+                            raise
+                        finally:
+                            # End the session span
+                            span.attributes["stt.session_duration_ms"] = int((time.time() - start_time) * 1000)
+                            if span.span_id not in integration._ended_span_ids:
+                                integration._ended_span_ids.add(span.span_id)
+                                integration.tracer.end_span(span)
+                    finally:
+                        integration._session_context.reset(token)
+                else:
+                    # Not Deepgram or no session, just pass through
+                    async for event in original_stt_node(agent, audio, model_settings):
+                        yield event
+            
+            # Apply the patch
+            Agent.default.stt_node = staticmethod(wrapped_stt_node)
+            logger.info("LiveKit integration: Agent.default.stt_node patched for Deepgram tracking")
+            
+        except Exception as e:
+            logger.warning(f"Failed to patch Agent.stt_node: {e}")
+    
+    def _find_session_from_context(self):
+        """Try to find the current session from the context."""
+        # First try contextvars if available
+        if hasattr(self, '_session_context'):
+            try:
+                session = self._session_context.get()
+                if session:
+                    return session
+            except LookupError:
+                pass
+        
+        # Fall back to stack inspection
+        # This is a heuristic approach - we try to find the session
+        # by looking at the current async task context
+        try:
+            import inspect
+            
+            # Walk up the call stack looking for a session
+            for frame_info in inspect.stack():
+                frame_locals = frame_info.frame.f_locals
+                
+                # Look for session in various places
+                if 'session' in frame_locals and hasattr(frame_locals['session'], '_ze_session_id'):
+                    return frame_locals['session']
+                if 'self' in frame_locals:
+                    self_obj = frame_locals['self']
+                    if hasattr(self_obj, 'session') and hasattr(self_obj.session, '_ze_session_id'):
+                        return self_obj.session
+                    if hasattr(self_obj, '_session') and hasattr(self_obj._session, '_ze_session_id'):
+                        return self_obj._session
+                
+                # Check for context objects
+                if 'ctx' in frame_locals and hasattr(frame_locals['ctx'], 'session'):
+                    if hasattr(frame_locals['ctx'].session, '_ze_session_id'):
+                        return frame_locals['ctx'].session
+        except Exception as e:
+            logger.debug(f"Failed to find session from context: {e}")
+        
+        return None
