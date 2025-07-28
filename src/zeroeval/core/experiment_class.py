@@ -90,7 +90,8 @@ class Experiment:
                 row_data=row_data,
                 row_id=row_id,
                 result=task_output,
-                trace_id=trace_id  # <-- Pass the captured trace ID along
+                trace_id=trace_id,  # <-- Pass the captured trace ID along
+                run_number=1  # Default to run 1 for legacy Experiment class
             )
             experiment_result._write(self._writer)
             self.results.append(experiment_result)
@@ -177,7 +178,8 @@ class Experiment:
                 row_data=row_data,
                 row_id=row_id,
                 result=result,
-                trace_id=trace_id
+                trace_id=trace_id,
+                run_number=1  # Default to run 1 for legacy Experiment class
             )
             experiment_result._write(self._writer)
             self.results.append(experiment_result)
@@ -238,7 +240,8 @@ class ExperimentResult:
         row_data: Optional[dict],
         row_id: Optional[str],
         result: Any,
-        trace_id: Optional[str] = None  # <-- Store the trace ID
+        trace_id: Optional[str] = None,  # <-- Store the trace ID
+        run_number: int = 1  # <-- Add run_number with default
     ):
         self.experiment_id = experiment_id
         self.row_data = row_data
@@ -248,6 +251,9 @@ class ExperimentResult:
 
         # New field to hold the trace ID if tracing was enabled
         self.trace_id = trace_id
+        
+        # Run number for multiple runs support
+        self.run_number = run_number
 
     def _write(self, writer: 'ExperimentResultWriter'):
         """Write this ExperimentResult to the writer."""

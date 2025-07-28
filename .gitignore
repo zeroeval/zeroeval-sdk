@@ -8,6 +8,8 @@ __pycache__/
 dist/
 dist/*
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Build and test directories
 .tox/
