@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -44,6 +45,8 @@ class LiveKitIntegration(Integration):
         self._original_job_context = None
         self._original_function_tool = None
         self._original_log_metrics = None
+        self._completion_locks = {}  # Lock per speech_id to prevent concurrent completions
+        self._ended_span_ids = set()  # Track which span IDs have been ended
     
     def setup(self) -> None:
         """Setup the LiveKit integration by patching key classes and methods."""
@@ -205,7 +208,9 @@ class LiveKitIntegration(Integration):
             try:
                 result = await integration._original_agent_session['start'](self_session, *args, **kwargs)
                 logger.info(f"LiveKit: Session started successfully for {session_id}")
-                integration.tracer.end_span(span)
+                if span.span_id not in integration._ended_span_ids:
+                    integration._ended_span_ids.add(span.span_id)
+                    integration.tracer.end_span(span)
                 return result
             except Exception as e:
                 logger.error(f"LiveKit: Session start failed for {session_id}: {e}")
@@ -214,7 +219,9 @@ class LiveKitIntegration(Integration):
                     message=str(e),
                     stack=getattr(e, "__traceback__", None),
                 )
-                integration.tracer.end_span(span)
+                if span.span_id not in integration._ended_span_ids:
+                    integration._ended_span_ids.add(span.span_id)
+                    integration.tracer.end_span(span)
                 raise
         
         # Apply patches
@@ -248,6 +255,34 @@ class LiveKitIntegration(Integration):
                 return original_on(event_name, wrapped_handler)
         
         session_instance.on = wrapped_on
+        
+        # Register our own event handlers to capture additional telemetry
+        self._register_default_event_handlers(session_instance)
+    
+    def _register_default_event_handlers(self, session_instance) -> None:
+        """Register default event handlers to capture LiveKit telemetry."""
+        integration = self
+        
+        # Listen for speech events
+        @session_instance.on("speech_created")
+        def on_speech_created(event):
+            logger.debug(f"LiveKit: speech_created event")
+            # Speech created events indicate the start of agent speech
+        
+        @session_instance.on("user_speech_created") 
+        def on_user_speech_created(event):
+            logger.debug(f"LiveKit: user_speech_created event")
+            # User speech created events indicate the start of user speech
+            
+        @session_instance.on("user_speech_committed")
+        def on_user_speech_committed(event):
+            logger.debug(f"LiveKit: user_speech_committed event: {event}")
+            # User speech committed indicates the end of user turn
+            
+        @session_instance.on("function_called")
+        def on_function_called(event):
+            logger.debug(f"LiveKit: function_called event")
+            # Function called events for tool usage
     
     def _wrap_event_handler(self, event_name: str, handler: Callable, session_instance) -> Callable:
         """Wrap an event handler to capture metrics and events."""
@@ -337,8 +372,11 @@ class LiveKitIntegration(Integration):
             # Process the metrics within this turn
             self._process_metrics_in_turn(metrics, session_instance, speech_id)
             
-            # Check if turn might be complete (heuristic: if we have TTS metrics)
-            if metrics_type == "TTSMetrics":
+            # Check if turn might be complete
+            # For user turns: complete after EOUMetrics
+            # For agent turns: complete after TTSMetrics
+            if (turn_type == "user" and metrics_type == "EOUMetrics") or \
+               (turn_type == "agent" and metrics_type == "TTSMetrics"):
                 # Schedule turn completion after a delay
                 self._schedule_turn_completion(session_instance, speech_id)
                 
@@ -347,31 +385,64 @@ class LiveKitIntegration(Integration):
     
     def _schedule_turn_completion(self, session_instance, speech_id: str) -> None:
         """Schedule completion of a turn after TTS is done."""
-        # In a real implementation, you might want to use asyncio.create_task
-        # For now, we'll just mark it for completion
+        # Complete any previous turns first
+        if hasattr(session_instance, "_ze_speech_traces"):
+            for sid in list(session_instance._ze_speech_traces.keys()):
+                if sid != speech_id:
+                    # Use asyncio to schedule completion
+                    asyncio.create_task(self._complete_turn_async(session_instance, sid))
+        
+        # Complete current turn after a short delay (100ms)
+        # This ensures we capture all metrics for the turn
         if hasattr(session_instance, "_ze_speech_traces") and speech_id in session_instance._ze_speech_traces:
             turn_info = session_instance._ze_speech_traces[speech_id]
-            turn_info["pending_completion"] = True
             
-            # Complete any previous turns that are pending
-            for sid, info in list(session_instance._ze_speech_traces.items()):
-                if sid != speech_id and info.get("pending_completion"):
-                    self._complete_turn(session_instance, sid)
+            # Cancel any existing task for this turn
+            if "completion_task" in turn_info and turn_info["completion_task"] and not turn_info["completion_task"].done():
+                turn_info["completion_task"].cancel()
+            
+            async def complete_after_delay():
+                await asyncio.sleep(0.1)  # 100ms delay
+                await self._complete_turn_async(session_instance, speech_id)
+            
+            # Schedule completion using asyncio
+            turn_info["completion_task"] = asyncio.create_task(complete_after_delay())
+    
+    async def _complete_turn_async(self, session_instance, speech_id: str) -> None:
+        """Complete a turn by ending all its spans (async version with locking)."""
+        # Get or create a lock for this speech_id
+        if speech_id not in self._completion_locks:
+            self._completion_locks[speech_id] = asyncio.Lock()
+        
+        async with self._completion_locks[speech_id]:
+            # Double-check the turn still exists
+            if not hasattr(session_instance, "_ze_speech_traces") or speech_id not in session_instance._ze_speech_traces:
+                return
+            
+            turn_info = session_instance._ze_speech_traces[speech_id]
+            logger.info(f"LiveKit: Completing turn for speech_id={speech_id}")
+            
+            # Cancel any pending completion task
+            if "completion_task" in turn_info and turn_info["completion_task"] and not turn_info["completion_task"].done():
+                turn_info["completion_task"].cancel()
+            
+            # End all spans in reverse order, but only if not already ended
+            for span in reversed(turn_info["spans"]):
+                if span.span_id not in self._ended_span_ids:
+                    self._ended_span_ids.add(span.span_id)
+                    self.tracer.end_span(span)
+                else:
+                    logger.debug(f"LiveKit: Skipping already ended span {span.span_id}")
+            
+            # Remove from active traces
+            del session_instance._ze_speech_traces[speech_id]
+            
+            # Clean up the lock
+            del self._completion_locks[speech_id]
     
     def _complete_turn(self, session_instance, speech_id: str) -> None:
-        """Complete a turn by ending all its spans."""
-        if not hasattr(session_instance, "_ze_speech_traces") or speech_id not in session_instance._ze_speech_traces:
-            return
-        
-        turn_info = session_instance._ze_speech_traces[speech_id]
-        logger.info(f"LiveKit: Completing turn for speech_id={speech_id}")
-        
-        # End all spans in reverse order
-        for span in reversed(turn_info["spans"]):
-            self.tracer.end_span(span)
-        
-        # Remove from active traces
-        del session_instance._ze_speech_traces[speech_id]
+        """Complete a turn by ending all its spans (sync wrapper for backwards compatibility)."""
+        asyncio.create_task(self._complete_turn_async(session_instance, speech_id))
     
     def _patch_agent_class(self, Agent) -> None:
         """Patch Agent class methods."""
@@ -498,6 +569,10 @@ class LiveKitIntegration(Integration):
                                     stack=getattr(e, "__traceback__", None),
                                 )
                                 raise
+                            finally:
+                                if span.span_id not in integration._ended_span_ids:
+                                    integration._ended_span_ids.add(span.span_id)
+                                    integration.tracer.end_span(span)
                         else:
                             # No active turn, just call the function
                             return await decorated(*args, **kwargs)
@@ -625,4 +700,9 @@ class LiveKitIntegration(Integration):
         # Calculate and record conversation latency if we have all components
         if hasattr(metrics, "end_of_utterance_delay") and hasattr(metrics, "ttft") and hasattr(metrics, "ttfb"):
             total_latency = metrics.end_of_utterance_delay + metrics.ttft + metrics.ttfb
-            span.set_signal("conversation_latency_ms", total_latency * 1000) 
+            span.set_signal("conversation_latency_ms", total_latency * 1000)
+        
+        # End the span immediately after setting all attributes
+        if span.span_id not in self._ended_span_ids:
+            self._ended_span_ids.add(span.span_id)
+            self.tracer.end_span(span) 
