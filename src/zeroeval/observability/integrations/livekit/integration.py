@@ -91,6 +91,7 @@ class LiveKitIntegration(Integration):
             self._original_agent_session = {
                 '__init__': AgentSession.__init__,
                 'start': AgentSession.start,
+                '_update_user_state': AgentSession._update_user_state,
             }
         
         integration = self  # Capture self for closures
@@ -181,11 +182,72 @@ class LiveKitIntegration(Integration):
                     integration.tracer.end_span(span)
                 raise
         
+        @wraps(self._original_agent_session['_update_user_state'])
+        def wrapped_update_user_state(self_session, state, *, last_speaking_time=None):
+            """Wrapped _update_user_state to track user turns."""
+            session_id = getattr(self_session, "_ze_session_id", None)
+            old_state = getattr(self_session, "_user_state", "listening")
+            
+            # Track user turn start
+            if state == "speaking" and old_state != "speaking" and session_id:
+                # Generate a unique speech ID for this user turn
+                speech_id = f"user_turn_{int(time.time() * 1000)}"
+                
+                # Check if we already have a user turn active (shouldn't happen but be safe)
+                if not hasattr(self_session, "_ze_user_turn_span") or not self_session._ze_user_turn_span:
+                    logger.info(f"LiveKit: Starting user turn for speech_id={speech_id}")
+                    
+                    turn_span = integration.tracer.start_span(
+                        name="livekit.turn.user",
+                        attributes={
+                            "service.name": "livekit",
+                            "kind": "turn",
+                            "turn.type": "user",
+                            "speech.id": speech_id,
+                        },
+                        tags={"integration": "livekit", "turn_type": "user"},
+                        session_id=session_id,
+                        session_name=getattr(self_session, "_ze_session_name", None),
+                        is_new_trace=True
+                    )
+                    
+                    # Store the user turn span
+                    self_session._ze_user_turn_span = turn_span
+                    self_session._ze_user_turn_speech_id = speech_id
+                    self_session._ze_current_turn_span = turn_span
+            
+            # Call original method
+            result = integration._original_agent_session['_update_user_state'](
+                self_session, state, last_speaking_time=last_speaking_time
+            )
+            
+            # Track user turn end
+            if old_state == "speaking" and state in ["listening", "away"] and session_id:
+                if hasattr(self_session, "_ze_user_turn_span") and self_session._ze_user_turn_span:
+                    turn_span = self_session._ze_user_turn_span
+                    speech_id = getattr(self_session, "_ze_user_turn_speech_id", "unknown")
+                    
+                    logger.info(f"LiveKit: Ending user turn for speech_id={speech_id}")
+                    
+                    if turn_span.span_id not in integration._ended_span_ids:
+                        integration._ended_span_ids.add(turn_span.span_id)
+                        integration.tracer.end_span(turn_span)
+                    
+                    # Clean up
+                    self_session._ze_user_turn_span = None
+                    self_session._ze_user_turn_speech_id = None
+                    if hasattr(self_session, '_ze_current_turn_span'):
+                        delattr(self_session, '_ze_current_turn_span')
+            
+            return result
+        
         # Apply patches
         wrapped_init._ze_patched = True
         wrapped_start._ze_patched = True
+        wrapped_update_user_state._ze_patched = True
         AgentSession.__init__ = wrapped_init
         AgentSession.start = wrapped_start
+        AgentSession._update_user_state = wrapped_update_user_state
     
     def _patch_agent_activity_class(self, AgentActivity) -> None:
         """Patch AgentActivity class methods to intercept turn creation."""
@@ -300,6 +362,7 @@ class LiveKitIntegration(Integration):
             wrapped_realtime_generation_task._ze_patched = True
             AgentActivity._realtime_generation_task = wrapped_realtime_generation_task
     
+
     def _patch_activity_instance(self, activity_instance, session_instance) -> None:
         """Patch instance methods of an AgentActivity to intercept events."""
         if not hasattr(activity_instance, 'on'):
@@ -336,13 +399,6 @@ class LiveKitIntegration(Integration):
             if event_name == "metrics_collected":
                 self._capture_metrics_span(event, session_instance)
             
-            # Handle user speech events for user turns
-            elif event_name == "user_speech_created":
-                self._start_user_turn(event, session_instance)
-            
-            elif event_name == "user_speech_committed":
-                self._end_user_turn(event, session_instance)
-            
             # Call the original handler
             try:
                 result = handler(event)
@@ -353,58 +409,7 @@ class LiveKitIntegration(Integration):
         
         return wrapped_handler
     
-    def _start_user_turn(self, event, session_instance) -> None:
-        """Start a user turn trace."""
-        try:
-            speech_id = getattr(event, "speech_id", f"user_turn_{int(time.time() * 1000)}")
-            session_id = getattr(session_instance, "_ze_session_id", None)
-            
-            if session_id and speech_id not in getattr(session_instance, "_ze_speech_traces", {}):
-                logger.info(f"LiveKit: Starting user turn for speech_id={speech_id}")
-                
-                turn_span = self.tracer.start_span(
-                    name="livekit.turn.user",
-                    attributes={
-                        "service.name": "livekit",
-                        "kind": "turn",
-                        "turn.type": "user",
-                        "speech.id": speech_id,
-                    },
-                    tags={"integration": "livekit", "turn_type": "user"},
-                    session_id=session_id,
-                    session_name=getattr(session_instance, "_ze_session_name", None),
-                    is_new_trace=True
-                )
-                
-                if not hasattr(session_instance, "_ze_speech_traces"):
-                    session_instance._ze_speech_traces = {}
-                session_instance._ze_speech_traces[speech_id] = turn_span
-                session_instance._ze_current_turn_span = turn_span
-                
-        except Exception as e:
-            logger.error(f"Failed to start user turn: {e}")
-    
-    def _end_user_turn(self, event, session_instance) -> None:
-        """End a user turn trace."""
-        try:
-            speech_id = getattr(event, "speech_id", None)
-            
-            if speech_id and hasattr(session_instance, "_ze_speech_traces"):
-                if speech_id in session_instance._ze_speech_traces:
-                    turn_span = session_instance._ze_speech_traces[speech_id]
-                    
-                    logger.info(f"LiveKit: Ending user turn for speech_id={speech_id}")
-                    
-                    if turn_span.span_id not in self._ended_span_ids:
-                        self._ended_span_ids.add(turn_span.span_id)
-                        self.tracer.end_span(turn_span)
-                    
-                    del session_instance._ze_speech_traces[speech_id]
-                    if hasattr(session_instance, '_ze_current_turn_span'):
-                        delattr(session_instance, '_ze_current_turn_span')
-                        
-        except Exception as e:
-            logger.error(f"Failed to end user turn: {e}")
+
     
     def _capture_metrics_span(self, event, session_instance) -> None:
         """Capture metrics as spans within the current turn."""
