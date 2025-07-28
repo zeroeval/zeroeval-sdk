@@ -36,6 +36,7 @@ class span:
     def __init__(
         self, 
         name: str, 
+        kind: str = "generic",
         session_id: Optional[str] = None,
         session: Optional[Union[str, dict[str, str]]] = None,
         attributes: Optional[dict[str, Any]] = None,
@@ -44,6 +45,7 @@ class span:
         tags: Optional[dict[str, str]] = None
     ):
         self.name = name
+        self.kind = kind
         self.attributes = attributes or {}
         self.manual_input = input_data
         self.manual_output = output_data
@@ -226,7 +228,8 @@ class span:
     def __enter__(self):
         """Start a span when entering a context."""
         self._span = tracer.start_span(
-            name=self.name, 
+            name=self.name,
+            kind=self.kind,
             attributes=self.attributes,
             session_id=self._session_id,
             session_name=self._session_name,

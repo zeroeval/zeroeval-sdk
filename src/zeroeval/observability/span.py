@@ -41,6 +41,7 @@ class Span:
     name: str
     
     # Optional fields with defaults
+    kind: str = "generic"  # Type of span: generic, llm, tts, http, database, vector_store, etc.
     session_id: Optional[str] = None
     session_name: Optional[str] = None
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -123,6 +124,7 @@ class Span:
         
         span_dict = {
             "name": self.name,
+            "kind": self.kind,
             "session_id": self.session_id,
             "session_name": self.session_name,
             "trace_id": self.trace_id,

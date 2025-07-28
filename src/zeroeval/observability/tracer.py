@@ -289,6 +289,7 @@ class Tracer:
     def start_span(
         self,
         name: str,
+        kind: str = "generic",
         attributes: Optional[dict[str, Any]] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -328,6 +329,7 @@ class Tracer:
         # Create new span
         span = Span(
             name=name,
+            kind=kind,
             parent_id=parent_span.span_id if parent_span else None,
             attributes=attributes or {},
             session_id=final_session_id,

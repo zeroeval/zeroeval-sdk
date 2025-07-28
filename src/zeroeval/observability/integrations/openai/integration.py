@@ -88,15 +88,21 @@ class OpenAIIntegration(Integration):
             if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
                 kwargs["stream_options"] = {"include_usage": True}
 
+            # Try to get base_url from client instance
+            base_url = None
+            if args and hasattr(args[0], 'base_url'):
+                base_url = str(args[0].base_url)
+
             span = self.tracer.start_span(
                 name="openai.chat.completions.create",
+                kind="llm",
                 attributes={
                     "service.name": "openai",
-                    "kind": "llm",
                     "provider": "openai",
                     "model": kwargs.get("model"),
                     "messages": self._serialize_messages(kwargs.get("messages")),
                     "streaming": is_streaming,
+                    "base_url": base_url,
                 },
                 tags={"integration": "openai"},
             )
@@ -119,6 +125,37 @@ class OpenAIIntegration(Integration):
                     span.attributes.update(
                         {"inputTokens": usage.prompt_tokens, "outputTokens": usage.completion_tokens}
                     )
+                
+                # Capture additional OpenAI response data
+                if hasattr(response, 'id'):
+                    span.attributes["openai_id"] = response.id
+                if hasattr(response, 'system_fingerprint'):
+                    span.attributes["system_fingerprint"] = response.system_fingerprint
+                if hasattr(response, 'choices') and response.choices:
+                    # Convert choices to dict for JSON serialization
+                    choices_data = []
+                    for choice in response.choices:
+                        choice_dict = {}
+                        if hasattr(choice, 'message'):
+                            choice_dict['message'] = {
+                                'role': getattr(choice.message, 'role', None),
+                                'content': getattr(choice.message, 'content', None)
+                            }
+                        if hasattr(choice, 'finish_reason'):
+                            choice_dict['finish_reason'] = choice.finish_reason
+                        if hasattr(choice, 'index'):
+                            choice_dict['index'] = choice.index
+                        choices_data.append(choice_dict)
+                    span.attributes["choices"] = choices_data
+                if usage:
+                    # Store full usage object
+                    usage_dict = {
+                        'prompt_tokens': usage.prompt_tokens,
+                        'completion_tokens': usage.completion_tokens,
+                        'total_tokens': getattr(usage, 'total_tokens', usage.prompt_tokens + usage.completion_tokens)
+                    }
+                    span.attributes["usage"] = usage_dict
+                
                 message = response.choices[0].message if response.choices else None
                 output = message.content if message else None
                 throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
@@ -151,15 +188,21 @@ class OpenAIIntegration(Integration):
             if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
                 kwargs["stream_options"] = {"include_usage": True}
 
+            # Try to get base_url from client instance
+            base_url = None
+            if args and hasattr(args[0], 'base_url'):
+                base_url = str(args[0].base_url)
+
             span = self.tracer.start_span(
                 name="openai.chat.completions.create",
+                kind="llm",
                 attributes={
                     "service.name": "openai",
-                    "kind": "llm",
                     "provider": "openai",
                     "model": kwargs.get("model"),
                     "messages": self._serialize_messages(kwargs.get("messages")),
                     "streaming": is_streaming,
+                    "base_url": base_url,
                 },
                 tags={"integration": "openai"},
             )
@@ -180,6 +223,37 @@ class OpenAIIntegration(Integration):
                     span.attributes.update(
                         {"inputTokens": usage.prompt_tokens, "outputTokens": usage.completion_tokens}
                     )
+                
+                # Capture additional OpenAI response data
+                if hasattr(response, 'id'):
+                    span.attributes["openai_id"] = response.id
+                if hasattr(response, 'system_fingerprint'):
+                    span.attributes["system_fingerprint"] = response.system_fingerprint
+                if hasattr(response, 'choices') and response.choices:
+                    # Convert choices to dict for JSON serialization
+                    choices_data = []
+                    for choice in response.choices:
+                        choice_dict = {}
+                        if hasattr(choice, 'message'):
+                            choice_dict['message'] = {
+                                'role': getattr(choice.message, 'role', None),
+                                'content': getattr(choice.message, 'content', None)
+                            }
+                        if hasattr(choice, 'finish_reason'):
+                            choice_dict['finish_reason'] = choice.finish_reason
+                        if hasattr(choice, 'index'):
+                            choice_dict['index'] = choice.index
+                        choices_data.append(choice_dict)
+                    span.attributes["choices"] = choices_data
+                if usage:
+                    # Store full usage object
+                    usage_dict = {
+                        'prompt_tokens': usage.prompt_tokens,
+                        'completion_tokens': usage.completion_tokens,
+                        'total_tokens': getattr(usage, 'total_tokens', usage.prompt_tokens + usage.completion_tokens)
+                    }
+                    span.attributes["usage"] = usage_dict
+                
                 message = response.choices[0].message if response.choices else None
                 output = message.content if message else None
                 throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
