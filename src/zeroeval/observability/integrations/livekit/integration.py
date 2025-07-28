@@ -868,10 +868,19 @@ class LiveKitIntegration(Integration):
         
         # TTS Metrics
         if hasattr(metrics, "characters_count"):
-            attributes["tts.characters_count"] = metrics.characters_count
+            attributes["characters_count"] = metrics.characters_count  # Changed from tts.characters_count
         if hasattr(metrics, "ttfb"):
-            attributes["tts.ttfb"] = metrics.ttfb
+            attributes["ttfb_ms"] = metrics.ttfb * 1000  # Changed from tts.ttfb and converted to ms
             span.set_signal("ttfb_ms", metrics.ttfb * 1000)
+        
+        # Add standard TTS fields for metrics spans
+        if metrics_type == "TTSMetrics":
+            # These are required fields for tts_span_metrics
+            attributes["provider"] = "unknown"  # We don't know the provider from metrics alone
+            attributes["streaming"] = True  # LiveKit TTS is typically streaming
+            
+            # Try to infer provider from the activity if possible
+            # This is a best effort - the direct Cartesia integration provides more accurate data
         
         # EOU Metrics (End of Utterance)
         if hasattr(metrics, "end_of_utterance_delay"):
@@ -1228,6 +1237,17 @@ class LiveKitIntegration(Integration):
                         # Store session reference for the stream (weakref to avoid memory leaks)
                         integration._stream_sessions[id(stream)] = session
                         
+                        # Add a minimal wrapper to track input text
+                        original_push_text = stream.push_text
+                        stream._ze_input_texts = []
+                        
+                        def track_push_text(text):
+                            # Store text for later use in span
+                            stream._ze_input_texts.append(text)
+                            return original_push_text(text)
+                        
+                        stream.push_text = track_push_text
+                        
                         # Create a simple span for stream creation
                         session_id = getattr(session, "_ze_session_id", None)
                         if session_id:
@@ -1236,12 +1256,23 @@ class LiveKitIntegration(Integration):
                                 attributes={
                                     "service.name": "cartesia",
                                     "kind": "tts",
-                                    "tts.provider": "cartesia",
+                                    "provider": "cartesia",
+                                    "streaming": True,
                                 },
                                 tags={"integration": "livekit", "cartesia": "true"},
                                 session_id=session_id,
                                 session_name=getattr(session, "_ze_session_name", None),
                             )
+                            
+                            # Add basic TTS options if available
+                            if hasattr(self_tts, '_opts'):
+                                opts = self_tts._opts
+                                span.attributes.update({
+                                    "voice_id": str(opts.voice) if hasattr(opts, 'voice') else None,
+                                    "model_id": str(opts.model) if hasattr(opts, 'model') else None,
+                                    "language_code": str(opts.language) if hasattr(opts, 'language') else None,
+                                    "output_format": str(opts.encoding) if hasattr(opts, 'encoding') else None,
+                                })
                             
                             # Link to current turn if available
                             current_turn_span = getattr(session, "_ze_current_turn_span", None)
@@ -1288,26 +1319,37 @@ class LiveKitIntegration(Integration):
                         attributes={
                             "service.name": "cartesia",
                             "kind": "tts",
-                            "tts.provider": "cartesia",
-                            "tts.streaming": True,
+                            "provider": "cartesia",  # Required by tts_span_metrics
+                            "streaming": True,       # Required by tts_span_metrics
                         },
                         tags={"integration": "livekit", "cartesia": "true"},
                         session_id=session_id,
                         session_name=getattr(session, "_ze_session_name", None),
                     )
                     
-                    # Add TTS options if available
+                    # Add TTS options if available - mapped to tts_span_metrics fields
                     if tts_opts:
+                        # Core fields for tts_span_metrics
                         span.attributes.update({
-                            "tts.model": str(tts_opts.model) if hasattr(tts_opts, 'model') else None,
-                            "tts.language": str(tts_opts.language) if hasattr(tts_opts, 'language') else None,
-                            "tts.voice": str(tts_opts.voice) if hasattr(tts_opts, 'voice') and isinstance(tts_opts.voice, str) else "embedding",
-                            "tts.sample_rate": tts_opts.sample_rate if hasattr(tts_opts, 'sample_rate') else None,
-                            "tts.encoding": str(tts_opts.encoding) if hasattr(tts_opts, 'encoding') else None,
-                            "tts.word_timestamps": tts_opts.word_timestamps if hasattr(tts_opts, 'word_timestamps') else None,
-                            "tts.speed": tts_opts.speed if hasattr(tts_opts, 'speed') else None,
-                            "tts.emotion": str(tts_opts.emotion) if hasattr(tts_opts, 'emotion') else None,
+                            "voice_id": str(tts_opts.voice) if hasattr(tts_opts, 'voice') else None,
+                            "model_id": str(tts_opts.model) if hasattr(tts_opts, 'model') else None,
+                            "language_code": str(tts_opts.language) if hasattr(tts_opts, 'language') else None,
+                            "output_format": str(tts_opts.encoding) if hasattr(tts_opts, 'encoding') else None,
                         })
+                        
+                        # Provider-specific data as JSON
+                        provider_request_data = {}
+                        if hasattr(tts_opts, 'sample_rate'):
+                            provider_request_data['sample_rate'] = tts_opts.sample_rate
+                        if hasattr(tts_opts, 'word_timestamps'):
+                            provider_request_data['word_timestamps'] = tts_opts.word_timestamps
+                        if hasattr(tts_opts, 'speed'):
+                            provider_request_data['speed'] = tts_opts.speed
+                        if hasattr(tts_opts, 'emotion'):
+                            provider_request_data['emotion'] = str(tts_opts.emotion)
+                        
+                        if provider_request_data:
+                            span.attributes['provider_request_data'] = provider_request_data
                     
                     # Make it a child of current turn if available
                     if current_turn_span:
@@ -1328,8 +1370,15 @@ class LiveKitIntegration(Integration):
                         
                         # Add basic metadata after completion
                         span.attributes.update({
-                            "tts.duration_ms": int((time.time() - start_time) * 1000),
+                            "audio_duration_ms": int((time.time() - start_time) * 1000),
                         })
+                        
+                        # Set input_data if we captured any text
+                        if hasattr(self_stream, '_ze_input_texts') and self_stream._ze_input_texts:
+                            input_text = ''.join(self_stream._ze_input_texts)
+                            span.set_io(input_data=input_text)
+                            # Also add characters_count for the metrics table
+                            span.attributes["characters_count"] = len(input_text)
                         
                         return result
                     except Exception as e:

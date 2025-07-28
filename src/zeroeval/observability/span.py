@@ -48,6 +48,7 @@ class Span:
     parent_id: Optional[str] = None
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
+    kind: str = "generic"  # Type of span: generic, llm, tts, http, database, etc.
     attributes: dict[str, Any] = field(default_factory=dict)
     # Fields for tracking execution
     input_data: Optional[str] = None
@@ -131,6 +132,7 @@ class Span:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "duration_ms": self.duration_ms,
+            "kind": self.kind,  # Added kind field
             "attributes": self.attributes,
             "tags": self.tags,
             "trace_tags": self.trace_tags,

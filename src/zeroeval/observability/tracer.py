@@ -334,7 +334,7 @@ class Tracer:
             session_name=final_session_name,
             tags=tags or {},
             trace_tags=trace_tags or {},
-            session_tags=session_tags or {}
+            session_tags=session_tags or {},
         )
         
         logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
