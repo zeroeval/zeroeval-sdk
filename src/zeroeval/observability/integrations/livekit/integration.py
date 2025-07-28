@@ -194,6 +194,13 @@ class LiveKitIntegration(Integration):
                 if hasattr(self_session, '_activity') and self_session._activity:
                     integration._patch_activity_instance(self_session._activity, self_session)
                 
+                # Register metrics handler on the session
+                if hasattr(self_session, 'on'):
+                    @self_session.on("metrics_collected")
+                    def _on_metrics_collected(event):
+                        logger.debug(f"LiveKit: Metrics collected event received: {type(event.metrics).__name__}")
+                        integration._capture_metrics_span(event, self_session)
+                
                 return result
             except Exception as e:
                 logger.error(f"LiveKit: Session start failed for {session_id}: {e}")
@@ -697,7 +704,10 @@ class LiveKitIntegration(Integration):
             
             span_name = span_name_map.get(metrics_type)
             if not span_name:
+                logger.debug(f"LiveKit: Unknown metrics type: {metrics_type}")
                 return
+            
+            logger.info(f"LiveKit: Creating metrics span {span_name} for {metrics_type}")
             
             # Get current turn span if available
             current_turn_span = getattr(session_instance, "_ze_current_turn_span", None)
@@ -842,11 +852,19 @@ class LiveKitIntegration(Integration):
             attributes["tts.ttfb"] = metrics.ttfb
             span.set_signal("ttfb_ms", metrics.ttfb * 1000)
         
-        # EOU Metrics
+        # EOU Metrics (End of Utterance)
         if hasattr(metrics, "end_of_utterance_delay"):
             attributes["eou.end_of_utterance_delay"] = metrics.end_of_utterance_delay
+            span.set_signal("eou_delay_ms", metrics.end_of_utterance_delay * 1000)
         if hasattr(metrics, "transcription_delay"):
             attributes["eou.transcription_delay"] = metrics.transcription_delay
+            span.set_signal("transcription_delay_ms", metrics.transcription_delay * 1000)
+        if hasattr(metrics, "on_user_turn_completed_delay"):
+            attributes["eou.on_user_turn_completed_delay"] = metrics.on_user_turn_completed_delay
+        if hasattr(metrics, "last_speaking_time"):
+            attributes["eou.last_speaking_time"] = metrics.last_speaking_time
+        if hasattr(metrics, "timestamp"):
+            attributes["eou.timestamp"] = metrics.timestamp
         
         # Common attributes
         if hasattr(metrics, "speech_id"):
