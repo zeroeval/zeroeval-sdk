@@ -1,10 +1,11 @@
 [project]
 name = "zeroeval"
-version = "0.5.0"
+version = "0.5.1"
 description = "ZeroEval SDK"
 readme = "README.md"
 authors = [
-    {name = "Sebastian Crossa", email = "seb@zeroeval.com"}
+    {name = "Sebastian Crossa", email = "seb@zeroeval.com"},
+    {name = "Jonathan Chavez", email = "jona@zeroeval.com"}
 ]
 requires-python = ">=3.9,<4.0"
 dependencies = [
