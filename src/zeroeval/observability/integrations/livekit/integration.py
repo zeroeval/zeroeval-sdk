@@ -754,7 +754,19 @@ class LiveKitIntegration(Integration):
                 span.parent_id = current_turn_span.span_id
                 span.trace_id = current_turn_span.trace_id
             
-            # Add metrics attributes
+            # Add provider and model for LLM spans
+            if metrics_type == "LLMMetrics":
+                # Try to get model information from metrics or session
+                model = getattr(metrics, "model", None)
+                if not model and hasattr(session_instance, "_ze_session_tags"):
+                    model = session_instance._ze_session_tags.get("llm")
+                
+                if model:
+                    span.attributes["model"] = model
+                # Set provider as livekit for now
+                span.attributes["provider"] = "livekit"
+            
+            # Add metric-specific attributes
             self._add_metrics_attributes(span, metrics, metrics_type)
             
             # End the span immediately
@@ -855,16 +867,16 @@ class LiveKitIntegration(Integration):
         
         # LLM Metrics
         if hasattr(metrics, "completion_tokens"):
-            attributes["llm.completion_tokens"] = metrics.completion_tokens
+            attributes["output_tokens"] = metrics.completion_tokens
         if hasattr(metrics, "prompt_tokens"):
-            attributes["llm.prompt_tokens"] = metrics.prompt_tokens
+            attributes["input_tokens"] = metrics.prompt_tokens
         if hasattr(metrics, "total_tokens"):
-            attributes["llm.total_tokens"] = metrics.total_tokens
+            attributes["total_tokens"] = metrics.total_tokens
         if hasattr(metrics, "ttft"):
-            attributes["llm.ttft"] = metrics.ttft
+            attributes["ttft_ms"] = metrics.ttft * 1000  # Convert to milliseconds
             span.set_signal("ttft_ms", metrics.ttft * 1000)
         if hasattr(metrics, "tokens_per_second"):
-            attributes["llm.tokens_per_second"] = metrics.tokens_per_second
+            attributes["throughput"] = metrics.tokens_per_second
         
         # TTS Metrics
         if hasattr(metrics, "characters_count"):

@@ -1,6 +1,6 @@
 [project]
 name = "zeroeval"
-version = "0.5.0"
+version = "0.5.1"
 description = "ZeroEval SDK"
 
 [project.scripts]
