@@ -94,7 +94,11 @@ class Run:
                 
     def _write_results(self):
         """Write results for this run to the backend."""
+        print(f"🔍 _write_results called - experiment_id: {self._experiment_id}, results_written: {self._results_written}")
+        print(f"🔍 Number of rows to write: {len(self.rows) if hasattr(self, 'rows') and self.rows else 0}")
+        
         if not self._experiment_id or self._results_written:
+            print(f"🚫 Skipping _write_results - experiment_id: {self._experiment_id}, results_written: {self._results_written}")
             return
             
         import requests
@@ -103,9 +107,14 @@ class Run:
         self._writer._ensure_auth_setup()
         
         # Write each result with the current run_number
-        for row in self.rows:
+        print(f"🔍 Starting _write_results loop with {len(self.rows)} rows")
+        for i, row in enumerate(self.rows):
+            print(f"🔍 Processing result row {i+1}/{len(self.rows)} - keys: {list(row.keys())}")
+            print(f"🔍 Row data: {row}")
             if "row_id" not in row:
+                print(f"🚫 Skipping row {i} - no row_id found")
                 continue
+            print(f"🔍 Row {i} has row_id: {row['row_id']}")
                 
             # Extract the task outputs
             result_data = {k: row.get(k) for k in self.outputs if k in row}
@@ -120,11 +129,16 @@ class Run:
             }
             
             try:
+                result_url = f"{self._writer.api_url}/v1/experiments/{self._experiment_id}/results"
+                print(f"🔗 SDK Request: POST {result_url}")
+                print(f"📦 Result for row: {row['row_id']}")
+                
                 result_response = requests.post(
-                    f"{self._writer.api_url}/v1/experiments/{self._experiment_id}/results",
+                    result_url,
                     json=result_payload,
                     headers=self._writer._headers,
                 )
+                print(f"📊 Response: {result_response.status_code} - {result_response.reason}")
                 result_response.raise_for_status()
                 result_data = result_response.json()
                 self._result_ids[row["row_id"]] = result_data["id"]
@@ -199,7 +213,10 @@ class Run:
         
         # Process row-level evaluations
         if row_evals:
+            print(f"🔍 Processing {len(row_evals)} row evaluations: {[e.name for e in row_evals]}")
             self._process_row_evaluations(row_evals, **kwargs)
+        else:
+            print(f"🔍 No row evaluations to process")
             
         # Process column-level evaluations
         if column_evals:
@@ -215,35 +232,51 @@ class Run:
     
     def _process_row_evaluations(self, evaluators: List[Evaluation], **kwargs):
         """Process row-level evaluations."""
+        print(f"🔍 _process_row_evaluations called with {len(evaluators)} evaluators")
+        print(f"🔍 Experiment ID: {self._experiment_id}, Run number: {self.run_number}")
+        print(f"🔍 Number of rows: {len(self.rows) if hasattr(self, 'rows') and self.rows else 0}")
+        
         # Create Evaluator objects if needed (only once per experiment)
         if self._experiment_id and self.run_number == 1:
             for eval_obj in evaluators:
+                print(f"🔍 Creating evaluator DB object for: {eval_obj.name}")
                 evaluator_db = Evaluator(
                     name=eval_obj.name,
                     code=eval_obj._code,
                     description=eval_obj.description,
                     experiment_id=self._experiment_id
                 )
+                print(f"🔗 Writing evaluator to backend: {eval_obj.name}")
                 evaluator_db._write()
                 self._evaluators.append(evaluator_db)
+                print(f"✅ Evaluator created and added: {eval_obj.name}")
         
         # Run evaluators on each row
+        print(f"🔍 Starting row evaluation loop - {len(self.rows)} rows, {len(evaluators)} evaluators")
         for i, row in enumerate(self.rows):
+            print(f"🔍 Processing row {i+1}/{len(self.rows)} - row_id: {row.get('row_id', 'N/A')}")
             # Call each evaluator with the full row
             for j, eval_obj in enumerate(evaluators):
                 try:
+                    print(f"🔍 Running evaluator '{eval_obj.name}' on row {i}")
                     # Pass the entire row to the evaluator
                     eval_result = eval_obj(row)
+                    print(f"🔍 Evaluator result: {eval_result}")
                     
                     # Add evaluation result to the row
                     row.update(eval_result)
                     
                     # Save to database
                     if self._experiment_id and self._evaluators and j < len(self._evaluators):
+                        print(f"🔍 Saving evaluation to DB - evaluator index: {j}, available evaluators: {len(self._evaluators)}")
                         self._save_evaluation_result(self._evaluators[j], eval_result, row, i)
+                    else:
+                        print(f"🚫 Not saving evaluation - experiment_id: {self._experiment_id}, evaluators: {len(self._evaluators) if self._evaluators else 0}, index: {j}")
                         
                 except Exception as e:
-                    print(f"Error running evaluator {eval_obj.name} on row {i}: {e}")
+                    print(f"❌ Error running evaluator {eval_obj.name} on row {i}: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     def _process_column_evaluations(self, evaluators: List[Evaluation], **kwargs):
         """Process column-level evaluations."""
@@ -283,8 +316,14 @@ class Run:
     
     def _save_evaluation_result(self, evaluator_db: Evaluator, eval_result: dict, row: dict, row_idx: int):
         """Save evaluation result to database."""
+        print(f"🔍 _save_evaluation_result called for evaluator: {evaluator_db.name if evaluator_db else 'None'}")
+        print(f"🔍 Row ID: {row.get('row_id', str(row_idx))}, Eval result: {eval_result}")
+        
         experiment_result_id = self._result_ids.get(row.get("row_id", str(row_idx)))
+        print(f"🔍 Found experiment_result_id: {experiment_result_id}")
+        
         if not experiment_result_id:
+            print(f"🚫 No experiment_result_id found for row {row.get('row_id', str(row_idx))}")
             return
             
         evaluation = EvaluationResult(
@@ -293,8 +332,10 @@ class Run:
             experiment_result_id=experiment_result_id,
             dataset_row_id=row.get("row_id", str(row_idx))
         )
+        print(f"🔗 About to write evaluation to backend")
         evaluation._write()
         self._evaluations.append(evaluation)
+        print(f"✅ Evaluation saved and added to list")
     
     def _save_column_evaluation(self, eval_obj: Evaluation, eval_result: dict):
         """Save column-level evaluation to database."""
@@ -317,14 +358,20 @@ class Run:
                 "evaluation_results": eval_result
             }
             
+            eval_url = f"{self._writer.api_url}/v1/column-evaluations"
+            print(f"🔗 SDK Request: POST {eval_url}")
+            print(f"📦 Column evaluation for experiment: {self._experiment_id}")
+            
             response = requests.post(
-                f"{self._writer.api_url}/v1/column-evaluations",
+                eval_url,
                 json=payload,
                 headers=self._writer._headers
             )
+            print(f"📊 Response: {response.status_code} - {response.reason}")
             
             if response.status_code not in [200, 201]:
                 print(f"Warning: Failed to save column evaluation: {response.text}")
+                print(f"Request payload: {payload}")
                 
         except Exception as e:
             print(f"Error saving column evaluation: {e}")
@@ -530,14 +577,20 @@ class Run:
                 "results": result
             }
             
+            metric_url = f"{self._writer.api_url}/v1/column-metrics"
+            print(f"🔗 SDK Request: POST {metric_url}")
+            print(f"📦 Column metric: {metric_obj.name} for experiment: {self._experiment_id}")
+            
             response = requests.post(
-                f"{self._writer.api_url}/v1/column-metrics",
+                metric_url,
                 json=payload,
                 headers=self._writer._headers
             )
+            print(f"📊 Response: {response.status_code} - {response.reason}")
             
             if response.status_code not in [200, 201]:
                 print(f"Warning: Failed to save column metric: {response.text}")
+                print(f"Request payload: {payload}")
                 
         except Exception as e:
             print(f"Error saving column metric: {e}")
@@ -552,14 +605,20 @@ class Run:
                 "results": result
             }
             
+            run_metric_url = f"{self._writer.api_url}/v1/run-metrics"
+            print(f"🔗 SDK Request: POST {run_metric_url}")
+            print(f"📦 Run metric: {metric_obj.name} for experiment: {self._experiment_id}")
+            
             response = requests.post(
-                f"{self._writer.api_url}/v1/run-metrics",
+                run_metric_url,
                 json=payload,
                 headers=self._writer._headers
             )
+            print(f"📊 Response: {response.status_code} - {response.reason}")
             
             if response.status_code not in [200, 201]:
                 print(f"Warning: Failed to save run metric: {response.text}")
+                print(f"Request payload: {payload}")
                 
         except Exception as e:
             print(f"Error saving run metric: {e}") 
