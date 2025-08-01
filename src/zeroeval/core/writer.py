@@ -75,13 +75,9 @@ class _BackendWriter:
 
         if self._workspace_id is None:
             try:
-                resolve_url = f"{self.api_url}/api-keys/resolve"
-                print(f"🔗 SDK Request: POST {resolve_url}")
-                
                 response = requests.post(
-                    resolve_url, json={"api_key": self._api_key}
+                    f"{self.api_url}/api-keys/resolve", json={"api_key": self._api_key}
                 )
-                print(f"📊 Response: {response.status_code} - {response.reason}")
                 response.raise_for_status()
                 response_data = response.json()
 
@@ -133,16 +129,11 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 "description": experiment.description or "",
             }
             try:
-                exp_url = f"{self.api_url}/workspaces/{self._workspace_id}/experiments"
-                print(f"🔗 SDK Request: POST {exp_url}")
-                print(f"📦 Experiment: {exp_payload['name']}")
-                
                 exp_response = requests.post(
-                    exp_url,
+                    f"{self.api_url}/workspaces/{self._workspace_id}/experiments",
                     json=exp_payload,
                     headers=self._headers,
                 )
-                print(f"📊 Response: {exp_response.status_code} - {exp_response.reason}")
                 exp_response.raise_for_status()
                 exp_data = exp_response.json()
                 backend_experiment_id = exp_data["id"]
@@ -165,12 +156,8 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 "trace_id": res.trace_id if res.trace_id else "",
                 "run_number": getattr(res, "run_number", 1),  # Default to 1 for backwards compatibility
             }
-            print(f"🔗 SDK Request: POST {endpoint}")
-            print(f"📦 Result for experiment: {res.experiment_id}")
-            
             try:
                 response = requests.post(endpoint, json=payload, headers=self._headers)
-                print(f"📊 Response: {response.status_code} - {response.reason}")
                 response.raise_for_status()
                 return response.json()["id"]
             except requests.RequestException:
@@ -207,14 +194,10 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
             "description": dataset.description or "",
         }
 
-        print(f"🔗 SDK Request: POST {create_url}")
-        print(f"📦 Payload: {create_payload}")
-        
         try:
             response = requests.post(
                 create_url, json=create_payload, headers=self._headers
             )
-            print(f"📊 Response: {response.status_code} - {response.reason}")
 
             if response.status_code == 409:
                 # Dataset already exists, add data to it
@@ -242,16 +225,11 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
             for row in dataset.data
         ]
 
-        data_url = f"{self.api_url}/v1/datasets/{dataset_name}/data"
-        print(f"🔗 SDK Request: POST {data_url}")
-        print(f"📦 Data rows: {len(data_as_strings)}")
-        
         response = requests.post(
-            data_url,
+            f"{self.api_url}/v1/datasets/{dataset_name}/data",
             json={"data": data_as_strings},
             headers=self._headers,
         )
-        print(f"📊 Response: {response.status_code} - {response.reason}")
         response.raise_for_status()
 
         version_info = response.json()

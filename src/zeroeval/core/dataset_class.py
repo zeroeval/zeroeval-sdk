@@ -163,12 +163,10 @@ class Dataset:
         
         # After pushing, refresh the local data with backend data that includes row_ids
         try:
-            print(f"🔄 Refreshing dataset data from backend to get row_ids")
             updated_dataset = Dataset.pull(self.name)
             self._data = updated_dataset._data
-            print(f"✅ Dataset refreshed - rows now have row_ids: {len([r for r in self._data if 'row_id' in r])} out of {len(self._data)}")
         except Exception as e:
-            print(f"⚠️ Could not refresh dataset data from backend: {e}")
+            print(f"Warning: Could not refresh dataset data from backend: {e}")
         
         return self
     

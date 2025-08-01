@@ -17,6 +17,8 @@ dependencies = [
     "pillow >=10.0.0, <11.0.0",
     "aiohttp >=3.8.0, <4.0.0",
     "numpy>=2.0.2",
+    "langfuse>=3.2.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.34.1",
 ]
 keywords = ["evaluation", "LLM", "observability"]
 
