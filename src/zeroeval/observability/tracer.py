@@ -10,6 +10,12 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
+try:
+    from opentelemetry import trace as otel_trace
+    HAS_OTEL = True
+except ImportError:
+    HAS_OTEL = False
+
 from .span import Span
 from .writer import SpanBackendWriter, SpanWriter
 
@@ -135,14 +141,12 @@ class Tracer:
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
-        from .integrations.livekit.integration import LiveKitIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
             LangChainIntegration,  # Auto-instrument LangChain
             LangGraphIntegration,  # Auto-instrument LangGraph
-            LiveKitIntegration,  # Auto-instrument LiveKit
         ]
         
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
@@ -181,6 +185,15 @@ class Tracer:
     def reinitialize_integrations(self):
         """Reinitialize integrations. Useful after init() sets up logging."""
         logger.info("Reinitializing integrations...")
+        
+        # Properly teardown existing integrations before clearing
+        for integration_name, integration in self._integrations.items():
+            try:
+                logger.debug(f"Tearing down integration: {integration_name}")
+                integration.teardown()
+            except Exception as e:
+                logger.error(f"Failed to teardown integration {integration_name}: {e}")
+        
         self._integrations.clear()
         self._setup_available_integrations()
 
@@ -310,6 +323,33 @@ class Tracer:
         stack = self._active_spans_ctx.get()
         parent_span = stack[-1] if stack else None
         
+        # Check for OpenTelemetry context if no ZeroEval parent
+        otel_trace_id = None
+        otel_parent_id = None
+        if not parent_span and HAS_OTEL:
+            otel_span = otel_trace.get_current_span()
+            if otel_span and otel_span.is_recording():
+                # Extract trace context from OpenTelemetry span
+                span_context = otel_span.get_span_context()
+                if span_context.is_valid:
+                    # Convert OTEL IDs to UUID format
+                    # OTEL trace ID is 128-bit, convert to UUID format
+                    otel_trace_hex = format(span_context.trace_id, '032x')
+                    otel_trace_id = str(uuid.UUID(otel_trace_hex))
+                    
+                    # OTEL span ID is only 64-bit, we'll store as hex in parent_id
+                    # but need to convert to UUID format for database
+                    otel_span_hex = format(span_context.span_id, '016x')
+                    # Create a deterministic UUID from the span ID
+                    # Use the span ID as the first 16 chars, pad with zeros
+                    padded_hex = otel_span_hex + '0' * 16
+                    otel_parent_id = str(uuid.UUID(padded_hex))
+                    
+                    is_new_trace = False  # We're continuing an existing OTEL trace
+                    
+                    # Log for debugging
+                    logger.debug(f"Found OTEL context - trace_id: {otel_trace_id}, parent_id: {otel_parent_id}")
+        
         # If is_new_trace is True, ignore parent span for creating a new trace
         if is_new_trace:
             parent_span = None
@@ -330,7 +370,7 @@ class Tracer:
         span = Span(
             name=name,
             kind=kind,
-            parent_id=parent_span.span_id if parent_span else None,
+            parent_id=parent_span.span_id if parent_span else otel_parent_id,
             attributes=attributes or {},
             session_id=final_session_id,
             session_name=final_session_name,
@@ -341,8 +381,15 @@ class Tracer:
         
         logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
         
-        # If there's a parent span and not creating a new trace, share the same trace ID
-        if parent_span and not is_new_trace:
+        # Set trace ID based on context
+        if otel_trace_id:
+            # Use OTEL trace ID if we found one
+            span.trace_id = otel_trace_id
+            if attributes is None:
+                span.attributes = {}
+            span.attributes["otel.context"] = True
+        elif parent_span and not is_new_trace:
+            # Otherwise inherit from parent span
             span.trace_id = parent_span.trace_id
         
         # ---------------------------------------------------------------

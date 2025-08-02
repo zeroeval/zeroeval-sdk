@@ -34,7 +34,10 @@ def init(
     workspace_name: str = "Personal Workspace",
     debug: bool = False,
     api_url: str = "https://api.zeroeval.com",
-    disabled_integrations: list[str] = None
+    disabled_integrations: list[str] = None,
+    enabled_integrations: list[str] = None,
+    setup_otlp: bool = True,
+    service_name: str = "zeroeval-app"
 ):
     """
     Initialize the ZeroEval SDK.
@@ -47,8 +50,16 @@ def init(
                                 environment variable.
         api_url (str, optional): The URL of the ZeroEval API.
         disabled_integrations (list[str], optional): List of integrations to disable.
-                                Use lowercase names: 'openai', 'langchain', 'langgraph', 'livekit'
+                                Use lowercase names: 'openai', 'langchain', 'langgraph'
                                 Use this when you have compatibility issues with automatic patching.
+        enabled_integrations (list[str], optional): List of integrations to enable.
+                                If provided, ONLY these integrations will be loaded.
+                                Use lowercase names: 'openai', 'langchain', 'langgraph'
+                                This can significantly reduce startup time by avoiding unnecessary imports.
+        setup_otlp (bool, optional): If True, sets up OpenTelemetry tracer provider for OTLP export.
+                                This enables LiveKit and other OTLP-compatible libraries to send
+                                spans to ZeroEval. Defaults to True.
+        service_name (str, optional): Service name for OTLP traces. Defaults to "zeroeval-app".
     """
     # Set workspace name (always use the provided value)
     os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
@@ -59,16 +70,61 @@ def init(
     if api_url is not None:
         os.environ["ZEROEVAL_API_URL"] = api_url    
     
-    # Set disabled integrations in environment variable for tracer to pick up
-    if disabled_integrations:
-        # Map user-friendly names to actual integration class names
-        integration_mapping = {
-            "openai": "OpenAIIntegration",
-            "langchain": "LangChainIntegration", 
-            "langgraph": "LangGraphIntegration",
-            "livekit": "LiveKitIntegration",
-        }
+    # Set up OTLP provider if requested (similar to how Langfuse does it)
+    if setup_otlp and api_key:
+        try:
+            from opentelemetry import trace as otel_trace_api
+            
+            from ..providers import ZeroEvalOTLPProvider
+            
+            # Check if there's already a non-proxy tracer provider
+            current_provider = otel_trace_api.get_tracer_provider()
+            
+            if isinstance(current_provider, otel_trace_api.ProxyTracerProvider):
+                # Only set up if we have the default/proxy provider
+                provider = ZeroEvalOTLPProvider(
+                    api_key=api_key,
+                    api_url=api_url or os.getenv("ZEROEVAL_API_URL", "https://api.zeroeval.com"),
+                    service_name=service_name
+                )
+                otel_trace_api.set_tracer_provider(provider)
+                
+                if debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
+                    logger = logging.getLogger("zeroeval")
+                    logger.debug(f"OTLP provider configured for {api_url or 'default URL'}")
+            elif debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
+                logger = logging.getLogger("zeroeval")
+                logger.debug("OTLP provider already configured, skipping setup")
+                
+        except ImportError:
+            if debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
+                logger = logging.getLogger("zeroeval")
+                logger.warning("OpenTelemetry not installed, OTLP setup skipped")
+    
+    # Map user-friendly names to actual integration class names
+    integration_mapping = {
+        "openai": "OpenAIIntegration",
+        "langchain": "LangChainIntegration", 
+        "langgraph": "LangGraphIntegration",
+    }
+    
+    # Handle enabled_integrations - if specified, disable all others
+    if enabled_integrations:
+        # Get all integration names
+        all_integrations = set(integration_mapping.values())
         
+        # Convert enabled list to actual class names
+        enabled_actual = set()
+        for name in enabled_integrations:
+            actual_name = integration_mapping.get(name.lower(), name)
+            enabled_actual.add(actual_name)
+        
+        # Disable all integrations NOT in the enabled list
+        disabled_actual = all_integrations - enabled_actual
+        os.environ["ZEROEVAL_DISABLED_INTEGRATIONS"] = ",".join(disabled_actual)
+        
+    # Set disabled integrations in environment variable for tracer to pick up
+    elif disabled_integrations:
         # Convert user-friendly names to actual class names
         actual_names = []
         for name in disabled_integrations:
@@ -93,17 +149,19 @@ def init(
         logger.setLevel(logging.DEBUG)
         
         # Check which integrations are available
-        from ..observability.integrations.langchain.integration import LangChainIntegration
-        from ..observability.integrations.langgraph.integration import LangGraphIntegration
+        from ..observability.integrations.langchain.integration import (
+            LangChainIntegration,
+        )
+        from ..observability.integrations.langgraph.integration import (
+            LangGraphIntegration,
+        )
         from ..observability.integrations.openai.integration import OpenAIIntegration
-        from ..observability.integrations.livekit.integration import LiveKitIntegration
         
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
             LangChainIntegration,
             LangGraphIntegration,
-            LiveKitIntegration,
         ]
         
         # Get the disabled integrations mapping
@@ -111,7 +169,6 @@ def init(
             "openai": "OpenAIIntegration",
             "langchain": "LangChainIntegration", 
             "langgraph": "LangGraphIntegration",
-            "livekit": "LiveKitIntegration",
         }
         
         # Check which integrations are available and not disabled
@@ -136,6 +193,7 @@ def init(
         logger.debug(f"  API Key: {masked_api_key}")
         logger.debug(f"  API URL: {api_url}")
         logger.debug(f"  Debug Mode: {is_debug_mode}")
+        logger.debug(f"  Enabled Integrations: {enabled_integrations or 'All available'}")
         logger.debug(f"  Disabled Integrations: {disabled_integrations or 'None'}")
         logger.debug(f"  Active Integrations: {active_integrations or 'None'}")
         
