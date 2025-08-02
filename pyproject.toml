@@ -13,12 +13,13 @@ dependencies = [
     "opentelemetry-api >=1.30.0, <2.0.0",
     "opentelemetry-sdk >=1.30.0, <2.0.0",
     "requests >=2.32.3, <3.0.0",
-    "openai >=1.82.0, <2.0.0",
+    "openai==1.98.0",
     "pillow >=10.0.0, <11.0.0",
     "aiohttp >=3.8.0, <4.0.0",
     "numpy>=2.0.2",
     "langfuse>=3.2.1",
     "opentelemetry-exporter-otlp-proto-http>=1.34.1",
+    "dotenv>=0.9.9",
 ]
 keywords = ["evaluation", "LLM", "observability"]
 

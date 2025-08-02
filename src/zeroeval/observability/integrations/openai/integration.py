@@ -2,6 +2,7 @@ import json
 import logging
 from functools import wraps
 from typing import Any, Callable
+import time
 
 from ..base import Integration
 
@@ -346,9 +347,9 @@ class _StreamingResponseProxy:
             if delta and getattr(delta, "content", None):
                 if self._first_token_time is None:
                     self._first_token_time = time.time()
-                    self.span.attributes["latency"] = round(
-                        self._first_token_time - self.start_time, 4
-                    )
+                    # Calculate TTFT in milliseconds
+                    ttft_seconds = self._first_token_time - self.start_time
+                    self.span.attributes["ttft_ms"] = round(ttft_seconds * 1000, 2)  # Time to first token in ms
                 self._full_response += delta.content
             yield chunk
         
@@ -386,7 +387,9 @@ class _StreamingResponseProxy:
         if delta and getattr(delta, "content", None):
             if self._first_token_time is None:
                 self._first_token_time = time.time()
-                self.span.attributes["latency"] = round(self._first_token_time - self.start_time, 4)
+                # Calculate TTFT in milliseconds
+                ttft_seconds = self._first_token_time - self.start_time
+                self.span.attributes["latency"] = round(ttft_seconds * 1000, 2)  # Convert to ms
             self._full_response += delta.content
 
     # ------------------------------------------------------------------
