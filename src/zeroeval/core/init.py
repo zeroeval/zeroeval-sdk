@@ -80,6 +80,11 @@ def init(
             # Check if there's already a non-proxy tracer provider
             current_provider = otel_trace_api.get_tracer_provider()
             
+            if debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
+                logger = logging.getLogger("zeroeval")
+                logger.debug(f"[OTLP SETUP] Current provider type: {type(current_provider).__name__}")
+                logger.debug(f"[OTLP SETUP] Is ProxyTracerProvider: {isinstance(current_provider, otel_trace_api.ProxyTracerProvider)}")
+            
             if isinstance(current_provider, otel_trace_api.ProxyTracerProvider):
                 # Only set up if we have the default/proxy provider
                 provider = ZeroEvalOTLPProvider(
@@ -91,10 +96,14 @@ def init(
                 
                 if debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
                     logger = logging.getLogger("zeroeval")
-                    logger.debug(f"OTLP provider configured for {api_url or 'default URL'}")
+                    logger.debug(f"[OTLP SETUP] ✓ ZeroEvalOTLPProvider configured")
+                    logger.debug(f"[OTLP SETUP]   - API URL: {api_url or os.getenv('ZEROEVAL_API_URL', 'https://api.zeroeval.com')}")
+                    logger.debug(f"[OTLP SETUP]   - Service name: {service_name}")
+                    logger.debug(f"[OTLP SETUP]   - Provider ID: {id(provider)}")
             elif debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
                 logger = logging.getLogger("zeroeval")
-                logger.debug("OTLP provider already configured, skipping setup")
+                logger.debug(f"[OTLP SETUP] ⚠️  OTLP provider already configured, skipping setup")
+                logger.debug(f"[OTLP SETUP]   - Existing provider: {type(current_provider).__name__}")
                 
         except ImportError:
             if debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":

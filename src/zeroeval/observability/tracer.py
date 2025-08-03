@@ -108,6 +108,9 @@ class Tracer:
         self._trace_level_tags: dict[str, dict[str, str]] = {}
         self._session_level_tags: dict[str, dict[str, str]] = {}
         
+        # Map trace ID to session info for OTEL context propagation
+        self._trace_to_session: dict[str, dict[str, str]] = {}
+        
         logger.info("Initializing tracer for streaming...")
         logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}")
 
@@ -326,6 +329,9 @@ class Tracer:
         # Check for OpenTelemetry context if no ZeroEval parent
         otel_trace_id = None
         otel_parent_id = None
+        otel_session_id = None
+        otel_session_name = None
+        
         if not parent_span and HAS_OTEL:
             otel_span = otel_trace.get_current_span()
             if otel_span and otel_span.is_recording():
@@ -347,8 +353,52 @@ class Tracer:
                     
                     is_new_trace = False  # We're continuing an existing OTEL trace
                     
+                    # Extract session information from OTEL span attributes or baggage
+                    if hasattr(otel_span, 'attributes') and otel_span.attributes:
+                        # Check for session ID in span attributes
+                        # Common attribute names for session ID
+                        session_attrs = [
+                            'zeroeval.session.id', 'session.id', 'session_id',
+                            'langfuse.sessionId', 'trace.session_id'
+                        ]
+                        for attr in session_attrs:
+                            if attr in otel_span.attributes:
+                                otel_session_id = str(otel_span.attributes[attr])
+                                # Found session ID in OTEL attributes
+                                break
+                        
+                        # Check for session name
+                        name_attrs = ['zeroeval.session.name', 'session.name', 'session_name']
+                        for attr in name_attrs:
+                            if attr in otel_span.attributes:
+                                otel_session_name = str(otel_span.attributes[attr])
+                                # Found session name in OTEL attributes
+                                break
+                    
+                    # If no session ID found, try to get it from baggage
+                    if not otel_session_id and HAS_OTEL:
+                        try:
+                            from opentelemetry import baggage
+                            ctx = otel_trace.get_current()
+                            session_from_baggage = baggage.get_baggage('session_id', ctx)
+                            if session_from_baggage:
+                                otel_session_id = str(session_from_baggage)
+                                # Found session ID in baggage
+                        except Exception as e:
+                            pass  # Could not extract baggage
+                    
+                    # If still no session ID, check if we have a session for this trace ID
+                    if not otel_session_id and otel_trace_id:
+                        # Check if we've seen this trace before and have a session for it
+                        existing_session = self._trace_to_session.get(otel_trace_id)
+                        if existing_session:
+                            otel_session_id = existing_session['id']
+                            otel_session_name = existing_session.get('name')
+                            # Found existing session for this trace
+                    
                     # Log for debugging
-                    logger.debug(f"Found OTEL context - trace_id: {otel_trace_id}, parent_id: {otel_parent_id}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Found OTEL context - trace_id: {otel_trace_id}, parent_id: {otel_parent_id}")
         
         # If is_new_trace is True, ignore parent span for creating a new trace
         if is_new_trace:
@@ -356,14 +406,23 @@ class Tracer:
         
         # --- decide final session id and name -------------------------------------
         if session_id:
+            # Explicitly provided session ID takes precedence
             final_session_id = session_id
             final_session_name = session_name  # Use provided name or None
         elif parent_span:
+            # Inherit from parent span
             final_session_id = parent_span.session_id
             final_session_name = parent_span.session_name  # Inherit parent's name
+        elif otel_session_id:
+            # Use session ID from OTEL context if available
+            final_session_id = otel_session_id
+            final_session_name = otel_session_name or session_name  # Use OTEL name or provided name
+            # Using session from OTEL context
         else:
-            final_session_id = str(uuid.uuid4())    # new session for root
+            # Create new session for root span without any context
+            final_session_id = str(uuid.uuid4())
             final_session_name = session_name  # Use provided name or None
+            # Creating new session (no context found)
         # -----------------------------------------------------------------
         
         # Create new span
@@ -418,6 +477,14 @@ class Tracer:
         if trace_id not in self._traces:
             self._traces[trace_id] = Trace(trace_id=trace_id)
         self._traces[trace_id].ref_count += 1
+        
+        # Store trace-to-session mapping for OTEL context propagation
+        if trace_id and span.session_id:
+            self._trace_to_session[trace_id] = {
+                'id': span.session_id,
+                'name': span.session_name
+            }
+            # Mapped trace to session for OTEL context propagation
         
         return span
     
