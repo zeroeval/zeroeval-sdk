@@ -3,8 +3,6 @@ from .writer import ExperimentResultBackendWriter
 from .evaluator_class import Evaluator, Evaluation as EvaluationResult
 from .evaluation import Evaluation, EvaluationMode, get_evaluation
 from .metrics import ColumnMetric, RunMetric, get_column_metric, get_run_metric
-import os
-import numpy as np
 import requests
 
 

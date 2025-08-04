@@ -18,10 +18,23 @@ Issues? Email us at [founders@zeroeval.com](mailto:founders@zeroeval.com)
 ## Installation
 
 ```bash
-pip install zeroeval # poetry add zeroeval
+pip install zeroeval  # Core SDK only
 ```
 
-The SDK automatically detects and instruments OpenAI, LangChain, and LangGraph if you have them installed. No additional configuration needed!
+### Optional Integrations
+
+Install with specific integrations:
+
+```bash
+pip install zeroeval[openai]      # For OpenAI integration
+pip install zeroeval[gemini]      # For Google Gemini integration
+pip install zeroeval[langchain]   # For LangChain integration
+pip install zeroeval[langgraph]   # For LangGraph integration
+pip install zeroeval[langfuse]    # For Langfuse compatibility
+pip install zeroeval[all]         # Install all integrations
+```
+
+The SDK automatically detects and instruments installed integrations. No additional configuration needed!
 
 ---
 
