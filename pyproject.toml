@@ -1,6 +1,6 @@
 [project]
 name = "zeroeval"
-version = "0.6.9"
+version = "0.6.95"
 description = "ZeroEval SDK"
 readme = "README.md"
 authors = [
