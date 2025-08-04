@@ -141,6 +141,7 @@ class Tracer:
     def _setup_available_integrations(self) -> None:
         """Automatically set up all available integrations."""
         # Import here to avoid circular imports
+        from .integrations.gemini.integration import GeminiIntegration
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
@@ -148,6 +149,7 @@ class Tracer:
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
+            GeminiIntegration,     # Auto-instrument Gemini
             LangChainIntegration,  # Auto-instrument LangChain
             LangGraphIntegration,  # Auto-instrument LangGraph
         ]

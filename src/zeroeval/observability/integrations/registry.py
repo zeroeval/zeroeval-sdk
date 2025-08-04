@@ -31,6 +31,11 @@ INTEGRATION_REGISTRY: Dict[str, tuple[str, str, str]] = {
         "LangGraphIntegration",
         "langgraph"
     ),
+    "GeminiIntegration": (
+        "zeroeval.observability.integrations.gemini.integration",
+        "GeminiIntegration",
+        "google.genai"
+    ),
 
 }
 

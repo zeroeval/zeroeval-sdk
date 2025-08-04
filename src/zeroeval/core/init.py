@@ -50,11 +50,11 @@ def init(
                                 environment variable.
         api_url (str, optional): The URL of the ZeroEval API.
         disabled_integrations (list[str], optional): List of integrations to disable.
-                                Use lowercase names: 'openai', 'langchain', 'langgraph'
+                                Use lowercase names: 'openai', 'gemini', 'langchain', 'langgraph'
                                 Use this when you have compatibility issues with automatic patching.
         enabled_integrations (list[str], optional): List of integrations to enable.
                                 If provided, ONLY these integrations will be loaded.
-                                Use lowercase names: 'openai', 'langchain', 'langgraph'
+                                Use lowercase names: 'openai', 'gemini', 'langchain', 'langgraph'
                                 This can significantly reduce startup time by avoiding unnecessary imports.
         setup_otlp (bool, optional): If True, sets up OpenTelemetry tracer provider for OTLP export.
                                 This enables LiveKit and other OTLP-compatible libraries to send
@@ -113,6 +113,7 @@ def init(
     # Map user-friendly names to actual integration class names
     integration_mapping = {
         "openai": "OpenAIIntegration",
+        "gemini": "GeminiIntegration",
         "langchain": "LangChainIntegration", 
         "langgraph": "LangGraphIntegration",
     }
@@ -158,6 +159,7 @@ def init(
         logger.setLevel(logging.DEBUG)
         
         # Check which integrations are available
+        from ..observability.integrations.gemini.integration import GeminiIntegration
         from ..observability.integrations.langchain.integration import (
             LangChainIntegration,
         )
@@ -169,6 +171,7 @@ def init(
         # List of all integration classes
         integration_classes = [
             OpenAIIntegration,
+            GeminiIntegration,
             LangChainIntegration,
             LangGraphIntegration,
         ]
@@ -176,6 +179,7 @@ def init(
         # Get the disabled integrations mapping
         integration_mapping = {
             "openai": "OpenAIIntegration",
+            "gemini": "GeminiIntegration",
             "langchain": "LangChainIntegration", 
             "langgraph": "LangGraphIntegration",
         }
