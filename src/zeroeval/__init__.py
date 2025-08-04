@@ -9,6 +9,7 @@ Main API:
     ze.get_current_span() - Get the current active span
     ze.get_current_trace() - Get the current trace ID
     ze.get_current_session() - Get the current session ID
+    ze.set_tag() - Attach tags to a span, trace, or session
 """
 
 # Core functionality imports
@@ -41,6 +42,15 @@ def get_current_session():
     """Get the current session ID."""
     return tracer.get_current_session()
 
+def set_tag(target, tags):
+    """Attach tags to a Span, trace or session.
+    
+    Args:
+        target: Can be a Span instance, trace_id string, or session_id string
+        tags: Dictionary of tags to apply
+    """
+    return tracer.set_tag(target, tags)
+
 # Use the imported span class directly
 span = _SpanClass
 
@@ -64,6 +74,7 @@ __all__ = [
     "get_current_span",
     "get_current_trace",
     "get_current_session",
+    "set_tag",
 ]
 
 # Version info
