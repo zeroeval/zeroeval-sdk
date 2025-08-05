@@ -47,14 +47,25 @@ class OpenAIIntegration(Integration):
             # Call original init
             result = original(client_instance, *args, **kwargs)
             
-            # Patch chat.completions.create for this specific instance
-            self._patch_method(
-                client_instance.chat.completions,
-                "create", 
-                self._wrap_chat_completion_sync(client_instance.chat.completions)
-            )
+            # Check if this is an async client
+            # OpenAI uses both AsyncOpenAI and AsyncClient names
+            is_async_client = type(client_instance).__name__ in ("AsyncOpenAI", "AsyncClient")
             
-            # The create method handles both sync and async internally
+            # Patch chat.completions.create for this specific instance
+            if is_async_client:
+                # For async client, use async wrapper
+                self._patch_method(
+                    client_instance.chat.completions,
+                    "create", 
+                    self._wrap_chat_completion_async
+                )
+            else:
+                # For sync client, use sync wrapper
+                self._patch_method(
+                    client_instance.chat.completions,
+                    "create", 
+                    self._wrap_chat_completion_sync(client_instance.chat.completions)
+                )
             
             return result
         return wrapper
@@ -140,12 +151,17 @@ class OpenAIIntegration(Integration):
             tracer = self.tracer
 
             try:
+                # Always await the response - for streaming it returns an async iterator
                 response = await original(*args, **kwargs)
+                
                 if is_streaming:
                     logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
-                    return _StreamingResponseProxy(
+                    proxy = _StreamingResponseProxy(
                         response, span, tracer, self, kwargs, start_time, is_async=True
                     )
+                    # For async streaming, the proxy itself should be returned
+                    # since it implements __aenter__, __aexit__, and __aiter__
+                    return proxy
 
                 # ---------- non-streaming ----------
                 elapsed = time.time() - start_time
@@ -397,7 +413,25 @@ class _StreamingResponseProxy:
         self._finished = False
         self._accumulated_content = ""
         self._tool_calls_by_index = {}
+        
+    def __getattr__(self, name):
+        """Delegate attribute access to the underlying response."""
+        return getattr(self._response, name)
 
+
+    
+    async def __aenter__(self):
+        """Support async context manager protocol - delegate to underlying response."""
+        if hasattr(self._response, '__aenter__'):
+            await self._response.__aenter__()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Support async context manager protocol - delegate to underlying response."""
+        if hasattr(self._response, '__aexit__'):
+            return await self._response.__aexit__(exc_type, exc_val, exc_tb)
+        return False
+    
     async def __aiter__(self):
         """Async iteration for streaming responses."""
         accumulated_content = ""
@@ -462,6 +496,18 @@ class _StreamingResponseProxy:
         
         self._finish_span(accumulated_content)
 
+    def __enter__(self):
+        """Support sync context manager protocol - delegate to underlying response."""
+        if hasattr(self._response, '__enter__'):
+            self._response.__enter__()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Support sync context manager protocol - delegate to underlying response."""
+        if hasattr(self._response, '__exit__'):
+            return self._response.__exit__(exc_type, exc_val, exc_tb)
+        return False
+    
     def __iter__(self):
         """Sync iteration for streaming responses."""
         accumulated_content = ""
