@@ -48,13 +48,30 @@ class OpenAIIntegration(Integration):
             result = original(client_instance, *args, **kwargs)
             
             # Patch chat.completions.create for this specific instance
-            self._patch_method(
-                client_instance.chat.completions,
-                "create", 
-                self._wrap_chat_completion_sync(client_instance.chat.completions)
-            )
+            # Choose async vs sync wrapper based on the client type
+            try:
+                import openai as _openai  # local import to avoid hard dependency at module load
+                is_async_client = isinstance(client_instance, _openai.AsyncOpenAI)
+            except Exception:
+                # Fallback: detect by attribute commonly present on async client
+                is_async_client = hasattr(client_instance, "_client") and hasattr(getattr(client_instance, "_client"), "_asynchronous")
+
+            if is_async_client:
+                # Use async-aware wrapper factory (returns an async function)
+                self._patch_method(
+                    client_instance.chat.completions,
+                    "create",
+                    self._wrap_chat_completion_async()
+                )
+            else:
+                # Use sync wrapper factory
+                self._patch_method(
+                    client_instance.chat.completions,
+                    "create", 
+                    self._wrap_chat_completion_sync(client_instance.chat.completions)
+                )
             
-            # The create method handles both sync and async internally
+            # The create method is now correctly wrapped for the client's sync/async nature
             
             return result
         return wrapper
@@ -107,137 +124,140 @@ class OpenAIIntegration(Integration):
     # ------------------------------------------------------------------+
     #  Async wrapper – client = openai.AsyncOpenAI                      |
     # ------------------------------------------------------------------+
-    def _wrap_chat_completion_async(self, original: Callable) -> Callable:  # noqa: C901 (length)
+    def _wrap_chat_completion_async(self) -> Callable:  # noqa: C901 (length)
         import json
         import time
 
-        @wraps(original)
-        async def wrapper(*args: Any, **kwargs: Any):
-            start_time = time.time()
-            is_streaming = kwargs.get("stream", False)
+        def wrapper(original: Callable) -> Callable:
+            @wraps(original)
+            async def inner(*args: Any, **kwargs: Any):
+                start_time = time.time()
+                is_streaming = kwargs.get("stream", False)
 
-            if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
-                kwargs["stream_options"] = {"include_usage": True}
+                if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
+                    kwargs["stream_options"] = {"include_usage": True}
 
-            # Try to get base_url from client instance
-            base_url = None
-            if args and hasattr(args[0], 'base_url'):
-                base_url = str(args[0].base_url)
+                # Try to get base_url from client instance
+                base_url = None
+                if args and hasattr(args[0], 'base_url'):
+                    base_url = str(args[0].base_url)
 
-            span = self.tracer.start_span(
-                name="openai.chat.completions.create",
-                kind="llm",
-                attributes={
-                    "service.name": "openai",
-                    "provider": "openai",
-                    "model": kwargs.get("model"),
-                    "messages": self._serialize_messages(kwargs.get("messages")),
-                    "streaming": is_streaming,
-                    "base_url": base_url,
-                },
-                tags={"integration": "openai"},
-            )
-            tracer = self.tracer
-
-            try:
-                response = await original(*args, **kwargs)
-                if is_streaming:
-                    logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
-                    return _StreamingResponseProxy(
-                        response, span, tracer, self, kwargs, start_time, is_async=True
-                    )
-
-                # ---------- non-streaming ----------
-                elapsed = time.time() - start_time
-                usage = getattr(response, "usage", None)
-                if usage:
-                    span.attributes.update(
-                        {"inputTokens": usage.prompt_tokens, "outputTokens": usage.completion_tokens}
-                    )
-                
-                # Capture additional OpenAI response data
-                if hasattr(response, 'id'):
-                    span.attributes["openai_id"] = response.id
-                if hasattr(response, 'system_fingerprint'):
-                    span.attributes["system_fingerprint"] = response.system_fingerprint
-                if hasattr(response, 'choices') and response.choices:
-                    # Convert choices to dict for JSON serialization
-                    choices_data = []
-                    for choice in response.choices:
-                        choice_dict = {}
-                        if hasattr(choice, 'message'):
-                            message_dict = {
-                                'role': getattr(choice.message, 'role', None),
-                                'content': getattr(choice.message, 'content', None)
-                            }
-                            
-                            # Capture tool calls if present
-                            tool_calls = self._extract_tool_calls(choice.message)
-                            if tool_calls:
-                                message_dict['tool_calls'] = tool_calls
-                                
-                                # Create child spans for each tool call
-                                for tool_call in tool_calls:
-                                    if tool_call.get('function'):
-                                        tool_span = tracer.start_span(
-                                            name=f"tool.{tool_call['function']['name']}",
-                                            kind="tool",
-                                            attributes={
-                                                "service.name": "openai",
-                                                "type": "tool",
-                                                "tool_name": tool_call['function']['name'],
-                                                "tool_call_id": tool_call.get('id'),
-                                                "arguments": tool_call['function'].get('arguments')
-                                            },
-                                            tags={"integration": "openai", "tool": tool_call['function']['name']}
-                                        )
-                                        tool_span.set_io(
-                                            input_data=tool_call['function'].get('arguments'),
-                                            output_data=None  # Will be filled by the actual tool execution
-                                        )
-                                        tracer.end_span(tool_span)
-                            
-                            choice_dict['message'] = message_dict
-                        if hasattr(choice, 'finish_reason'):
-                            choice_dict['finish_reason'] = choice.finish_reason
-                        if hasattr(choice, 'index'):
-                            choice_dict['index'] = choice.index
-                        choices_data.append(choice_dict)
-                    span.attributes["choices"] = choices_data
-                if usage:
-                    # Store full usage object
-                    usage_dict = {
-                        'prompt_tokens': usage.prompt_tokens,
-                        'completion_tokens': usage.completion_tokens,
-                        'total_tokens': getattr(usage, 'total_tokens', usage.prompt_tokens + usage.completion_tokens)
-                    }
-                    span.attributes["usage"] = usage_dict
-                
-                message = response.choices[0].message if response.choices else None
-                output = message.content if message else None
-                
-                # If no content but has tool calls, format tool calls as output
-                if not output and hasattr(message, 'tool_calls') and message.tool_calls:
-                    tool_calls_output = []
-                    for tc in message.tool_calls:
-                        tool_calls_output.append({
-                            'tool': tc.function.name if hasattr(tc, 'function') else 'unknown',
-                            'arguments': tc.function.arguments if hasattr(tc, 'function') else '{}'
-                        })
-                    output = json.dumps(tool_calls_output, indent=2)
-                
-                throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
-                span.attributes["throughput"] = round(throughput, 2)
-                span.set_io(
-                    input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
-                    output_data=output,
+                span = self.tracer.start_span(
+                    name="openai.chat.completions.create",
+                    kind="llm",
+                    attributes={
+                        "service.name": "openai",
+                        "provider": "openai",
+                        "model": kwargs.get("model"),
+                        "messages": self._serialize_messages(kwargs.get("messages")),
+                        "streaming": is_streaming,
+                        "base_url": base_url,
+                    },
+                    tags={"integration": "openai"},
                 )
-                tracer.end_span(span)
-                return response
-            except Exception as e:
-                span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
-                tracer.end_span(span)
-                raise
+                tracer = self.tracer
+
+                try:
+                    response = await original(*args, **kwargs)
+                    if is_streaming:
+                        logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
+                        return _StreamingResponseProxy(
+                            response, span, tracer, self, kwargs, start_time, is_async=True
+                        )
+
+                    # ---------- non-streaming ----------
+                    elapsed = time.time() - start_time
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        span.attributes.update(
+                            {"inputTokens": usage.prompt_tokens, "outputTokens": usage.completion_tokens}
+                        )
+                    
+                    # Capture additional OpenAI response data
+                    if hasattr(response, 'id'):
+                        span.attributes["openai_id"] = response.id
+                    if hasattr(response, 'system_fingerprint'):
+                        span.attributes["system_fingerprint"] = response.system_fingerprint
+                    if hasattr(response, 'choices') and response.choices:
+                        # Convert choices to dict for JSON serialization
+                        choices_data = []
+                        for choice in response.choices:
+                            choice_dict = {}
+                            if hasattr(choice, 'message'):
+                                message_dict = {
+                                    'role': getattr(choice.message, 'role', None),
+                                    'content': getattr(choice.message, 'content', None)
+                                }
+                                
+                                # Capture tool calls if present
+                                tool_calls = self._extract_tool_calls(choice.message)
+                                if tool_calls:
+                                    message_dict['tool_calls'] = tool_calls
+                                    
+                                    # Create child spans for each tool call
+                                    for tool_call in tool_calls:
+                                        if tool_call.get('function'):
+                                            tool_span = tracer.start_span(
+                                                name=f"tool.{tool_call['function']['name']}",
+                                                kind="tool",
+                                                attributes={
+                                                    "service.name": "openai",
+                                                    "type": "tool",
+                                                    "tool_name": tool_call['function']['name'],
+                                                    "tool_call_id": tool_call.get('id'),
+                                                    "arguments": tool_call['function'].get('arguments')
+                                                },
+                                                tags={"integration": "openai", "tool": tool_call['function']['name']}
+                                            )
+                                            tool_span.set_io(
+                                                input_data=tool_call['function'].get('arguments'),
+                                                output_data=None  # Will be filled by the actual tool execution
+                                            )
+                                            tracer.end_span(tool_span)
+                                
+                                choice_dict['message'] = message_dict
+                            if hasattr(choice, 'finish_reason'):
+                                choice_dict['finish_reason'] = choice.finish_reason
+                            if hasattr(choice, 'index'):
+                                choice_dict['index'] = choice.index
+                            choices_data.append(choice_dict)
+                        span.attributes["choices"] = choices_data
+                    if usage:
+                        # Store full usage object
+                        usage_dict = {
+                            'prompt_tokens': usage.prompt_tokens,
+                            'completion_tokens': usage.completion_tokens,
+                            'total_tokens': getattr(usage, 'total_tokens', usage.prompt_tokens + usage.completion_tokens)
+                        }
+                        span.attributes["usage"] = usage_dict
+                    
+                    message = response.choices[0].message if response.choices else None
+                    output = message.content if message else None
+                    
+                    # If no content but has tool calls, format tool calls as output
+                    if not output and hasattr(message, 'tool_calls') and message.tool_calls:
+                        tool_calls_output = []
+                        for tc in message.tool_calls:
+                            tool_calls_output.append({
+                                'tool': tc.function.name if hasattr(tc, 'function') else 'unknown',
+                                'arguments': tc.function.arguments if hasattr(tc, 'function') else '{}'
+                            })
+                        output = json.dumps(tool_calls_output, indent=2)
+                    
+                    throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
+                    span.attributes["throughput"] = round(throughput, 2)
+                    span.set_io(
+                        input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
+                        output_data=output,
+                    )
+                    tracer.end_span(span)
+                    return response
+                except Exception as e:
+                    span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                    tracer.end_span(span)
+                    raise
+
+            return inner
 
         return wrapper
 
@@ -400,17 +420,17 @@ class _StreamingResponseProxy:
 
     async def __aiter__(self):
         """Async iteration for streaming responses."""
-        accumulated_content = ""
         tool_calls_by_index = self._tool_calls_by_index
-        
-        async for chunk in self._response:
+        stream_obj = getattr(self, "_entered_response", None) or self._response
+
+        async for chunk in stream_obj:
             self._chunks.append(chunk)
             
             # Accumulate content
             if chunk.choices:
                 for choice in chunk.choices:
                     if hasattr(choice, 'delta') and hasattr(choice.delta, 'content') and choice.delta.content:
-                        accumulated_content += choice.delta.content
+                        self._accumulated_content += choice.delta.content
                     
                     # Handle streaming tool calls
                     if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
@@ -460,21 +480,21 @@ class _StreamingResponseProxy:
                     )
                     self._tracer.end_span(tool_span)
         
-        self._finish_span(accumulated_content)
+        self._finish_span(self._accumulated_content)
 
     def __iter__(self):
         """Sync iteration for streaming responses."""
-        accumulated_content = ""
         tool_calls_by_index = self._tool_calls_by_index
-        
-        for chunk in self._response:
+        stream_obj = getattr(self, "_entered_response", None) or self._response
+
+        for chunk in stream_obj:
             self._chunks.append(chunk)
             
             # Accumulate content
             if chunk.choices:
                 for choice in chunk.choices:
                     if hasattr(choice, 'delta') and hasattr(choice.delta, 'content') and choice.delta.content:
-                        accumulated_content += choice.delta.content
+                        self._accumulated_content += choice.delta.content
                     
                     # Handle streaming tool calls
                     if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
@@ -524,7 +544,39 @@ class _StreamingResponseProxy:
                     )
                     self._tracer.end_span(tool_span)
         
-        self._finish_span(accumulated_content)
+        self._finish_span(self._accumulated_content)
+
+    async def __aenter__(self):
+        if hasattr(self._response, "__aenter__"):
+            self._entered_response = await self._response.__aenter__()
+        else:
+            self._entered_response = None
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        try:
+            if hasattr(self._response, "__aexit__"):
+                await self._response.__aexit__(exc_type, exc, tb)
+        finally:
+            if not self._finished:
+                self._finish_span(self._accumulated_content)
+        return False
+
+    def __enter__(self):
+        if hasattr(self._response, "__enter__"):
+            self._entered_response = self._response.__enter__()
+        else:
+            self._entered_response = None
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if hasattr(self._response, "__exit__"):
+                self._response.__exit__(exc_type, exc, tb)
+        finally:
+            if not self._finished:
+                self._finish_span(self._accumulated_content)
+        return False
     
     def _finish_span(self, accumulated_content: str):
         """Finish the span with accumulated data."""
