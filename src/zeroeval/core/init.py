@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+from typing import Optional
 
 
 class ColoredFormatter(logging.Formatter):
@@ -38,7 +39,8 @@ def init(
     disabled_integrations: list[str] = None,
     enabled_integrations: list[str] = None,
     setup_otlp: bool = True,
-    service_name: str = "zeroeval-app"
+    service_name: str = "zeroeval-app",
+    tags: Optional[dict[str, str]] = None
 ):
     """
     Initialize the ZeroEval SDK.
@@ -61,6 +63,7 @@ def init(
                                 This enables LiveKit and other OTLP-compatible libraries to send
                                 spans to ZeroEval. Defaults to True.
         service_name (str, optional): Service name for OTLP traces. Defaults to "zeroeval-app".
+        tags (dict[str, str], optional): Global tags to apply to all traces, sessions, and spans.
     """
     # Set workspace name (always use the provided value)
     os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
@@ -221,8 +224,10 @@ def init(
         
         logger.info("SDK initialized in debug mode.")
         
-        # Reinitialize integrations now that debug logging is enabled
+        # Apply global tags if provided, then reinitialize integrations
         from ..observability.tracer import tracer
+        if tags:
+            tracer.set_global_tags(tags)
         tracer.reinitialize_integrations()
     else:
         # If not in debug mode, ensure no logs are shown by default
@@ -230,8 +235,10 @@ def init(
             logger.addHandler(logging.NullHandler())
         logger.setLevel(logging.WARNING)
         
-        # Still need to reinitialize integrations even in non-debug mode
+        # Apply global tags if provided, then reinitialize integrations
         from ..observability.tracer import tracer
+        if tags:
+            tracer.set_global_tags(tags)
         tracer.reinitialize_integrations()
 
 def _validate_init():
