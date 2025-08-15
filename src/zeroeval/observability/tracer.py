@@ -421,10 +421,13 @@ class Tracer:
             final_session_name = otel_session_name or session_name  # Use OTEL name or provided name
             # Using session from OTEL context
         else:
-            # Create new session for root span without any context
-            final_session_id = str(uuid.uuid4())
-            final_session_name = session_name  # Use provided name or None
-            # Creating new session (no context found)
+            # Create or reuse process-level session for root span without any context
+            env_sid = os.environ.get("ZEROEVAL_SESSION_ID")
+            if not env_sid:
+                env_sid = str(uuid.uuid4())
+                os.environ["ZEROEVAL_SESSION_ID"] = env_sid
+            final_session_id = env_sid
+            final_session_name = session_name or os.environ.get("ZEROEVAL_SESSION_NAME")
         # -----------------------------------------------------------------
         
         # Create new span

@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 
 
 class ColoredFormatter(logging.Formatter):
@@ -109,6 +110,14 @@ def init(
             if debug or os.environ.get("ZEROEVAL_DEBUG", "false").lower() == "true":
                 logger = logging.getLogger("zeroeval")
                 logger.warning("OpenTelemetry not installed, OTLP setup skipped")
+
+    # Ensure a process-level session ID exists for this execution so both SDK and OTEL spans link to it
+    try:
+        if not os.environ.get("ZEROEVAL_SESSION_ID"):
+            os.environ["ZEROEVAL_SESSION_ID"] = str(uuid.uuid4())
+        # Respect an existing ZEROEVAL_SESSION_NAME if provided by user; do not auto-generate a name here
+    except Exception:
+        pass
     
     # Map user-friendly names to actual integration class names
     integration_mapping = {
