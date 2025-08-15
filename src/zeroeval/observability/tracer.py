@@ -104,6 +104,9 @@ class Tracer:
         self._shutdown_called: bool = False
         self._shutdown_lock = threading.Lock()
         
+        # Global tags applied to all spans/traces/sessions
+        self._global_tags: dict[str, str] = {}
+        
         # Containers for trace- and session-level tags
         self._trace_level_tags: dict[str, dict[str, str]] = {}
         self._session_level_tags: dict[str, dict[str, str]] = {}
@@ -304,6 +307,41 @@ class Tracer:
             self._integrations_config.update(integrations)
             logger.info(f"Tracer integrations configured to: {self._integrations_config}")
     
+    def set_global_tags(self, tags: dict[str, str]) -> None:
+        """Set global tags that are applied to all spans, traces, and sessions.
+
+        These tags are merged into every new span's tags, and are also propagated
+        to trace- and session-level tag stores so that they affect current and
+        future spans within active contexts.
+        """
+        if not isinstance(tags, dict):
+            raise TypeError("tags must be a dictionary")
+
+        # Filter out None values to avoid null overwrites downstream
+        filtered = {k: v for k, v in tags.items() if v is not None}
+        if not filtered:
+            return
+
+        # Update global store
+        self._global_tags.update(filtered)
+
+        # Apply to any currently active spans (best-effort)
+        stack = self._active_spans_ctx.get()
+        for sp in stack:
+            sp.tags.update(filtered)
+            sp.trace_tags.update(filtered)
+            sp.session_tags.update(filtered)
+
+        # Ensure current trace/session contexts inherit these as well
+        # so future spans in the same contexts get the tags too.
+        active_trace_ids = {sp.trace_id for sp in stack if getattr(sp, "trace_id", None)}
+        for tid in active_trace_ids:
+            self._trace_level_tags.setdefault(tid, {}).update(filtered)
+        active_session_ids = {sp.session_id for sp in stack if getattr(sp, "session_id", None)}
+        for sid in active_session_ids:
+            if sid:
+                self._session_level_tags.setdefault(sid, {}).update(filtered)
+    
     def start_span(
         self,
         name: str,
@@ -442,6 +480,13 @@ class Tracer:
             trace_tags=trace_tags or {},
             session_tags=session_tags or {},
         )
+        
+        # Apply global tags baseline (do not override explicitly provided keys)
+        if self._global_tags:
+            for k, v in self._global_tags.items():
+                span.tags.setdefault(k, v)
+                span.trace_tags.setdefault(k, v)
+                span.session_tags.setdefault(k, v)
         
         logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
         
