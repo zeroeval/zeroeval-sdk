@@ -78,8 +78,53 @@ class ZeroEvalOTLPProvider(TracerProvider):
         
         # Add batch processor for efficient span export
         self.add_span_processor(BatchSpanProcessor(exporter))
+
+        # Attach a processor that injects ZeroEval session attributes onto every OTEL span.
+        # This ensures backend mapping links traces to the correct session instead of the default.
+        try:
+            session_id = os.getenv("ZEROEVAL_SESSION_ID")
+            if not session_id:
+                import uuid as _uuid
+                session_id = str(_uuid.uuid4())
+                os.environ["ZEROEVAL_SESSION_ID"] = session_id
+            session_name = os.getenv("ZEROEVAL_SESSION_NAME")
+            self.add_span_processor(_SessionAttributeProcessor(session_id=session_id, session_name=session_name))
+        except Exception:
+            # Non-fatal: if we fail to attach, OTEL mapping will still fallback to default behavior
+            logger.debug("Failed to attach session attribute processor", exc_info=True)
         
         logger.debug(f"Initialized ZeroEvalOTLPProvider with endpoint: {endpoint}")
+
+
+class _SessionAttributeProcessor(SpanProcessor):
+    """Span processor that stamps `zeroeval.session.*` attributes on every OTEL span.
+
+    The backend OTEL mapper will read these attributes (if present) to associate
+    spans/traces with the correct session created for this execution.
+    """
+
+    def __init__(self, session_id: str, session_name: Optional[str] = None) -> None:
+        self._session_id = session_id
+        self._session_name = session_name
+
+    def on_start(self, span: Any, parent_context: Any) -> None:  # type: ignore[override]
+        try:
+            span.set_attribute("zeroeval.session.id", self._session_id)
+            if self._session_name:
+                span.set_attribute("zeroeval.session.name", self._session_name)
+        except Exception:
+            # Best-effort only
+            pass
+
+    # No-ops for other hooks
+    def on_end(self, span: Any) -> None:  # type: ignore[override]
+        return
+
+    def shutdown(self) -> None:  # type: ignore[override]
+        return
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:  # type: ignore[override]
+        return True
 
 
 class SingleProcessorProvider(ZeroEvalOTLPProvider):
