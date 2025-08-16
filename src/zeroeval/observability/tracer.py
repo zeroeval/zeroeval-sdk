@@ -149,6 +149,7 @@ class Tracer:
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
+        from .integrations.vocode.integration import VocodeIntegration
         
         # List of all integration classes
         integration_classes = [
@@ -157,6 +158,7 @@ class Tracer:
             HttpxIntegration,      # Auto-instrument httpx for network-level tracing
             LangChainIntegration,  # Auto-instrument LangChain
             LangGraphIntegration,  # Auto-instrument LangGraph
+            VocodeIntegration,     # Auto-instrument Vocode voice SDK
         ]
         
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
