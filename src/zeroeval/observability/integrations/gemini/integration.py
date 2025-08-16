@@ -269,15 +269,11 @@ class GeminiIntegration(Integration):
                         throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
                         span.attributes["throughput"] = round(throughput, 2)
                         
-                        # If no text but has function calls, format them as output
-                        output = output_text
-                        if not output and function_calls:
-                            output = json.dumps(function_calls, indent=2)
-                        
-                        # Set IO
+                        # Set IO - store clean contents like OpenAI integration
+                        # Use actual text for output_data, not function calls JSON
                         span.set_io(
                             input_data=json.dumps(self._serialize_contents(contents)),
-                            output_data=output
+                            output_data=output_text  # Use actual text, not function calls JSON
                         )
                     
                     # Extract finish reason
@@ -294,12 +290,12 @@ class GeminiIntegration(Integration):
                             })
                         span.attributes["safety_ratings"] = safety_ratings
                 
-                # Extract usage metadata
+                # Extract usage metadata - use standard field names
                 if hasattr(response, 'usage_metadata'):
                     usage = response.usage_metadata
-                    span.attributes["inputTokens"] = getattr(usage, 'prompt_token_count', 0)
-                    span.attributes["outputTokens"] = getattr(usage, 'candidates_token_count', 0)
-                    span.attributes["totalTokens"] = getattr(usage, 'total_token_count', 0)
+                    span.attributes["input_tokens"] = getattr(usage, 'prompt_token_count', 0)
+                    span.attributes["output_tokens"] = getattr(usage, 'candidates_token_count', 0)
+                    span.attributes["total_tokens"] = getattr(usage, 'total_token_count', 0)
                     
                     usage_dict = {
                         'prompt_tokens': getattr(usage, 'prompt_token_count', 0),
@@ -449,15 +445,11 @@ class GeminiIntegration(Integration):
                         throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
                         span.attributes["throughput"] = round(throughput, 2)
                         
-                        # If no text but has function calls, format them as output
-                        output = output_text
-                        if not output and function_calls:
-                            output = json.dumps(function_calls, indent=2)
-                        
-                        # Set IO
+                        # Set IO - store clean contents like OpenAI integration
+                        # Use actual text for output_data, not function calls JSON
                         span.set_io(
                             input_data=json.dumps(self._serialize_contents(contents)),
-                            output_data=output
+                            output_data=output_text  # Use actual text, not function calls JSON
                         )
                     
                     # Extract finish reason
@@ -474,12 +466,12 @@ class GeminiIntegration(Integration):
                             })
                         span.attributes["safety_ratings"] = safety_ratings
                 
-                # Extract usage metadata
+                # Extract usage metadata - use standard field names
                 if hasattr(response, 'usage_metadata'):
                     usage = response.usage_metadata
-                    span.attributes["inputTokens"] = getattr(usage, 'prompt_token_count', 0)
-                    span.attributes["outputTokens"] = getattr(usage, 'candidates_token_count', 0)
-                    span.attributes["totalTokens"] = getattr(usage, 'total_token_count', 0)
+                    span.attributes["input_tokens"] = getattr(usage, 'prompt_token_count', 0)
+                    span.attributes["output_tokens"] = getattr(usage, 'candidates_token_count', 0)
+                    span.attributes["total_tokens"] = getattr(usage, 'total_token_count', 0)
                     
                     usage_dict = {
                         'prompt_tokens': getattr(usage, 'prompt_token_count', 0),
@@ -672,11 +664,11 @@ class _StreamingResponseProxy:
         
         elapsed = time.time() - self._start_time
         
-        # Update span with usage data
+        # Update span with usage data - use standard field names
         if self._usage_metadata:
-            self._span.attributes["inputTokens"] = getattr(self._usage_metadata, 'prompt_token_count', 0)
-            self._span.attributes["outputTokens"] = getattr(self._usage_metadata, 'candidates_token_count', 0)
-            self._span.attributes["totalTokens"] = getattr(self._usage_metadata, 'total_token_count', 0)
+            self._span.attributes["input_tokens"] = getattr(self._usage_metadata, 'prompt_token_count', 0)
+            self._span.attributes["output_tokens"] = getattr(self._usage_metadata, 'candidates_token_count', 0)
+            self._span.attributes["total_tokens"] = getattr(self._usage_metadata, 'total_token_count', 0)
             
             usage_dict = {
                 'prompt_tokens': getattr(self._usage_metadata, 'prompt_token_count', 0),
@@ -693,15 +685,10 @@ class _StreamingResponseProxy:
         if self._function_calls:
             self._span.attributes["function_calls"] = self._function_calls
         
-        # If no text but has function calls, format them as output
-        output = accumulated_text
-        if not output and self._function_calls:
-            output = json.dumps(self._function_calls, indent=2)
-        
-        # Set I/O data
+        # Set I/O data - use actual text for output_data, not function calls JSON
         self._span.set_io(
             input_data=json.dumps(self._integration._serialize_contents(self._contents)),
-            output_data=output
+            output_data=accumulated_text  # Use actual text, not function calls JSON
         )
         
         self._tracer.end_span(self._span)
