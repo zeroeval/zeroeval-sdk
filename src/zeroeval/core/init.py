@@ -172,6 +172,7 @@ def init(
         
         # Check which integrations are available
         from ..observability.integrations.gemini.integration import GeminiIntegration
+        from ..observability.integrations.httpx.integration import HttpxIntegration
         from ..observability.integrations.langchain.integration import (
             LangChainIntegration,
         )
@@ -184,15 +185,17 @@ def init(
         integration_classes = [
             OpenAIIntegration,
             GeminiIntegration,
+            HttpxIntegration,
             LangChainIntegration,
             LangGraphIntegration,
         ]
         
-        # Get the disabled integrations mapping
+                # Get the disabled integrations mapping
         integration_mapping = {
             "openai": "OpenAIIntegration",
             "gemini": "GeminiIntegration",
-            "langchain": "LangChainIntegration", 
+            "httpx": "HttpxIntegration",
+            "langchain": "LangChainIntegration",
             "langgraph": "LangGraphIntegration",
         }
         

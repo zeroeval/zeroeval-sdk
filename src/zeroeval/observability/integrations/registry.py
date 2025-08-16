@@ -36,6 +36,11 @@ INTEGRATION_REGISTRY: Dict[str, tuple[str, str, str]] = {
         "GeminiIntegration",
         "google.genai"
     ),
+    "HttpxIntegration": (
+        "zeroeval.observability.integrations.httpx.integration",
+        "HttpxIntegration",
+        "httpx"
+    ),
 
 }
 

@@ -145,6 +145,7 @@ class Tracer:
         """Automatically set up all available integrations."""
         # Import here to avoid circular imports
         from .integrations.gemini.integration import GeminiIntegration
+        from .integrations.httpx.integration import HttpxIntegration
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
@@ -153,6 +154,7 @@ class Tracer:
         integration_classes = [
             OpenAIIntegration,
             GeminiIntegration,     # Auto-instrument Gemini
+            HttpxIntegration,      # Auto-instrument httpx for network-level tracing
             LangChainIntegration,  # Auto-instrument LangChain
             LangGraphIntegration,  # Auto-instrument LangGraph
         ]
