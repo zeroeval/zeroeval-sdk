@@ -41,6 +41,11 @@ INTEGRATION_REGISTRY: Dict[str, tuple[str, str, str]] = {
         "HttpxIntegration",
         "httpx"
     ),
+    "VocodeIntegration": (
+        "zeroeval.observability.integrations.vocode.integration",
+        "VocodeIntegration",
+        "vocode"
+    ),
 
 }
 

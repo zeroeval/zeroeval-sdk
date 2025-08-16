@@ -134,8 +134,13 @@ class OpenAIIntegration(Integration):
                 start_time = time.time()
                 is_streaming = kwargs.get("stream", False)
 
-                if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
-                    kwargs["stream_options"] = {"include_usage": True}
+                # Always add stream_options for OpenAI streaming calls to get token usage
+                if is_streaming:
+                    # Only add if not already present and not a custom/fine-tuned model
+                    model = kwargs.get("model", "")
+                    if "stream_options" not in kwargs and (isinstance(model, str) and "/" not in model):
+                        kwargs["stream_options"] = {"include_usage": True}
+                        logger.debug(f"[OpenAI] Added stream_options for model: {model}")
 
                 # Try to get base_url from client instance
                 base_url = None
@@ -223,6 +228,10 @@ class OpenAIIntegration(Integration):
                             choices_data.append(choice_dict)
                         span.attributes["choices"] = choices_data
                     if usage:
+                        # Store token counts for cost calculation
+                        span.attributes["inputTokens"] = usage.prompt_tokens
+                        span.attributes["outputTokens"] = usage.completion_tokens
+                        
                         # Store full usage object
                         usage_dict = {
                             'prompt_tokens': usage.prompt_tokens,
@@ -274,8 +283,13 @@ class OpenAIIntegration(Integration):
                 start_time = time.time()
                 is_streaming = kwargs.get("stream", False)
 
-                if is_streaming and (not isinstance(kwargs.get("model"), str) or "/" not in kwargs["model"]):
-                    kwargs["stream_options"] = {"include_usage": True}
+                # Always add stream_options for OpenAI streaming calls to get token usage
+                if is_streaming:
+                    # Only add if not already present and not a custom/fine-tuned model
+                    model = kwargs.get("model", "")
+                    if "stream_options" not in kwargs and (isinstance(model, str) and "/" not in model):
+                        kwargs["stream_options"] = {"include_usage": True}
+                        logger.debug(f"[OpenAI] Added stream_options for model: {model}")
 
                 # Try to get base_url from client instance
                 base_url = None
@@ -363,6 +377,10 @@ class OpenAIIntegration(Integration):
                             choices_data.append(choice_dict)
                         span.attributes["choices"] = choices_data
                     if usage:
+                        # Store token counts for cost calculation
+                        span.attributes["inputTokens"] = usage.prompt_tokens
+                        span.attributes["outputTokens"] = usage.completion_tokens
+                        
                         # Store full usage object
                         usage_dict = {
                             'prompt_tokens': usage.prompt_tokens,
@@ -423,128 +441,132 @@ class _StreamingResponseProxy:
         tool_calls_by_index = self._tool_calls_by_index
         stream_obj = getattr(self, "_entered_response", None) or self._response
 
-        async for chunk in stream_obj:
-            self._chunks.append(chunk)
-            
-            # Accumulate content
-            if chunk.choices:
-                for choice in chunk.choices:
-                    if hasattr(choice, 'delta') and hasattr(choice.delta, 'content') and choice.delta.content:
-                        self._accumulated_content += choice.delta.content
-                    
-                    # Handle streaming tool calls
-                    if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
-                        for tool_call_delta in choice.delta.tool_calls:
-                            index = getattr(tool_call_delta, 'index', 0)
-                            if index not in tool_calls_by_index:
-                                tool_calls_by_index[index] = {
-                                    'id': getattr(tool_call_delta, 'id', None),
-                                    'type': getattr(tool_call_delta, 'type', 'function'),
-                                    'function': {
-                                        'name': '',
-                                        'arguments': ''
+        try:
+            async for chunk in stream_obj:
+                self._chunks.append(chunk)
+                
+                # Accumulate content
+                if chunk.choices:
+                    for choice in chunk.choices:
+                        if hasattr(choice, 'delta') and hasattr(choice.delta, 'content') and choice.delta.content:
+                            self._accumulated_content += choice.delta.content
+                        
+                        # Handle streaming tool calls
+                        if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                            for tool_call_delta in choice.delta.tool_calls:
+                                index = getattr(tool_call_delta, 'index', 0)
+                                if index not in tool_calls_by_index:
+                                    tool_calls_by_index[index] = {
+                                        'id': getattr(tool_call_delta, 'id', None),
+                                        'type': getattr(tool_call_delta, 'type', 'function'),
+                                        'function': {
+                                            'name': '',
+                                            'arguments': ''
+                                        }
                                     }
-                                }
-                            
-                            if hasattr(tool_call_delta, 'function'):
-                                if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
-                                    tool_calls_by_index[index]['function']['name'] = tool_call_delta.function.name
-                                if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
-                                    tool_calls_by_index[index]['function']['arguments'] += tool_call_delta.function.arguments
+                                
+                                if hasattr(tool_call_delta, 'function'):
+                                    if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
+                                        tool_calls_by_index[index]['function']['name'] = tool_call_delta.function.name
+                                    if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
+                                        tool_calls_by_index[index]['function']['arguments'] += tool_call_delta.function.arguments
+                
+                # Extract usage if available
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    self._usage = chunk.usage
+                
+                yield chunk
+        finally:
+            # Ensure span is finished even if iteration is broken early
+            # Create tool call spans after streaming completes
+            if tool_calls_by_index:
+                for tool_call in tool_calls_by_index.values():
+                    if tool_call.get('function') and tool_call['function'].get('name'):
+                        tool_span = self._tracer.start_span(
+                            name=f"tool.{tool_call['function']['name']}",
+                            kind="tool",
+                            attributes={
+                                "service.name": "openai",
+                                "type": "tool",
+                                "tool_name": tool_call['function']['name'],
+                                "tool_call_id": tool_call.get('id'),
+                                "arguments": tool_call['function'].get('arguments')
+                            },
+                            tags={"integration": "openai", "tool": tool_call['function']['name']}
+                        )
+                        tool_span.set_io(
+                            input_data=tool_call['function'].get('arguments'),
+                            output_data=None
+                        )
+                        self._tracer.end_span(tool_span)
             
-            # Extract usage if available
-            if hasattr(chunk, 'usage') and chunk.usage:
-                self._usage = chunk.usage
-            
-            yield chunk
-        
-        # Create tool call spans after streaming completes
-        if tool_calls_by_index:
-            for tool_call in tool_calls_by_index.values():
-                if tool_call.get('function') and tool_call['function'].get('name'):
-                    tool_span = self._tracer.start_span(
-                        name=f"tool.{tool_call['function']['name']}",
-                        kind="tool",
-                        attributes={
-                            "service.name": "openai",
-                            "type": "tool",
-                            "tool_name": tool_call['function']['name'],
-                            "tool_call_id": tool_call.get('id'),
-                            "arguments": tool_call['function'].get('arguments')
-                        },
-                        tags={"integration": "openai", "tool": tool_call['function']['name']}
-                    )
-                    tool_span.set_io(
-                        input_data=tool_call['function'].get('arguments'),
-                        output_data=None
-                    )
-                    self._tracer.end_span(tool_span)
-        
-        self._finish_span(self._accumulated_content)
+            self._finish_span(self._accumulated_content)
 
     def __iter__(self):
         """Sync iteration for streaming responses."""
         tool_calls_by_index = self._tool_calls_by_index
         stream_obj = getattr(self, "_entered_response", None) or self._response
 
-        for chunk in stream_obj:
-            self._chunks.append(chunk)
-            
-            # Accumulate content
-            if chunk.choices:
-                for choice in chunk.choices:
-                    if hasattr(choice, 'delta') and hasattr(choice.delta, 'content') and choice.delta.content:
-                        self._accumulated_content += choice.delta.content
-                    
-                    # Handle streaming tool calls
-                    if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
-                        for tool_call_delta in choice.delta.tool_calls:
-                            index = getattr(tool_call_delta, 'index', 0)
-                            if index not in tool_calls_by_index:
-                                tool_calls_by_index[index] = {
-                                    'id': getattr(tool_call_delta, 'id', None),
-                                    'type': getattr(tool_call_delta, 'type', 'function'),
-                                    'function': {
-                                        'name': '',
-                                        'arguments': ''
+        try:
+            for chunk in stream_obj:
+                self._chunks.append(chunk)
+                
+                # Accumulate content
+                if chunk.choices:
+                    for choice in chunk.choices:
+                        if hasattr(choice, 'delta') and hasattr(choice.delta, 'content') and choice.delta.content:
+                            self._accumulated_content += choice.delta.content
+                        
+                        # Handle streaming tool calls
+                        if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                            for tool_call_delta in choice.delta.tool_calls:
+                                index = getattr(tool_call_delta, 'index', 0)
+                                if index not in tool_calls_by_index:
+                                    tool_calls_by_index[index] = {
+                                        'id': getattr(tool_call_delta, 'id', None),
+                                        'type': getattr(tool_call_delta, 'type', 'function'),
+                                        'function': {
+                                            'name': '',
+                                            'arguments': ''
+                                        }
                                     }
-                                }
-                            
-                            if hasattr(tool_call_delta, 'function'):
-                                if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
-                                    tool_calls_by_index[index]['function']['name'] = tool_call_delta.function.name
-                                if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
-                                    tool_calls_by_index[index]['function']['arguments'] += tool_call_delta.function.arguments
+                                
+                                if hasattr(tool_call_delta, 'function'):
+                                    if hasattr(tool_call_delta.function, 'name') and tool_call_delta.function.name:
+                                        tool_calls_by_index[index]['function']['name'] = tool_call_delta.function.name
+                                    if hasattr(tool_call_delta.function, 'arguments') and tool_call_delta.function.arguments:
+                                        tool_calls_by_index[index]['function']['arguments'] += tool_call_delta.function.arguments
+                
+                # Extract usage if available
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    self._usage = chunk.usage
+                
+                yield chunk
+        finally:
+            # Ensure span is finished even if iteration is broken early
+            # Create tool call spans after streaming completes
+            if tool_calls_by_index:
+                for tool_call in tool_calls_by_index.values():
+                    if tool_call.get('function') and tool_call['function'].get('name'):
+                        tool_span = self._tracer.start_span(
+                            name=f"tool.{tool_call['function']['name']}",
+                            kind="tool",
+                            attributes={
+                                "service.name": "openai",
+                                "type": "tool",
+                                "tool_name": tool_call['function']['name'],
+                                "tool_call_id": tool_call.get('id'),
+                                "arguments": tool_call['function'].get('arguments')
+                            },
+                            tags={"integration": "openai", "tool": tool_call['function']['name']}
+                        )
+                        tool_span.set_io(
+                            input_data=tool_call['function'].get('arguments'),
+                            output_data=None
+                        )
+                        self._tracer.end_span(tool_span)
             
-            # Extract usage if available
-            if hasattr(chunk, 'usage') and chunk.usage:
-                self._usage = chunk.usage
-            
-            yield chunk
-        
-        # Create tool call spans after streaming completes
-        if tool_calls_by_index:
-            for tool_call in tool_calls_by_index.values():
-                if tool_call.get('function') and tool_call['function'].get('name'):
-                    tool_span = self._tracer.start_span(
-                        name=f"tool.{tool_call['function']['name']}",
-                        kind="tool",
-                        attributes={
-                            "service.name": "openai",
-                            "type": "tool",
-                            "tool_name": tool_call['function']['name'],
-                            "tool_call_id": tool_call.get('id'),
-                            "arguments": tool_call['function'].get('arguments')
-                        },
-                        tags={"integration": "openai", "tool": tool_call['function']['name']}
-                    )
-                    tool_span.set_io(
-                        input_data=tool_call['function'].get('arguments'),
-                        output_data=None
-                    )
-                    self._tracer.end_span(tool_span)
-        
-        self._finish_span(self._accumulated_content)
+            self._finish_span(self._accumulated_content)
 
     async def __aenter__(self):
         if hasattr(self._response, "__aenter__"):
@@ -587,6 +609,8 @@ class _StreamingResponseProxy:
         import json
         import time
         
+        logger.debug(f"[OpenAI] Finishing streaming span after {len(self._chunks)} chunks, content length: {len(accumulated_content)}")
+        
         elapsed = time.time() - self._start_time
         
         # Update span with usage data
@@ -601,6 +625,21 @@ class _StreamingResponseProxy:
                 'total_tokens': getattr(self._usage, 'total_tokens', self._usage.prompt_tokens + self._usage.completion_tokens)
             }
             self._span.attributes["usage"] = usage_dict
+        else:
+            # Fallback: estimate tokens if usage not available (older API or custom endpoints)
+            logger.debug("[OpenAI] No usage data in streaming response, estimating tokens")
+            
+            # Rough estimation: ~1 token per 4 characters for English text
+            if self._kwargs.get("messages"):
+                input_chars = sum(len(str(msg.get("content", ""))) for msg in self._kwargs["messages"])
+                estimated_input_tokens = max(1, input_chars // 4)
+                self._span.attributes["inputTokens"] = estimated_input_tokens
+                self._span.attributes["estimated_input_tokens"] = True
+            
+            if accumulated_content:
+                estimated_output_tokens = max(1, len(accumulated_content) // 4)
+                self._span.attributes["outputTokens"] = estimated_output_tokens
+                self._span.attributes["estimated_output_tokens"] = True
         
         # Set throughput
         throughput = (len(accumulated_content) / elapsed) if (accumulated_content and elapsed > 0) else 0

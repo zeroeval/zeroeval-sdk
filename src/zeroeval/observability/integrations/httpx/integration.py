@@ -4,10 +4,18 @@ import re
 import time
 from functools import wraps
 from typing import Any, Callable, Optional
+import contextvars
 
 from ..base import Integration
 
 logger = logging.getLogger(__name__)
+
+# Context variable to track if we're already tracing from the Gemini SDK
+try:
+    from ..gemini.integration import _gemini_sdk_tracing
+except ImportError:
+    # If Gemini integration is not available, create a dummy context var
+    _gemini_sdk_tracing = contextvars.ContextVar('gemini_sdk_tracing', default=False)
 
 
 class HttpxIntegration(Integration):
@@ -91,6 +99,46 @@ class HttpxIntegration(Integration):
         if match:
             return match.group(1)
         return None
+    
+    def _format_contents_as_messages(self, contents: Any) -> list:
+        """Format contents as OpenAI-style messages for consistency."""
+        if not contents:
+            return []
+        
+        messages = []
+        
+        # Handle list of content items
+        if isinstance(contents, list):
+            for item in contents:
+                if isinstance(item, str):
+                    # Simple string - assume user message
+                    messages.append({"role": "user", "content": item})
+                elif isinstance(item, dict):
+                    # Handle dict format with role and parts
+                    message = {}
+                    if "role" in item:
+                        message["role"] = item["role"]
+                    else:
+                        message["role"] = "user"  # Default to user if no role
+                    
+                    # Extract text content from parts
+                    text_parts = []
+                    if "parts" in item:
+                        for part in item["parts"]:
+                            if isinstance(part, dict) and "text" in part:
+                                text_parts.append(part["text"])
+                            elif isinstance(part, str):
+                                text_parts.append(part)
+                    elif "text" in item:
+                        text_parts.append(item["text"])
+                    
+                    message["content"] = "\n".join(text_parts) if text_parts else ""
+                    messages.append(message)
+        elif isinstance(contents, str):
+            # Single string - convert to message
+            messages.append({"role": "user", "content": contents})
+        
+        return messages
     
     def _parse_gemini_request(self, request_data: Any) -> dict[str, Any]:
         """Parse Gemini API request payload."""
@@ -315,6 +363,11 @@ class HttpxIntegration(Integration):
                 logger.debug(f"HTTPx request to {url} not traced (doesn't match patterns)")
                 return original(*args, **kwargs)
             
+            # Skip if we're already tracing from the Gemini SDK
+            if _gemini_sdk_tracing.get():
+                logger.debug(f"HTTPx request to {url} skipped - already traced by Gemini SDK")
+                return original(*args, **kwargs)
+            
             logger.debug(f"HTTPx tracing Gemini API request to {url}")
             start_time = time.time()
             
@@ -383,15 +436,20 @@ class HttpxIntegration(Integration):
                     throughput = (len(output) / elapsed) if elapsed > 0 else 0
                     span.attributes["throughput"] = round(throughput, 2)
                 
-                # Set I/O - store clean messages like OpenAI integration
-                # Extract just the contents/messages for input_data
-                clean_input = None
+                # Set I/O - format like OpenAI integration for consistency
+                input_messages = []
                 if request_body and isinstance(request_body, dict):
                     if "contents" in request_body:
-                        clean_input = request_body["contents"]
+                        input_messages = self._format_contents_as_messages(request_body["contents"])
+                
+                # Store input_messages and output_text in attributes for LLMSpanMetrics
+                if input_messages:
+                    span.attributes["input_messages"] = input_messages
+                if output:
+                    span.attributes["output_text"] = output
                 
                 span.set_io(
-                    input_data=json.dumps(clean_input) if clean_input else json.dumps(request_body) if request_body else "",
+                    input_data=json.dumps(input_messages) if input_messages else "",  # JSON array of messages like OpenAI
                     output_data=output or ""  # This will be actual text, not function calls JSON
                 )
                 
@@ -502,15 +560,20 @@ class HttpxIntegration(Integration):
                     throughput = (len(output) / elapsed) if elapsed > 0 else 0
                     span.attributes["throughput"] = round(throughput, 2)
                 
-                # Set I/O - store clean messages like OpenAI integration
-                # Extract just the contents/messages for input_data
-                clean_input = None
+                # Set I/O - format like OpenAI integration for consistency
+                input_messages = []
                 if request_body and isinstance(request_body, dict):
                     if "contents" in request_body:
-                        clean_input = request_body["contents"]
+                        input_messages = self._format_contents_as_messages(request_body["contents"])
+                
+                # Store input_messages and output_text in attributes for LLMSpanMetrics
+                if input_messages:
+                    span.attributes["input_messages"] = input_messages
+                if output:
+                    span.attributes["output_text"] = output
                 
                 span.set_io(
-                    input_data=json.dumps(clean_input) if clean_input else json.dumps(request_body) if request_body else "",
+                    input_data=json.dumps(input_messages) if input_messages else "",  # JSON array of messages like OpenAI
                     output_data=output or ""  # This will be actual text, not function calls JSON
                 )
                 
@@ -642,15 +705,20 @@ class _HttpxStreamingResponseProxy:
             # Create tool spans
             self._integration._create_tool_spans(self._function_calls, self._tracer)
         
-        # Set I/O data - use text output for display, keep function calls in attributes
-        # Extract clean contents for input_data (like OpenAI integration)
-        clean_input = None
+        # Set I/O data - format like OpenAI integration for consistency
+        input_messages = []
         if self._request_body and isinstance(self._request_body, dict):
             if "contents" in self._request_body:
-                clean_input = self._request_body["contents"]
+                input_messages = self._integration._format_contents_as_messages(self._request_body["contents"])
+        
+        # Store input_messages and output_text in attributes for LLMSpanMetrics
+        if input_messages:
+            self._span.attributes["input_messages"] = input_messages
+        if self._accumulated_text:
+            self._span.attributes["output_text"] = self._accumulated_text
         
         self._span.set_io(
-            input_data=json.dumps(clean_input) if clean_input else json.dumps(self._request_body) if self._request_body else "",
+            input_data=json.dumps(input_messages) if input_messages else "",  # JSON array of messages like OpenAI
             output_data=self._accumulated_text  # Use actual text, not function calls JSON
         )
         

@@ -3,10 +3,14 @@ import logging
 from functools import wraps
 from typing import Any, Callable, Optional, Dict, List
 import time
+import contextvars
 
 from ..base import Integration
 
 logger = logging.getLogger(__name__)
+
+# Context variable to track if we're already tracing from the SDK
+_gemini_sdk_tracing = contextvars.ContextVar('gemini_sdk_tracing', default=False)
 
 
 class GeminiIntegration(Integration):
@@ -111,6 +115,69 @@ class GeminiIntegration(Integration):
                 return str(contents)
                 
         return contents
+    
+    def _format_contents_as_messages(self, contents: Any) -> Any:
+        """Format contents as OpenAI-style messages for consistency."""
+        if contents is None:
+            return []
+            
+        # Handle string content - convert to message format
+        if isinstance(contents, str):
+            return [{"role": "user", "content": contents}]
+            
+        # Handle list of contents
+        if isinstance(contents, list):
+            messages = []
+            for item in contents:
+                if isinstance(item, str):
+                    # Simple string - assume user message
+                    messages.append({"role": "user", "content": item})
+                elif isinstance(item, dict):
+                    # Handle dict format with role and parts
+                    message = {}
+                    if 'role' in item:
+                        message['role'] = item['role']
+                    else:
+                        message['role'] = 'user'  # Default to user if no role
+                    
+                    # Extract text content from parts
+                    text_parts = []
+                    if 'parts' in item:
+                        for part in item['parts']:
+                            if isinstance(part, dict) and 'text' in part:
+                                text_parts.append(part['text'])
+                            elif isinstance(part, str):
+                                text_parts.append(part)
+                    elif 'text' in item:
+                        text_parts.append(item['text'])
+                    
+                    message['content'] = '\n'.join(text_parts) if text_parts else ''
+                    messages.append(message)
+                elif hasattr(item, 'role') and hasattr(item, 'parts'):
+                    # Handle Content object
+                    message = {'role': getattr(item, 'role', 'user')}
+                    text_parts = []
+                    for part in item.parts:
+                        if hasattr(part, 'text'):
+                            text_parts.append(part.text)
+                        elif isinstance(part, str):
+                            text_parts.append(part)
+                    message['content'] = '\n'.join(text_parts) if text_parts else ''
+                    messages.append(message)
+            return messages
+            
+        # Handle single Content object
+        if hasattr(contents, 'parts'):
+            text_parts = []
+            for part in contents.parts:
+                if hasattr(part, 'text'):
+                    text_parts.append(part.text)
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            return [{"role": "user", "content": '\n'.join(text_parts) if text_parts else ''}]
+                
+        # Default: convert to string and wrap in message
+        return [{"role": "user", "content": str(contents) if contents else ''}]
 
     def _object_to_dict(self, obj: Any) -> Dict[str, Any]:
         """Convert Gemini objects to dictionaries."""
@@ -192,6 +259,9 @@ class GeminiIntegration(Integration):
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
             
+            # Set a context flag to prevent duplicate tracing by httpx integration
+            token = _gemini_sdk_tracing.set(True)
+            
             # Extract arguments
             model = kwargs.get('model', args[0] if args else None)
             contents = kwargs.get('contents', args[1] if len(args) > 1 else None)
@@ -269,10 +339,17 @@ class GeminiIntegration(Integration):
                         throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
                         span.attributes["throughput"] = round(throughput, 2)
                         
-                        # Set IO - store clean contents like OpenAI integration
-                        # Use actual text for output_data, not function calls JSON
+                        # Set IO - format like OpenAI integration for consistency
+                        input_messages = self._format_contents_as_messages(contents)
+                        
+                        # Store input_messages and output_text in attributes for LLMSpanMetrics
+                        if input_messages:
+                            span.attributes["input_messages"] = input_messages
+                        if output_text:
+                            span.attributes["output_text"] = output_text
+                        
                         span.set_io(
-                            input_data=json.dumps(self._serialize_contents(contents)),
+                            input_data=json.dumps(input_messages),  # JSON array of messages like OpenAI
                             output_data=output_text  # Use actual text, not function calls JSON
                         )
                     
@@ -305,6 +382,7 @@ class GeminiIntegration(Integration):
                     span.attributes["usage"] = usage_dict
                 
                 self.tracer.end_span(span)
+                _gemini_sdk_tracing.reset(token)  # Reset the context flag
                 return response
                 
             except Exception as e:
@@ -314,6 +392,7 @@ class GeminiIntegration(Integration):
                     stack=getattr(e, "__traceback__", None)
                 )
                 self.tracer.end_span(span)
+                _gemini_sdk_tracing.reset(token)  # Reset the context flag
                 raise
                 
         return wrapper
@@ -323,6 +402,9 @@ class GeminiIntegration(Integration):
         @wraps(original)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
+            
+            # Set a context flag to prevent duplicate tracing by httpx integration
+            token = _gemini_sdk_tracing.set(True)
             
             # Extract arguments
             model = kwargs.get('model', args[0] if args else None)
@@ -350,7 +432,8 @@ class GeminiIntegration(Integration):
             try:
                 response = original(*args, **kwargs)
                 # Return a streaming proxy to capture the response
-                return _StreamingResponseProxy(response, span, self.tracer, self, contents, start_time, is_async=False)
+                # Pass the token to reset it when streaming completes
+                return _StreamingResponseProxy(response, span, self.tracer, self, contents, start_time, is_async=False, context_token=token)
             except Exception as e:
                 span.set_error(
                     code=type(e).__name__,
@@ -358,6 +441,7 @@ class GeminiIntegration(Integration):
                     stack=getattr(e, "__traceback__", None)
                 )
                 self.tracer.end_span(span)
+                _gemini_sdk_tracing.reset(token)  # Reset the context flag
                 raise
                 
         return wrapper
@@ -367,6 +451,9 @@ class GeminiIntegration(Integration):
         @wraps(original)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
+            
+            # Set a context flag to prevent duplicate tracing by httpx integration
+            token = _gemini_sdk_tracing.set(True)
             
             # Extract arguments
             model = kwargs.get('model', args[0] if args else None)
@@ -445,10 +532,17 @@ class GeminiIntegration(Integration):
                         throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
                         span.attributes["throughput"] = round(throughput, 2)
                         
-                        # Set IO - store clean contents like OpenAI integration
-                        # Use actual text for output_data, not function calls JSON
+                        # Set IO - format like OpenAI integration for consistency
+                        input_messages = self._format_contents_as_messages(contents)
+                        
+                        # Store input_messages and output_text in attributes for LLMSpanMetrics
+                        if input_messages:
+                            span.attributes["input_messages"] = input_messages
+                        if output_text:
+                            span.attributes["output_text"] = output_text
+                        
                         span.set_io(
-                            input_data=json.dumps(self._serialize_contents(contents)),
+                            input_data=json.dumps(input_messages),  # JSON array of messages like OpenAI
                             output_data=output_text  # Use actual text, not function calls JSON
                         )
                     
@@ -481,6 +575,7 @@ class GeminiIntegration(Integration):
                     span.attributes["usage"] = usage_dict
                 
                 self.tracer.end_span(span)
+                _gemini_sdk_tracing.reset(token)  # Reset the context flag
                 return response
                 
             except Exception as e:
@@ -490,6 +585,7 @@ class GeminiIntegration(Integration):
                     stack=getattr(e, "__traceback__", None)
                 )
                 self.tracer.end_span(span)
+                _gemini_sdk_tracing.reset(token)  # Reset the context flag
                 raise
                 
         return wrapper
@@ -499,6 +595,9 @@ class GeminiIntegration(Integration):
         @wraps(original)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
+            
+            # Set a context flag to prevent duplicate tracing by httpx integration
+            token = _gemini_sdk_tracing.set(True)
             
             # Extract arguments
             model = kwargs.get('model', args[0] if args else None)
@@ -526,7 +625,8 @@ class GeminiIntegration(Integration):
             try:
                 response = await original(*args, **kwargs)
                 # Return a streaming proxy to capture the response
-                return _StreamingResponseProxy(response, span, self.tracer, self, contents, start_time, is_async=True)
+                # Pass the token to reset it when streaming completes
+                return _StreamingResponseProxy(response, span, self.tracer, self, contents, start_time, is_async=True, context_token=token)
             except Exception as e:
                 span.set_error(
                     code=type(e).__name__,
@@ -534,6 +634,7 @@ class GeminiIntegration(Integration):
                     stack=getattr(e, "__traceback__", None)
                 )
                 self.tracer.end_span(span)
+                _gemini_sdk_tracing.reset(token)  # Reset the context flag
                 raise
                 
         return wrapper
@@ -543,7 +644,7 @@ class GeminiIntegration(Integration):
 class _StreamingResponseProxy:
     """Proxy for Gemini streaming responses to capture usage and create spans."""
     
-    def __init__(self, response, span, tracer, integration, contents, start_time, is_async=False):
+    def __init__(self, response, span, tracer, integration, contents, start_time, is_async=False, context_token=None):
         self._response = response
         self._span = span
         self._tracer = tracer
@@ -551,6 +652,7 @@ class _StreamingResponseProxy:
         self._contents = contents
         self._start_time = start_time
         self._is_async = is_async
+        self._context_token = context_token
         self._chunks = []
         self._usage_metadata = None
         self._finished = False
@@ -685,10 +787,22 @@ class _StreamingResponseProxy:
         if self._function_calls:
             self._span.attributes["function_calls"] = self._function_calls
         
-        # Set I/O data - use actual text for output_data, not function calls JSON
+        # Set I/O data - format like OpenAI integration for consistency
+        input_messages = self._integration._format_contents_as_messages(self._contents)
+        
+        # Store input_messages and output_text in attributes for LLMSpanMetrics
+        if input_messages:
+            self._span.attributes["input_messages"] = input_messages
+        if accumulated_text:
+            self._span.attributes["output_text"] = accumulated_text
+        
         self._span.set_io(
-            input_data=json.dumps(self._integration._serialize_contents(self._contents)),
+            input_data=json.dumps(input_messages),  # JSON array of messages like OpenAI
             output_data=accumulated_text  # Use actual text, not function calls JSON
         )
         
         self._tracer.end_span(self._span)
+        
+        # Reset the context flag if we have a token
+        if self._context_token is not None:
+            _gemini_sdk_tracing.reset(self._context_token)
