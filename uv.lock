@@ -1771,7 +1771,7 @@ wheels = [
 
 [[package]]
 name = "zeroeval"
-version = "0.6.96"
+version = "0.6.97"
 source = { editable = "." }
 dependencies = [
     { name = "google-genai" },
