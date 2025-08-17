@@ -1,10 +1,46 @@
+import json
 import logging
+import re
 from functools import wraps
 from typing import Any, Callable, Optional
 
 from ..base import Integration
 
 logger = logging.getLogger(__name__)
+
+
+def zeroeval_prompt(prompt: str, variables: Optional[dict] = None, task: Optional[str] = None) -> str:
+    """
+    Helper function to create a prompt with zeroeval metadata.
+    
+    Args:
+        prompt: The actual prompt content (e.g., "You are a helpful assistant.")
+        variables: Dictionary of variables to be interpolated in the prompt
+        task: Optional task identifier for this prompt
+    
+    Returns:
+        A string with the format: <zeroeval>{JSON}</zeroeval>prompt
+        
+    Example:
+        >>> zeroeval_prompt(
+        ...     "You are a helpful assistant. The price is {{price}}",
+        ...     variables={"price": 10},
+        ...     task="pricing_assistant"
+        ... )
+        '<zeroeval>{"variables": {"price": 10}, "task": "pricing_assistant"}</zeroeval>You are a helpful assistant. The price is {{price}}'
+    """
+    metadata = {}
+    
+    if variables:
+        metadata["variables"] = variables
+    
+    if task:
+        metadata["task"] = task
+    
+    if metadata:
+        return f'<zeroeval>{json.dumps(metadata)}</zeroeval>{prompt}'
+    
+    return prompt
 
 
 class OpenAIIntegration(Integration):
@@ -54,7 +90,7 @@ class OpenAIIntegration(Integration):
                 is_async_client = isinstance(client_instance, _openai.AsyncOpenAI)
             except Exception:
                 # Fallback: detect by attribute commonly present on async client
-                is_async_client = hasattr(client_instance, "_client") and hasattr(getattr(client_instance, "_client"), "_asynchronous")
+                is_async_client = hasattr(client_instance, "_client") and hasattr(client_instance._client, "_asynchronous")
 
             if is_async_client:
                 # Use async-aware wrapper factory (returns an async function)
@@ -75,6 +111,99 @@ class OpenAIIntegration(Integration):
             
             return result
         return wrapper
+
+    def _extract_zeroeval_metadata(self, content: str) -> tuple[Optional[dict[str, Any]], str]:
+        """
+        Extract <zeroeval> metadata from content and return (metadata, cleaned_content).
+        
+        Returns:
+            - Tuple of (metadata dict or None, cleaned content string)
+        """
+        # Look for <zeroeval>...</zeroeval> tags
+        pattern = r'<zeroeval>(.*?)</zeroeval>'
+        match = re.search(pattern, content, re.DOTALL)
+        
+        if not match:
+            return None, content
+        
+        try:
+            # Extract and parse the JSON
+            json_str = match.group(1).strip()
+            metadata = json.loads(json_str)
+            
+            # Validate required fields
+            if not isinstance(metadata, dict):
+                raise ValueError("Metadata must be a JSON object")
+            
+            # Remove the <zeroeval> tags from content
+            cleaned_content = re.sub(pattern, '', content, count=1).strip()
+            
+            return metadata, cleaned_content
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse zeroeval metadata: {e}")
+            raise ValueError(f"Invalid JSON in <zeroeval> tags: {e}") from e
+    
+    def _interpolate_variables(self, text: str, variables: dict[str, Any]) -> str:
+        """
+        Interpolate variables in text using {{variable_name}} syntax.
+        
+        Args:
+            text: Text containing {{variable_name}} placeholders
+            variables: Dictionary of variable values
+            
+        Returns:
+            Text with variables interpolated
+        """
+        if not variables or not text:
+            return text
+        
+        # Replace {{variable_name}} with the actual value
+        for key, value in variables.items():
+            placeholder = f"{{{{{key}}}}}"
+            text = text.replace(placeholder, str(value))
+        
+        return text
+    
+    def _process_messages_with_zeroeval(self, messages: Optional[list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]]]:
+        """
+        Process messages to extract zeroeval metadata and interpolate variables.
+        
+        Returns:
+            - Tuple of (processed messages, zeroeval metadata)
+        """
+        if not messages:
+            return messages, None
+        
+        # Deep copy messages to avoid modifying the original
+        import copy
+        processed_messages = copy.deepcopy(messages)
+        zeroeval_metadata = None
+        variables = {}
+        
+        # Check if first message is a system message with zeroeval tags
+        if processed_messages and processed_messages[0].get("role") == "system":
+            content = processed_messages[0].get("content", "")
+            
+            # Extract zeroeval metadata
+            metadata, cleaned_content = self._extract_zeroeval_metadata(content)
+            
+            if metadata:
+                zeroeval_metadata = metadata
+                variables = metadata.get("variables", {})
+                
+                # Update the first message with cleaned content
+                processed_messages[0]["content"] = cleaned_content
+                
+                # Log extraction
+                logger.debug(f"Extracted zeroeval metadata: task={metadata.get('task')}, variables={variables}")
+        
+        # Interpolate variables in all messages if we have any
+        if variables:
+            for msg in processed_messages:
+                if msg.get("content"):
+                    msg["content"] = self._interpolate_variables(msg["content"], variables)
+        
+        return processed_messages, zeroeval_metadata
 
     def _serialize_messages(self, messages: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
         """Serialize messages for storage, handling tool calls and other special content."""
@@ -133,6 +262,14 @@ class OpenAIIntegration(Integration):
             async def inner(*args: Any, **kwargs: Any):
                 start_time = time.time()
                 is_streaming = kwargs.get("stream", False)
+                
+                # Store original messages for span attributes
+                original_messages = kwargs.get("messages")
+                
+                # Process messages to extract zeroeval metadata and interpolate variables
+                processed_messages, zeroeval_metadata = self._process_messages_with_zeroeval(original_messages)
+                if processed_messages is not None:
+                    kwargs["messages"] = processed_messages
 
                 # Always add stream_options for OpenAI streaming calls to get token usage
                 if is_streaming:
@@ -147,17 +284,48 @@ class OpenAIIntegration(Integration):
                 if args and hasattr(args[0], 'base_url'):
                     base_url = str(args[0].base_url)
 
+                # Prepare span attributes
+                span_attributes = {
+                    "service.name": "openai",
+                    "provider": "openai",
+                    "model": kwargs.get("model"),
+                    "streaming": is_streaming,
+                    "base_url": base_url,
+                }
+                
+                # Always capture tools and tool_choice if present in the request
+                if "tools" in kwargs and kwargs["tools"]:
+                    # Store tool definitions for rendering
+                    tools_info = []
+                    for tool in kwargs["tools"]:
+                        if tool.get("type") == "function" and "function" in tool:
+                            tools_info.append({
+                                "type": "function",
+                                "name": tool["function"].get("name"),
+                                "description": tool["function"].get("description")
+                            })
+                    span_attributes["tools"] = tools_info
+                    span_attributes["tools_raw"] = kwargs["tools"]  # Keep raw format too
+                
+                # Capture tool_choice if present
+                if "tool_choice" in kwargs:
+                    span_attributes["tool_choice"] = kwargs["tool_choice"]
+                
+                # Add zeroeval metadata to attributes if present
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    # Store the original system prompt template (with {{variables}})
+                    if original_messages and original_messages[0].get("role") == "system":
+                        # Extract just the content after the zeroeval tags
+                        _, template_content = self._extract_zeroeval_metadata(original_messages[0].get("content", ""))
+                        if template_content:
+                            span_attributes["system_prompt_template"] = template_content
+                    
                 span = self.tracer.start_span(
                     name="openai.chat.completions.create",
                     kind="llm",
-                    attributes={
-                        "service.name": "openai",
-                        "provider": "openai",
-                        "model": kwargs.get("model"),
-                        "messages": self._serialize_messages(kwargs.get("messages")),
-                        "streaming": is_streaming,
-                        "base_url": base_url,
-                    },
+                    attributes=span_attributes,
                     tags={"integration": "openai"},
                 )
                 tracer = self.tracer
@@ -198,6 +366,10 @@ class OpenAIIntegration(Integration):
                                 tool_calls = self._extract_tool_calls(choice.message)
                                 if tool_calls:
                                     message_dict['tool_calls'] = tool_calls
+                                    # Store tool calls in main span attributes
+                                    if 'tool_calls' not in span.attributes:
+                                        span.attributes['tool_calls'] = []
+                                    span.attributes['tool_calls'].extend(tool_calls)
                                     
                                     # Create child spans for each tool call
                                     for tool_call in tool_calls:
@@ -243,15 +415,21 @@ class OpenAIIntegration(Integration):
                     message = response.choices[0].message if response.choices else None
                     output = message.content if message else None
                     
-                    # If no content but has tool calls, format tool calls as output
-                    if not output and hasattr(message, 'tool_calls') and message.tool_calls:
-                        tool_calls_output = []
-                        for tc in message.tool_calls:
-                            tool_calls_output.append({
-                                'tool': tc.function.name if hasattr(tc, 'function') else 'unknown',
-                                'arguments': tc.function.arguments if hasattr(tc, 'function') else '{}'
-                            })
-                        output = json.dumps(tool_calls_output, indent=2)
+                    # If there are tool calls, include them in a structured format
+                    if hasattr(message, 'tool_calls') and message.tool_calls:
+                        tool_calls_data = self._extract_tool_calls(message)
+                        if tool_calls_data:
+                            # If no content, show tool calls as primary output
+                            if not output:
+                                output = json.dumps({
+                                    "tool_calls": tool_calls_data
+                                }, indent=2)
+                            else:
+                                # If there's content AND tool calls, show both
+                                output = json.dumps({
+                                    "content": output,
+                                    "tool_calls": tool_calls_data
+                                }, indent=2)
                     
                     throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
                     span.attributes["throughput"] = round(throughput, 2)
@@ -282,6 +460,14 @@ class OpenAIIntegration(Integration):
             def inner(*args: Any, **kwargs: Any):
                 start_time = time.time()
                 is_streaming = kwargs.get("stream", False)
+                
+                # Store original messages for span attributes
+                original_messages = kwargs.get("messages")
+                
+                # Process messages to extract zeroeval metadata and interpolate variables
+                processed_messages, zeroeval_metadata = self._process_messages_with_zeroeval(original_messages)
+                if processed_messages is not None:
+                    kwargs["messages"] = processed_messages
 
                 # Always add stream_options for OpenAI streaming calls to get token usage
                 if is_streaming:
@@ -296,19 +482,50 @@ class OpenAIIntegration(Integration):
                 if hasattr(completions_instance, '_client') and hasattr(completions_instance._client, 'base_url'):
                     base_url = str(completions_instance._client.base_url)
 
-                span = self.tracer.start_span(
-                name="openai.chat.completions.create",
-                kind="llm",
-                attributes={
+                # Prepare span attributes
+                span_attributes = {
                     "service.name": "openai",
                     "provider": "openai",
                     "model": kwargs.get("model"),
-                    "messages": self._serialize_messages(kwargs.get("messages")),
                     "streaming": is_streaming,
                     "base_url": base_url,
-                },
-                tags={"integration": "openai"},
-            )
+                }
+                
+                # Always capture tools and tool_choice if present in the request
+                if "tools" in kwargs and kwargs["tools"]:
+                    # Store tool definitions for rendering
+                    tools_info = []
+                    for tool in kwargs["tools"]:
+                        if tool.get("type") == "function" and "function" in tool:
+                            tools_info.append({
+                                "type": "function",
+                                "name": tool["function"].get("name"),
+                                "description": tool["function"].get("description")
+                            })
+                    span_attributes["tools"] = tools_info
+                    span_attributes["tools_raw"] = kwargs["tools"]  # Keep raw format too
+                
+                # Capture tool_choice if present
+                if "tool_choice" in kwargs:
+                    span_attributes["tool_choice"] = kwargs["tool_choice"]
+                
+                # Add zeroeval metadata to attributes if present
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    # Store the original system prompt template (with {{variables}})
+                    if original_messages and original_messages[0].get("role") == "system":
+                        # Extract just the content after the zeroeval tags
+                        _, template_content = self._extract_zeroeval_metadata(original_messages[0].get("content", ""))
+                        if template_content:
+                            span_attributes["system_prompt_template"] = template_content
+                    
+                span = self.tracer.start_span(
+                    name="openai.chat.completions.create",
+                    kind="llm",
+                    attributes=span_attributes,
+                    tags={"integration": "openai"},
+                )
                 tracer = self.tracer
 
                 try:
@@ -347,6 +564,10 @@ class OpenAIIntegration(Integration):
                                 tool_calls = self._extract_tool_calls(choice.message)
                                 if tool_calls:
                                     message_dict['tool_calls'] = tool_calls
+                                    # Store tool calls in main span attributes
+                                    if 'tool_calls' not in span.attributes:
+                                        span.attributes['tool_calls'] = []
+                                    span.attributes['tool_calls'].extend(tool_calls)
                                     
                                     # Create child spans for each tool call
                                     for tool_call in tool_calls:
@@ -392,15 +613,21 @@ class OpenAIIntegration(Integration):
                     message = response.choices[0].message if response.choices else None
                     output = message.content if message else None
                     
-                    # If no content but has tool calls, format tool calls as output
-                    if not output and hasattr(message, 'tool_calls') and message.tool_calls:
-                        tool_calls_output = []
-                        for tc in message.tool_calls:
-                            tool_calls_output.append({
-                                'tool': tc.function.name if hasattr(tc, 'function') else 'unknown',
-                                'arguments': tc.function.arguments if hasattr(tc, 'function') else '{}'
-                            })
-                        output = json.dumps(tool_calls_output, indent=2)
+                    # If there are tool calls, include them in a structured format
+                    if hasattr(message, 'tool_calls') and message.tool_calls:
+                        tool_calls_data = self._extract_tool_calls(message)
+                        if tool_calls_data:
+                            # If no content, show tool calls as primary output
+                            if not output:
+                                output = json.dumps({
+                                    "tool_calls": tool_calls_data
+                                }, indent=2)
+                            else:
+                                # If there's content AND tool calls, show both
+                                output = json.dumps({
+                                    "content": output,
+                                    "tool_calls": tool_calls_data
+                                }, indent=2)
                     
                     throughput = (len(output) / elapsed) if (output and elapsed > 0) else 0
                     span.attributes["throughput"] = round(throughput, 2)
@@ -480,6 +707,11 @@ class _StreamingResponseProxy:
             # Ensure span is finished even if iteration is broken early
             # Create tool call spans after streaming completes
             if tool_calls_by_index:
+                # Store tool calls in main span attributes
+                if 'tool_calls' not in self._span.attributes:
+                    self._span.attributes['tool_calls'] = []
+                self._span.attributes['tool_calls'].extend(list(tool_calls_by_index.values()))
+                
                 for tool_call in tool_calls_by_index.values():
                     if tool_call.get('function') and tool_call['function'].get('name'):
                         tool_span = self._tracer.start_span(
@@ -546,6 +778,11 @@ class _StreamingResponseProxy:
             # Ensure span is finished even if iteration is broken early
             # Create tool call spans after streaming completes
             if tool_calls_by_index:
+                # Store tool calls in main span attributes
+                if 'tool_calls' not in self._span.attributes:
+                    self._span.attributes['tool_calls'] = []
+                self._span.attributes['tool_calls'].extend(list(tool_calls_by_index.values()))
+                
                 for tool_call in tool_calls_by_index.values():
                     if tool_call.get('function') and tool_call['function'].get('name'):
                         tool_span = self._tracer.start_span(
@@ -645,17 +882,24 @@ class _StreamingResponseProxy:
         throughput = (len(accumulated_content) / elapsed) if (accumulated_content and elapsed > 0) else 0
         self._span.attributes["throughput"] = round(throughput, 2)
         
-        # Set I/O data - if no content but has tool calls, show tool calls as output
+        # Set I/O data - format tool calls consistently
         output = accumulated_content
-        if not output and self._tool_calls_by_index:
-            tool_calls_output = []
-            for tc in self._tool_calls_by_index.values():
-                if tc.get('function') and tc['function'].get('name'):
-                    tool_calls_output.append({
-                        'tool': tc['function']['name'],
-                        'arguments': tc['function'].get('arguments', '{}')
-                    })
-            output = json.dumps(tool_calls_output, indent=2)
+        
+        # If there are tool calls, include them in a structured format
+        if self._tool_calls_by_index:
+            tool_calls_data = list(self._tool_calls_by_index.values())
+            if tool_calls_data:
+                # If no content, show tool calls as primary output
+                if not output:
+                    output = json.dumps({
+                        "tool_calls": tool_calls_data
+                    }, indent=2)
+                else:
+                    # If there's content AND tool calls, show both
+                    output = json.dumps({
+                        "content": output,
+                        "tool_calls": tool_calls_data
+                    }, indent=2)
         
         self._span.set_io(
             input_data=json.dumps(self._integration._serialize_messages(self._kwargs.get("messages"))),
