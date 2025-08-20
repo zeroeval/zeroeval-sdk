@@ -109,6 +109,22 @@ class OpenAIIntegration(Integration):
             
             # The create method is now correctly wrapped for the client's sync/async nature
             
+            # Also patch responses.create if available (for GPT-5 and newer models)
+            if hasattr(client_instance, 'responses'):
+                logger.debug("[OpenAI] Found responses endpoint, patching responses.create")
+                if is_async_client:
+                    self._patch_method(
+                        client_instance.responses,
+                        "create",
+                        self._wrap_responses_create_async()
+                    )
+                else:
+                    self._patch_method(
+                        client_instance.responses,
+                        "create",
+                        self._wrap_responses_create_sync(client_instance.responses)
+                    )
+            
             return result
         return wrapper
 
@@ -653,6 +669,251 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+            return inner
+        return wrapper
+    
+    # ------------------------------------------------------------------+
+    #  Responses API wrappers (for GPT-5 and newer models)              |
+    # ------------------------------------------------------------------+
+    def _wrap_responses_create_async(self) -> Callable:
+        """Wrap responses.create for async clients (GPT-5 models)."""
+        import json
+        import time
+
+        def wrapper(original: Callable) -> Callable:
+            @wraps(original)
+            async def inner(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                
+                # Extract input messages/prompts
+                input_data = kwargs.get("input")
+                
+                # Prepare span attributes
+                span_attributes = {
+                    "service.name": "openai",
+                    "provider": "openai",
+                    "model": kwargs.get("model"),
+                    "endpoint": "responses",
+                }
+                
+                # Capture tools if present
+                if "tools" in kwargs and kwargs["tools"]:
+                    tools_info = []
+                    for tool in kwargs["tools"]:
+                        if isinstance(tool, dict) and tool.get("type") == "function":
+                            tools_info.append({
+                                "type": "function",
+                                "name": tool.get("function", {}).get("name"),
+                                "description": tool.get("function", {}).get("description")
+                            })
+                    span_attributes["tools"] = tools_info
+                
+                # Capture reasoning config if present
+                if "reasoning" in kwargs:
+                    span_attributes["reasoning"] = kwargs["reasoning"]
+                
+                span = self.tracer.start_span(
+                    name="openai.responses.create",
+                    kind="llm",
+                    attributes=span_attributes,
+                    tags={"integration": "openai", "endpoint": "responses"},
+                )
+                tracer = self.tracer
+
+                try:
+                    response = await original(*args, **kwargs)
+                    
+                    elapsed = time.time() - start_time
+                    
+                    # Extract usage data
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        # Note: responses API uses input_tokens/output_tokens
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
+                        span.attributes.update({
+                            "inputTokens": input_tokens,
+                            "outputTokens": output_tokens,
+                        })
+                        
+                        usage_dict = {
+                            'input_tokens': input_tokens,
+                            'output_tokens': output_tokens,
+                            'total_tokens': getattr(usage, 'total_tokens', input_tokens + output_tokens)
+                        }
+                        span.attributes["usage"] = usage_dict
+                    
+                    # Extract output text
+                    output_text = getattr(response, "output_text", "")
+                    
+                    # Extract tool calls from output
+                    output_items = getattr(response, "output", [])
+                    tool_calls = []
+                    reasoning_trace = []
+                    
+                    for item in output_items:
+                        if hasattr(item, "type"):
+                            if item.type == "function_call":
+                                tool_calls.append({
+                                    "type": "function",
+                                    "name": getattr(item, "name", "unknown"),
+                                    "arguments": getattr(item, "arguments", "")
+                                })
+                            elif item.type == "reasoning" and hasattr(item, "summary"):
+                                for summary in item.summary:
+                                    if hasattr(summary, "text"):
+                                        reasoning_trace.append(summary.text)
+                    
+                    if tool_calls:
+                        span.attributes["tool_calls"] = tool_calls
+                        
+                    if reasoning_trace:
+                        span.attributes["reasoning_trace"] = reasoning_trace
+                    
+                    # Set throughput
+                    throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
+                    span.attributes["throughput"] = round(throughput, 2)
+                    
+                    # Set I/O data
+                    span.set_io(
+                        input_data=json.dumps({"input": input_data}) if input_data else None,
+                        output_data=output_text or json.dumps({"tool_calls": tool_calls}) if tool_calls else None,
+                    )
+                    
+                    tracer.end_span(span)
+                    
+                    # Check if response needs wrapping
+                    if isinstance(response, dict) and not hasattr(response, 'to_dict'):
+                        return _ResponseWrapper(response)
+                    
+                    return response
+                    
+                except Exception as e:
+                    span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                    tracer.end_span(span)
+                    raise
+
+            return inner
+        return wrapper
+    
+    def _wrap_responses_create_sync(self, responses_instance) -> Callable:
+        """Wrap responses.create for sync clients (GPT-5 models)."""
+        import json
+        import time
+
+        def wrapper(original: Callable) -> Callable:
+            @wraps(original)
+            def inner(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+                
+                # Extract input messages/prompts
+                input_data = kwargs.get("input")
+                
+                # Prepare span attributes
+                span_attributes = {
+                    "service.name": "openai",
+                    "provider": "openai",
+                    "model": kwargs.get("model"),
+                    "endpoint": "responses",
+                }
+                
+                # Capture tools if present
+                if "tools" in kwargs and kwargs["tools"]:
+                    tools_info = []
+                    for tool in kwargs["tools"]:
+                        if isinstance(tool, dict) and tool.get("type") == "function":
+                            tools_info.append({
+                                "type": "function",
+                                "name": tool.get("function", {}).get("name"),
+                                "description": tool.get("function", {}).get("description")
+                            })
+                    span_attributes["tools"] = tools_info
+                
+                # Capture reasoning config if present
+                if "reasoning" in kwargs:
+                    span_attributes["reasoning"] = kwargs["reasoning"]
+                
+                span = self.tracer.start_span(
+                    name="openai.responses.create",
+                    kind="llm",
+                    attributes=span_attributes,
+                    tags={"integration": "openai", "endpoint": "responses"},
+                )
+                tracer = self.tracer
+
+                try:
+                    response = original(*args, **kwargs)
+                    
+                    elapsed = time.time() - start_time
+                    
+                    # Extract usage data
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        # Note: responses API uses input_tokens/output_tokens
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
+                        span.attributes.update({
+                            "inputTokens": input_tokens,
+                            "outputTokens": output_tokens,
+                        })
+                        
+                        usage_dict = {
+                            'input_tokens': input_tokens,
+                            'output_tokens': output_tokens,
+                            'total_tokens': getattr(usage, 'total_tokens', input_tokens + output_tokens)
+                        }
+                        span.attributes["usage"] = usage_dict
+                    
+                    # Extract output text
+                    output_text = getattr(response, "output_text", "")
+                    
+                    # Extract tool calls from output
+                    output_items = getattr(response, "output", [])
+                    tool_calls = []
+                    reasoning_trace = []
+                    
+                    for item in output_items:
+                        if hasattr(item, "type"):
+                            if item.type == "function_call":
+                                tool_calls.append({
+                                    "type": "function",
+                                    "name": getattr(item, "name", "unknown"),
+                                    "arguments": getattr(item, "arguments", "")
+                                })
+                            elif item.type == "reasoning" and hasattr(item, "summary"):
+                                for summary in item.summary:
+                                    if hasattr(summary, "text"):
+                                        reasoning_trace.append(summary.text)
+                    
+                    if tool_calls:
+                        span.attributes["tool_calls"] = tool_calls
+                        
+                    if reasoning_trace:
+                        span.attributes["reasoning_trace"] = reasoning_trace
+                    
+                    # Set throughput
+                    throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
+                    span.attributes["throughput"] = round(throughput, 2)
+                    
+                    # Set I/O data
+                    span.set_io(
+                        input_data=json.dumps({"input": input_data}) if input_data else None,
+                        output_data=output_text or json.dumps({"tool_calls": tool_calls}) if tool_calls else None,
+                    )
+                    
+                    tracer.end_span(span)
+                    
+                    # Check if response needs wrapping
+                    if isinstance(response, dict) and not hasattr(response, 'to_dict'):
+                        return _ResponseWrapper(response)
+                    
+                    return response
+                    
+                except Exception as e:
+                    span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                    tracer.end_span(span)
+                    raise
+
             return inner
         return wrapper
 
