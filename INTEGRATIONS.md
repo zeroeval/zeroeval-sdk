@@ -18,6 +18,7 @@ ze.init(api_key="YOUR_API_KEY")
 Automatically traces all OpenAI API calls including:
 
 - Chat completions (streaming and non-streaming)
+- Responses API (for GPT-5 and newer models)
 - Token usage tracking
 - Input/output capture
 - Error handling
@@ -26,6 +27,7 @@ Automatically traces all OpenAI API calls including:
 **Traced Operations:**
 
 - `client.chat.completions.create()`
+- `client.responses.create()` (GPT-5+ models)
 - Streaming responses with automatic buffering
 
 **Response Methods Support:**
@@ -69,6 +71,45 @@ for chunk in stream:
 # Now you can use response methods on the stream
 final_data = stream.to_dict()
 ```
+
+**Responses API (GPT-5+ Models):**
+
+The new `responses.create()` endpoint for GPT-5 and newer models is also automatically traced:
+
+```python
+# Using the responses API
+response = client.responses.create(
+    model="gpt-5",
+    input=[{"role": "user", "content": "Hello!"}],
+    tools=[{
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather"
+        }
+    }],
+    reasoning={
+        "effort": "low",
+        "summary": "detailed"
+    }
+)
+
+# Access response data
+print(response.output_text)
+print(response.usage.input_tokens)
+
+# Use response methods
+data = response.to_dict()
+json_str = response.to_json()
+```
+
+The integration captures:
+
+- Input data and tools
+- Output text and tool calls
+- Reasoning traces
+- Token usage (input_tokens/output_tokens)
+- Response methods work on all response types
 
 ### 2. LangChain
 
