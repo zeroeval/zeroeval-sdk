@@ -438,6 +438,12 @@ class OpenAIIntegration(Integration):
                         output_data=output,
                     )
                     tracer.end_span(span)
+                    
+                    # Check if response needs wrapping (for OpenAI-compatible APIs that return dicts)
+                    if isinstance(response, dict) and not hasattr(response, 'to_dict'):
+                        # Wrap dictionary responses to provide OpenAI-compatible methods
+                        return _ResponseWrapper(response)
+                    
                     return response
                 except Exception as e:
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
@@ -636,6 +642,12 @@ class OpenAIIntegration(Integration):
                         output_data=output,
                     )
                     tracer.end_span(span)
+                    
+                    # Check if response needs wrapping (for OpenAI-compatible APIs that return dicts)
+                    if isinstance(response, dict) and not hasattr(response, 'to_dict'):
+                        # Wrap dictionary responses to provide OpenAI-compatible methods
+                        return _ResponseWrapper(response)
+                    
                     return response
                 except Exception as e:
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
@@ -646,10 +658,132 @@ class OpenAIIntegration(Integration):
 
 
 # Streaming response proxy for OpenAI
-class _StreamingResponseProxy:
+class _ResponseWrapper:
+    """Base wrapper class that provides OpenAI-compatible response methods."""
+    
+    def __init__(self, response_data: dict):
+        self._response_data = response_data
+        # Store all attributes from the response data
+        for key, value in response_data.items():
+            setattr(self, key, value)
+    
+    def to_dict(
+        self,
+        *,
+        mode: str = "python",
+        use_api_names: bool = True,
+        exclude_unset: bool = True,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        warnings: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Generate a dictionary representation of the response.
+        Compatible with OpenAI's to_dict() method.
+        
+        Args:
+            mode: "json" for JSON-serializable types, "python" for any Python objects
+            use_api_names: Whether to use API field names
+            exclude_unset: Whether to exclude fields that were not set
+            exclude_defaults: Whether to exclude fields with default values
+            exclude_none: Whether to exclude None values
+            warnings: Whether to show warnings
+        
+        Returns:
+            Dictionary representation of the response
+        """
+        result = {}
+        for key, value in self._response_data.items():
+            if exclude_none and value is None:
+                continue
+            if mode == "json" and hasattr(value, "isoformat"):
+                # Convert datetime to string for JSON mode
+                value = value.isoformat()
+            result[key] = value
+        return result
+    
+    def to_json(
+        self,
+        *,
+        indent: Optional[int] = 2,
+        use_api_names: bool = True,
+        exclude_unset: bool = True,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        warnings: bool = True,
+    ) -> str:
+        """
+        Generate a JSON string representation of the response.
+        Compatible with OpenAI's to_json() method.
+        
+        Args:
+            indent: JSON indentation level (None for compact)
+            use_api_names: Whether to use API field names
+            exclude_unset: Whether to exclude fields that were not set
+            exclude_defaults: Whether to exclude fields with default values
+            exclude_none: Whether to exclude None values
+            warnings: Whether to show warnings
+        
+        Returns:
+            JSON string representation of the response
+        """
+        data = self.to_dict(
+            mode="json",
+            use_api_names=use_api_names,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+            warnings=warnings,
+        )
+        return json.dumps(data, indent=indent)
+    
+    # Aliases for backward compatibility
+    def model_dump(self, **kwargs):
+        """Alias for to_dict() - Pydantic v2 compatibility."""
+        return self.to_dict(**kwargs)
+    
+    def model_dump_json(self, **kwargs):
+        """Alias for to_json() - Pydantic v2 compatibility."""
+        return self.to_json(**kwargs)
+    
+    def dict(self, **kwargs):
+        """Deprecated alias for to_dict() - Pydantic v1 compatibility."""
+        # Match Pydantic v1 dict() defaults
+        kwargs.setdefault('mode', 'python')
+        kwargs.setdefault('use_api_names', True)  
+        kwargs.setdefault('exclude_unset', False)  # Different default than to_dict()
+        kwargs.setdefault('exclude_defaults', False)
+        kwargs.setdefault('exclude_none', False)
+        return self.to_dict(**kwargs)
+    
+    def json(self, **kwargs):
+        """Deprecated alias for to_json() - Pydantic v1 compatibility."""
+        # Match Pydantic v1 json() defaults
+        kwargs.setdefault('use_api_names', True)
+        kwargs.setdefault('exclude_unset', False)  # Different default than to_json()
+        kwargs.setdefault('exclude_defaults', False)
+        kwargs.setdefault('exclude_none', False)
+        return self.to_json(**kwargs)
+    
+    def __repr__(self):
+        """String representation of the response."""
+        attrs = []
+        for key, value in self._response_data.items():
+            if key.startswith("_"):
+                continue
+            attrs.append(f"{key}={repr(value)}")
+        return f"{self.__class__.__name__}({', '.join(attrs)})"
+    
+    def __str__(self):
+        """String representation of the response."""
+        return self.__repr__()
+
+
+class _StreamingResponseProxy(_ResponseWrapper):
     """Proxy for OpenAI streaming responses to capture usage and create spans."""
     
     def __init__(self, response, span, tracer, integration, kwargs, start_time, is_async=False):
+        # Don't call parent __init__ since we handle initialization differently
         self._response = response
         self._span = span
         self._tracer = tracer
@@ -662,6 +796,7 @@ class _StreamingResponseProxy:
         self._finished = False
         self._accumulated_content = ""
         self._tool_calls_by_index = {}
+        self._response_data = {}  # For storing final response data
 
     async def __aiter__(self):
         """Async iteration for streaming responses."""
@@ -907,3 +1042,83 @@ class _StreamingResponseProxy:
         )
         
         self._tracer.end_span(self._span)
+        
+        # Populate response data for OpenAI-compatible response methods
+        # This mimics the structure of a ChatCompletion response
+        self._response_data = {
+            "id": getattr(self._chunks[0], 'id', f"chatcmpl-{int(time.time())}") if self._chunks else f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion",
+            "created": int(self._start_time),
+            "model": self._kwargs.get("model", "unknown"),
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": accumulated_content or None,
+                    "tool_calls": list(self._tool_calls_by_index.values()) if self._tool_calls_by_index else None
+                },
+                "finish_reason": self._get_finish_reason()
+            }],
+            "usage": {
+                "prompt_tokens": getattr(self._usage, 'prompt_tokens', 0) if self._usage else 0,
+                "completion_tokens": getattr(self._usage, 'completion_tokens', 0) if self._usage else 0,
+                "total_tokens": getattr(self._usage, 'total_tokens', 0) if self._usage else 0
+            } if self._usage else None
+        }
+        
+        # Set attributes directly on self for attribute access
+        for key, value in self._response_data.items():
+            setattr(self, key, value)
+    
+    def _get_finish_reason(self):
+        """Extract finish reason from the last chunk."""
+        if not self._chunks:
+            return "stop"
+        
+        for chunk in reversed(self._chunks):
+            if hasattr(chunk, 'choices') and chunk.choices:
+                for choice in chunk.choices:
+                    if hasattr(choice, 'finish_reason') and choice.finish_reason:
+                        return choice.finish_reason
+        
+        # Default to "stop" if no finish reason found
+        return "stop"
+    
+    def _build_response_data(self):
+        """Build response data from current state."""
+        import time
+        
+        if not self._response_data:
+            # Build response data on demand if not already built
+            self._response_data = {
+                "id": getattr(self._chunks[0], 'id', f"chatcmpl-{int(time.time())}") if self._chunks else f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(self._start_time),
+                "model": self._kwargs.get("model", "unknown"),
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": self._accumulated_content or None,
+                        "tool_calls": list(self._tool_calls_by_index.values()) if self._tool_calls_by_index else None
+                    },
+                    "finish_reason": self._get_finish_reason() if self._finished else None
+                }],
+                "usage": {
+                    "prompt_tokens": getattr(self._usage, 'prompt_tokens', 0) if self._usage else 0,
+                    "completion_tokens": getattr(self._usage, 'completion_tokens', 0) if self._usage else 0,
+                    "total_tokens": getattr(self._usage, 'total_tokens', 0) if self._usage else 0
+                } if self._usage else None
+            }
+        return self._response_data
+    
+    # Override parent methods to ensure response data is available
+    def to_dict(self, **kwargs):
+        """Generate a dictionary representation of the response."""
+        self._build_response_data()
+        return super().to_dict(**kwargs)
+    
+    def to_json(self, **kwargs):
+        """Generate a JSON string representation of the response."""
+        self._build_response_data()
+        return super().to_json(**kwargs)

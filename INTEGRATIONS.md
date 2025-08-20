@@ -21,11 +21,23 @@ Automatically traces all OpenAI API calls including:
 - Token usage tracking
 - Input/output capture
 - Error handling
+- OpenAI-compatible response methods
 
 **Traced Operations:**
 
 - `client.chat.completions.create()`
 - Streaming responses with automatic buffering
+
+**Response Methods Support:**
+
+ZeroEval now provides OpenAI-compatible response methods for both streaming and non-streaming responses, including responses from OpenAI-compatible APIs that return plain dictionaries:
+
+- `response.to_dict()` - Convert response to dictionary
+- `response.to_json()` - Convert response to JSON string
+- `response.model_dump()` - Pydantic v2 alias for `to_dict()`
+- `response.model_dump_json()` - Pydantic v2 alias for `to_json()`
+- `response.dict()` - Deprecated Pydantic v1 alias
+- `response.json()` - Deprecated Pydantic v1 alias
 
 **Example:**
 
@@ -38,6 +50,24 @@ response = client.chat.completions.create(
     model="gpt-4",
     messages=[{"role": "user", "content": "Hello!"}]
 )
+
+# Response methods work for both OpenAI and compatible APIs
+data = response.to_dict()  # Get dictionary representation
+json_str = response.to_json(indent=2)  # Get formatted JSON
+
+# Works with streaming too
+stream = client.chat.completions.create(
+    model="gpt-4",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True
+)
+
+# After streaming completes, response methods are available
+for chunk in stream:
+    print(chunk)
+
+# Now you can use response methods on the stream
+final_data = stream.to_dict()
 ```
 
 ### 2. LangChain
