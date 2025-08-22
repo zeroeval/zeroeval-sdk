@@ -249,6 +249,70 @@ class OpenAIIntegration(Integration):
             
         return serialized
 
+    def _serialize_responses_input(self, input_data: Any) -> list[dict[str, Any]]:
+        """Serialize Responses API input into a chat-like messages structure.
+
+        The Responses API accepts a flexible `input` parameter. We normalize it to
+        a list of messages shaped like OpenAI Chat messages: {role, content}.
+        """
+        import json as _json
+
+        if input_data is None:
+            return []
+
+        # Simple string -> single user message
+        if isinstance(input_data, str):
+            return [{"role": "user", "content": input_data}]
+
+        # List of items
+        if isinstance(input_data, list):
+            messages: list[dict[str, Any]] = []
+            for item in input_data:
+                # Typical message item: { role, content: [ {type, text, ...}, ... ] }
+                if isinstance(item, dict) and item.get("role") and item.get("content") is not None:
+                    role = item.get("role")
+                    content = item.get("content")
+                    # content may be a list of content parts; extract text-like parts
+                    if isinstance(content, list):
+                        parts: list[str] = []
+                        for part in content:
+                            if isinstance(part, dict):
+                                # Prefer text fields (input_text.text, text)
+                                if "text" in part and isinstance(part["text"], str):
+                                    parts.append(part["text"]) 
+                                else:
+                                    # Fallback: include a compact JSON for non-text parts
+                                    try:
+                                        parts.append(_json.dumps(part))
+                                    except Exception:
+                                        parts.append(str(part))
+                            else:
+                                parts.append(str(part))
+                        messages.append({"role": role, "content": "\n".join(parts)})
+                    else:
+                        # If content is a plain string
+                        messages.append({"role": role, "content": str(content)})
+                    continue
+
+                # Direct text item (e.g., {type: "input_text", text: "..."})
+                if isinstance(item, dict) and item.get("type") in ("input_text", "text") and item.get("text"):
+                    messages.append({"role": "user", "content": item.get("text")})
+                    continue
+
+                # Unknown shape -> include compact JSON under user role to preserve data
+                try:
+                    messages.append({"role": "user", "content": _json.dumps(item)})
+                except Exception:
+                    messages.append({"role": "user", "content": str(item)})
+
+            return messages
+
+        # Dict or other types -> best-effort stringify
+        try:
+            return [{"role": "user", "content": _json.dumps(input_data)}]
+        except Exception:
+            return [{"role": "user", "content": str(input_data)}]
+
     def _extract_tool_calls(self, message) -> Optional[list[dict[str, Any]]]:
         """Extract tool calls from a message object."""
         if not hasattr(message, 'tool_calls') or not message.tool_calls:
@@ -685,8 +749,9 @@ class OpenAIIntegration(Integration):
             async def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
                 
-                # Extract input messages/prompts
-                input_data = kwargs.get("input")
+                # Extract input and normalize to messages
+                raw_input = kwargs.get("input")
+                normalized_messages = self._serialize_responses_input(raw_input)
                 
                 # Prepare span attributes
                 span_attributes = {
@@ -695,6 +760,15 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
                 }
+                # Try to capture base_url if available (async client passes resource instance in args[0])
+                base_url = None
+                if args and hasattr(args[0], "_client") and hasattr(args[0]._client, "base_url"):
+                    try:
+                        base_url = str(args[0]._client.base_url)
+                    except Exception:
+                        base_url = None
+                if base_url:
+                    span_attributes["base_url"] = base_url
                 
                 # Capture tools if present
                 if "tools" in kwargs and kwargs["tools"]:
@@ -707,6 +781,13 @@ class OpenAIIntegration(Integration):
                                 "description": tool.get("function", {}).get("description")
                             })
                     span_attributes["tools"] = tools_info
+                    span_attributes["tools_raw"] = kwargs["tools"]
+                # Capture tool_choice if present
+                if "tool_choice" in kwargs:
+                    span_attributes["tool_choice"] = kwargs["tool_choice"]
+                # Store normalized messages for UI convenience
+                if normalized_messages:
+                    span_attributes["messages"] = normalized_messages
                 
                 # Capture reasoning config if present
                 if "reasoning" in kwargs:
@@ -745,6 +826,11 @@ class OpenAIIntegration(Integration):
                     
                     # Extract output text
                     output_text = getattr(response, "output_text", "")
+                    # Capture basic response identifiers when available
+                    if hasattr(response, "id"):
+                        span.attributes["openai_id"] = response.id
+                    if hasattr(response, "system_fingerprint"):
+                        span.attributes["system_fingerprint"] = response.system_fingerprint
                     
                     # Extract tool calls from output
                     output_items = getattr(response, "output", [])
@@ -754,11 +840,17 @@ class OpenAIIntegration(Integration):
                     for item in output_items:
                         if hasattr(item, "type"):
                             if item.type == "function_call":
-                                tool_calls.append({
+                                # Align with chat.completions tool_calls shape
+                                tool_call_id = getattr(item, "id", None) or getattr(item, "call_id", None)
+                                tool_call = {
+                                    "id": tool_call_id,
                                     "type": "function",
-                                    "name": getattr(item, "name", "unknown"),
-                                    "arguments": getattr(item, "arguments", "")
-                                })
+                                    "function": {
+                                        "name": getattr(item, "name", None),
+                                        "arguments": getattr(item, "arguments", "")
+                                    }
+                                }
+                                tool_calls.append(tool_call)
                             elif item.type == "reasoning" and hasattr(item, "summary"):
                                 for summary in item.summary:
                                     if hasattr(summary, "text"):
@@ -766,6 +858,38 @@ class OpenAIIntegration(Integration):
                     
                     if tool_calls:
                         span.attributes["tool_calls"] = tool_calls
+                        # Also reflect tool calls in a synthetic assistant message so UI can render them
+                        try:
+                            existing_messages = span.attributes.get("messages") or normalized_messages or []
+                        except Exception:
+                            existing_messages = normalized_messages or []
+                        try:
+                            messages_with_assistant = list(existing_messages)
+                        except Exception:
+                            messages_with_assistant = []
+                        messages_with_assistant.append({
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": tool_calls
+                        })
+                        span.attributes["messages"] = messages_with_assistant
+                        # Create child spans for each tool call (consistent with chat completions)
+                        for tc in tool_calls:
+                            fn = tc.get("function") or {}
+                            tool_span = tracer.start_span(
+                                name=f"tool.{fn.get('name')}",
+                                kind="tool",
+                                attributes={
+                                    "service.name": "openai",
+                                    "type": "tool",
+                                    "tool_name": fn.get("name"),
+                                    "tool_call_id": tc.get("id"),
+                                    "arguments": fn.get("arguments"),
+                                },
+                                tags={"integration": "openai", "tool": fn.get("name") or "function"},
+                            )
+                            tool_span.set_io(input_data=fn.get("arguments"), output_data=None)
+                            tracer.end_span(tool_span)
                         
                     if reasoning_trace:
                         span.attributes["reasoning_trace"] = reasoning_trace
@@ -775,9 +899,13 @@ class OpenAIIntegration(Integration):
                     span.attributes["throughput"] = round(throughput, 2)
                     
                     # Set I/O data
+                    # To avoid duplicate UI bubbles, do not stringify tool_calls into output_data.
+                    # If tool calls exist, keep output_data as plain content (or None if no content).
+                    combined_output = output_text if output_text else (None if tool_calls else None)
+
                     span.set_io(
-                        input_data=json.dumps({"input": input_data}) if input_data else None,
-                        output_data=output_text or json.dumps({"tool_calls": tool_calls}) if tool_calls else None,
+                        input_data=json.dumps(self._serialize_messages(normalized_messages)),
+                        output_data=combined_output,
                     )
                     
                     tracer.end_span(span)
@@ -806,8 +934,9 @@ class OpenAIIntegration(Integration):
             def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
                 
-                # Extract input messages/prompts
-                input_data = kwargs.get("input")
+                # Extract input messages/prompts and normalize
+                raw_input = kwargs.get("input")
+                normalized_messages = self._serialize_responses_input(raw_input)
                 
                 # Prepare span attributes
                 span_attributes = {
@@ -816,6 +945,15 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
                 }
+                # base_url from client instance if available
+                base_url = None
+                if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
+                    try:
+                        base_url = str(responses_instance._client.base_url)
+                    except Exception:
+                        base_url = None
+                if base_url:
+                    span_attributes["base_url"] = base_url
                 
                 # Capture tools if present
                 if "tools" in kwargs and kwargs["tools"]:
@@ -828,6 +966,13 @@ class OpenAIIntegration(Integration):
                                 "description": tool.get("function", {}).get("description")
                             })
                     span_attributes["tools"] = tools_info
+                    span_attributes["tools_raw"] = kwargs["tools"]
+                # Capture tool_choice if present
+                if "tool_choice" in kwargs:
+                    span_attributes["tool_choice"] = kwargs["tool_choice"]
+                # Store normalized messages for UI convenience
+                if normalized_messages:
+                    span_attributes["messages"] = normalized_messages
                 
                 # Capture reasoning config if present
                 if "reasoning" in kwargs:
@@ -866,6 +1011,11 @@ class OpenAIIntegration(Integration):
                     
                     # Extract output text
                     output_text = getattr(response, "output_text", "")
+                    # Capture basic response identifiers when available
+                    if hasattr(response, "id"):
+                        span.attributes["openai_id"] = response.id
+                    if hasattr(response, "system_fingerprint"):
+                        span.attributes["system_fingerprint"] = response.system_fingerprint
                     
                     # Extract tool calls from output
                     output_items = getattr(response, "output", [])
@@ -875,11 +1025,17 @@ class OpenAIIntegration(Integration):
                     for item in output_items:
                         if hasattr(item, "type"):
                             if item.type == "function_call":
-                                tool_calls.append({
+                                # Align with chat.completions tool_calls shape
+                                tool_call_id = getattr(item, "id", None) or getattr(item, "call_id", None)
+                                tool_call = {
+                                    "id": tool_call_id,
                                     "type": "function",
-                                    "name": getattr(item, "name", "unknown"),
-                                    "arguments": getattr(item, "arguments", "")
-                                })
+                                    "function": {
+                                        "name": getattr(item, "name", None),
+                                        "arguments": getattr(item, "arguments", "")
+                                    }
+                                }
+                                tool_calls.append(tool_call)
                             elif item.type == "reasoning" and hasattr(item, "summary"):
                                 for summary in item.summary:
                                     if hasattr(summary, "text"):
@@ -887,6 +1043,38 @@ class OpenAIIntegration(Integration):
                     
                     if tool_calls:
                         span.attributes["tool_calls"] = tool_calls
+                        # Also reflect tool calls in a synthetic assistant message so UI can render them
+                        try:
+                            existing_messages = span.attributes.get("messages") or normalized_messages or []
+                        except Exception:
+                            existing_messages = normalized_messages or []
+                        try:
+                            messages_with_assistant = list(existing_messages)
+                        except Exception:
+                            messages_with_assistant = []
+                        messages_with_assistant.append({
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": tool_calls
+                        })
+                        span.attributes["messages"] = messages_with_assistant
+                        # Create child spans for each tool call (consistent with chat completions)
+                        for tc in tool_calls:
+                            fn = tc.get("function") or {}
+                            tool_span = tracer.start_span(
+                                name=f"tool.{fn.get('name')}",
+                                kind="tool",
+                                attributes={
+                                    "service.name": "openai",
+                                    "type": "tool",
+                                    "tool_name": fn.get("name"),
+                                    "tool_call_id": tc.get("id"),
+                                    "arguments": fn.get("arguments"),
+                                },
+                                tags={"integration": "openai", "tool": fn.get("name") or "function"},
+                            )
+                            tool_span.set_io(input_data=fn.get("arguments"), output_data=None)
+                            tracer.end_span(tool_span)
                         
                     if reasoning_trace:
                         span.attributes["reasoning_trace"] = reasoning_trace
@@ -896,9 +1084,13 @@ class OpenAIIntegration(Integration):
                     span.attributes["throughput"] = round(throughput, 2)
                     
                     # Set I/O data
+                    # To avoid duplicate UI bubbles, do not stringify tool_calls into output_data.
+                    # If tool calls exist, keep output_data as plain content (or None if no content).
+                    combined_output = output_text if output_text else (None if tool_calls else None)
+
                     span.set_io(
-                        input_data=json.dumps({"input": input_data}) if input_data else None,
-                        output_data=output_text or json.dumps({"tool_calls": tool_calls}) if tool_calls else None,
+                        input_data=json.dumps(self._serialize_messages(normalized_messages)),
+                        output_data=combined_output,
                     )
                     
                     tracer.end_span(span)
