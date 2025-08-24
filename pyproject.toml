@@ -1,6 +1,6 @@
 [project]
 name = "zeroeval"
-version = "0.6.102"
+version = "0.6.103"
 description = "ZeroEval SDK"
 readme = "README.md"
 authors = [
@@ -10,8 +10,8 @@ authors = [
 requires-python = ">=3.9,<4.0"
 dependencies = [
     "rich >=13.9.4",
-    "opentelemetry-api >=1.30.0",
-    "opentelemetry-sdk >=1.30.0",
+    "opentelemetry-api >=1.26.0",
+    "opentelemetry-sdk >=1.26.0",
     "opentelemetry-exporter-otlp-proto-http>=1.26.0",
     "requests >=2.32.3",
     "google-genai==1.21.1",
