@@ -1,6 +1,6 @@
 [project]
 name = "zeroeval"
-version = "0.6.100"
+version = "0.6.101"
 description = "ZeroEval SDK"
 readme = "README.md"
 authors = [
@@ -15,7 +15,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.34.1",
     "requests >=2.32.3",
     "google-genai==1.21.1",
-    "python-dotenv>=1.1.1",
+    "python-dotenv>=1.0.0",
 ]
 keywords = ["evaluation", "LLM", "observability"]
 
