@@ -72,6 +72,22 @@ class OpenAIIntegration(Integration):
                 "__init__",
                 self._wrap_init
             )
+            # Also patch Azure client variants if available
+            try:
+                if hasattr(openai, "AzureOpenAI"):
+                    self._patch_method(
+                        openai.AzureOpenAI,
+                        "__init__",
+                        self._wrap_init
+                    )
+                if hasattr(openai, "AsyncAzureOpenAI"):
+                    self._patch_method(
+                        openai.AsyncAzureOpenAI,
+                        "__init__",
+                        self._wrap_init
+                    )
+            except Exception as e:
+                logger.debug(f"Azure OpenAI classes not fully patched: {e}")
         except Exception as e:
             logger.error(f"Failed to setup OpenAI integration: {e}")
             pass
@@ -118,11 +134,23 @@ class OpenAIIntegration(Integration):
                         "create",
                         self._wrap_responses_create_async()
                     )
+                    # Patch responses.parse as well
+                    self._patch_method(
+                        client_instance.responses,
+                        "parse",
+                        self._wrap_responses_parse_async()
+                    )
                 else:
                     self._patch_method(
                         client_instance.responses,
                         "create",
                         self._wrap_responses_create_sync(client_instance.responses)
+                    )
+                    # Patch responses.parse as well
+                    self._patch_method(
+                        client_instance.responses,
+                        "parse",
+                        self._wrap_responses_parse_sync(client_instance.responses)
                     )
             
             return result
@@ -313,6 +341,70 @@ class OpenAIIntegration(Integration):
         except Exception:
             return [{"role": "user", "content": str(input_data)}]
 
+    def _process_responses_input_with_zeroeval(self, input_data: Any) -> tuple[Any, list[dict[str, Any]], Optional[dict[str, Any]]]:
+        """
+        Process Responses API `input` to support zeroeval_prompt metadata and variable interpolation.
+
+        Returns:
+          - processed_input: original input shape with <zeroeval> removed and variables interpolated
+          - normalized_messages: best-effort normalized messages for span I/O
+          - zeroeval_metadata: extracted metadata dict or None
+        """
+        import copy as _copy
+
+        zeroeval_metadata: Optional[dict[str, Any]] = None
+        variables: dict[str, Any] = {}
+
+        def _process_text(text: Optional[str]) -> Optional[str]:
+            nonlocal zeroeval_metadata, variables
+            if not isinstance(text, str):
+                return text
+            if zeroeval_metadata is None:
+                meta, cleaned = self._extract_zeroeval_metadata(text)
+                if meta:
+                    zeroeval_metadata = meta
+                    variables = meta.get("variables", {}) or {}
+                    text = cleaned
+            if variables:
+                text = self._interpolate_variables(text, variables)
+            return text
+
+        # String input
+        if isinstance(input_data, str):
+            processed = _process_text(input_data)
+            return processed, self._serialize_responses_input(processed), zeroeval_metadata
+
+        # List input (messages or content parts)
+        if isinstance(input_data, list):
+            processed_list = _copy.deepcopy(input_data)
+            for item in processed_list:
+                if isinstance(item, dict):
+                    # Message-like
+                    if item.get("role") is not None and item.get("content") is not None:
+                        content = item.get("content")
+                        if isinstance(content, str):
+                            item["content"] = _process_text(content)
+                        elif isinstance(content, list):
+                            new_parts = []
+                            for part in content:
+                                if isinstance(part, dict) and "text" in part:
+                                    part = {**part, "text": _process_text(part.get("text"))}
+                                new_parts.append(part)
+                            item["content"] = new_parts
+                        continue
+
+                    # input_text-style
+                    if item.get("type") in ("input_text", "text") and item.get("text") is not None:
+                        item["text"] = _process_text(item.get("text"))
+                        continue
+            return processed_list, self._serialize_responses_input(processed_list), zeroeval_metadata
+
+        # Dict or other types: cannot safely mutate; process via normalized messages
+        normalized = self._serialize_responses_input(input_data)
+        if normalized and isinstance(normalized[0].get("content"), str):
+            normalized[0]["content"] = _process_text(normalized[0]["content"])  # type: ignore[index]
+        return input_data, normalized, zeroeval_metadata
+
     def _extract_tool_calls(self, message) -> Optional[list[dict[str, Any]]]:
         """Extract tool calls from a message object."""
         if not hasattr(message, 'tool_calls') or not message.tool_calls:
@@ -386,6 +478,25 @@ class OpenAIIntegration(Integration):
                             })
                     span_attributes["tools"] = tools_info
                     span_attributes["tools_raw"] = kwargs["tools"]  # Keep raw format too
+                # Back-compat: capture legacy 'functions' param as tools metadata
+                if "functions" in kwargs and kwargs["functions"] and not span_attributes.get("tools"):
+                    try:
+                        legacy_tools = []
+                        for fn in kwargs["functions"]:
+                            # fn expected shape: { name, description, parameters }
+                            legacy_tools.append({
+                                "type": "function",
+                                "name": fn.get("name"),
+                                "description": fn.get("description")
+                            })
+                        if legacy_tools:
+                            span_attributes["tools"] = legacy_tools
+                            span_attributes["tools_raw_functions"] = kwargs["functions"]
+                            # Reflect tool_choice if using legacy flow
+                            if "function_call" in kwargs:
+                                span_attributes["tool_choice"] = kwargs["function_call"]
+                    except Exception:
+                        pass
                 
                 # Capture tool_choice if present
                 if "tool_choice" in kwargs:
@@ -590,6 +701,23 @@ class OpenAIIntegration(Integration):
                             })
                     span_attributes["tools"] = tools_info
                     span_attributes["tools_raw"] = kwargs["tools"]  # Keep raw format too
+                # Back-compat: capture legacy 'functions' param as tools metadata
+                if "functions" in kwargs and kwargs["functions"] and not span_attributes.get("tools"):
+                    try:
+                        legacy_tools = []
+                        for fn in kwargs["functions"]:
+                            legacy_tools.append({
+                                "type": "function",
+                                "name": fn.get("name"),
+                                "description": fn.get("description")
+                            })
+                        if legacy_tools:
+                            span_attributes["tools"] = legacy_tools
+                            span_attributes["tools_raw_functions"] = kwargs["functions"]
+                            if "function_call" in kwargs:
+                                span_attributes["tool_choice"] = kwargs["function_call"]
+                    except Exception:
+                        pass
                 
                 # Capture tool_choice if present
                 if "tool_choice" in kwargs:
@@ -749,9 +877,12 @@ class OpenAIIntegration(Integration):
             async def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
                 
-                # Extract input and normalize to messages
+                # Extract input, process zeroeval metadata, and normalize to messages
                 raw_input = kwargs.get("input")
-                normalized_messages = self._serialize_responses_input(raw_input)
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                # Replace input with processed version so the model receives cleaned/interpolated text
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
                 
                 # Prepare span attributes
                 span_attributes = {
@@ -760,6 +891,9 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
                 }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
                 # Try to capture base_url if available (async client passes resource instance in args[0])
                 base_url = None
                 if args and hasattr(args[0], "_client") and hasattr(args[0]._client, "base_url"):
@@ -934,9 +1068,11 @@ class OpenAIIntegration(Integration):
             def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
                 
-                # Extract input messages/prompts and normalize
+                # Extract input, process zeroeval metadata, and normalize
                 raw_input = kwargs.get("input")
-                normalized_messages = self._serialize_responses_input(raw_input)
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
                 
                 # Prepare span attributes
                 span_attributes = {
@@ -945,6 +1081,9 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
                 }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
                 # base_url from client instance if available
                 base_url = None
                 if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
@@ -1101,6 +1240,335 @@ class OpenAIIntegration(Integration):
                     
                     return response
                     
+                except Exception as e:
+                    span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                    tracer.end_span(span)
+                    raise
+
+            return inner
+        return wrapper
+
+    # ------------------------------------------------------------------+
+    #  Responses API parse wrappers                                      |
+    # ------------------------------------------------------------------+
+    def _wrap_responses_parse_async(self) -> Callable:
+        """Wrap responses.parse for async clients."""
+        import json
+        import time
+
+        def wrapper(original: Callable) -> Callable:
+            @wraps(original)
+            async def inner(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+
+                # Process input to support zeroeval metadata and variable interpolation
+                raw_input = kwargs.get("input")
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
+
+                span_attributes = {
+                    "service.name": "openai",
+                    "provider": "openai",
+                    "model": kwargs.get("model"),
+                    "endpoint": "responses.parse",
+                }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
+
+                # base_url if available (resource instance is args[0])
+                base_url = None
+                if args and hasattr(args[0], "_client") and hasattr(args[0]._client, "base_url"):
+                    try:
+                        base_url = str(args[0]._client.base_url)
+                    except Exception:
+                        base_url = None
+                if base_url:
+                    span_attributes["base_url"] = base_url
+
+                if "tools" in kwargs and kwargs["tools"]:
+                    tools_info = []
+                    for tool in kwargs["tools"]:
+                        if isinstance(tool, dict) and tool.get("type") == "function":
+                            tools_info.append({
+                                "type": "function",
+                                "name": tool.get("function", {}).get("name"),
+                                "description": tool.get("function", {}).get("description"),
+                            })
+                    span_attributes["tools"] = tools_info
+                    span_attributes["tools_raw"] = kwargs["tools"]
+
+                if "tool_choice" in kwargs:
+                    span_attributes["tool_choice"] = kwargs["tool_choice"]
+
+                # Capture text_format info for debugging visibility
+                if "text_format" in kwargs and kwargs["text_format"] is not None:
+                    try:
+                        span_attributes["text_format"] = getattr(kwargs["text_format"], "__name__", str(kwargs["text_format"]))
+                    except Exception:
+                        span_attributes["text_format"] = "<unknown>"
+
+                if normalized_messages:
+                    span_attributes["messages"] = normalized_messages
+
+                span = self.tracer.start_span(
+                    name="openai.responses.parse",
+                    kind="llm",
+                    attributes=span_attributes,
+                    tags={"integration": "openai", "endpoint": "responses.parse"},
+                )
+                tracer = self.tracer
+
+                try:
+                    response = await original(*args, **kwargs)
+
+                    elapsed = time.time() - start_time
+
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
+                        span.attributes.update({
+                            "inputTokens": input_tokens,
+                            "outputTokens": output_tokens,
+                        })
+                        span.attributes["usage"] = {
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "total_tokens": getattr(usage, "total_tokens", input_tokens + output_tokens),
+                        }
+
+                    output_text = getattr(response, "output_text", "")
+                    if hasattr(response, "id"):
+                        span.attributes["openai_id"] = response.id
+                    if hasattr(response, "system_fingerprint"):
+                        span.attributes["system_fingerprint"] = response.system_fingerprint
+
+                    # Extract tool calls and reasoning from parsed response output
+                    output_items = getattr(response, "output", [])
+                    tool_calls = []
+                    reasoning_trace = []
+                    for item in output_items:
+                        if hasattr(item, "type"):
+                            if item.type == "function_call":
+                                tool_call_id = getattr(item, "id", None) or getattr(item, "call_id", None)
+                                tool_calls.append({
+                                    "id": tool_call_id,
+                                    "type": "function",
+                                    "function": {"name": getattr(item, "name", None), "arguments": getattr(item, "arguments", "")},
+                                })
+                            elif item.type == "reasoning" and hasattr(item, "summary"):
+                                for summary in item.summary:
+                                    if hasattr(summary, "text"):
+                                        reasoning_trace.append(summary.text)
+
+                    if tool_calls:
+                        span.attributes["tool_calls"] = tool_calls
+                        try:
+                            existing_messages = span.attributes.get("messages") or normalized_messages or []
+                        except Exception:
+                            existing_messages = normalized_messages or []
+                        try:
+                            messages_with_assistant = list(existing_messages)
+                        except Exception:
+                            messages_with_assistant = []
+                        messages_with_assistant.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
+                        span.attributes["messages"] = messages_with_assistant
+                        for tc in tool_calls:
+                            fn = tc.get("function") or {}
+                            tool_span = tracer.start_span(
+                                name=f"tool.{fn.get('name')}",
+                                kind="tool",
+                                attributes={
+                                    "service.name": "openai",
+                                    "type": "tool",
+                                    "tool_name": fn.get("name"),
+                                    "tool_call_id": tc.get("id"),
+                                    "arguments": fn.get("arguments"),
+                                },
+                                tags={"integration": "openai", "tool": fn.get("name") or "function"},
+                            )
+                            tool_span.set_io(input_data=fn.get("arguments"), output_data=None)
+                            tracer.end_span(tool_span)
+
+                    if reasoning_trace:
+                        span.attributes["reasoning_trace"] = reasoning_trace
+
+                    throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
+                    span.attributes["throughput"] = round(throughput, 2)
+
+                    combined_output = output_text if output_text else (None if tool_calls else None)
+                    span.set_io(
+                        input_data=json.dumps(self._serialize_messages(normalized_messages)),
+                        output_data=combined_output,
+                    )
+
+                    tracer.end_span(span)
+                    if isinstance(response, dict) and not hasattr(response, "to_dict"):
+                        return _ResponseWrapper(response)
+                    return response
+                except Exception as e:
+                    span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
+                    tracer.end_span(span)
+                    raise
+
+            return inner
+        return wrapper
+
+    def _wrap_responses_parse_sync(self, responses_instance) -> Callable:
+        """Wrap responses.parse for sync clients."""
+        import json
+        import time
+
+        def wrapper(original: Callable) -> Callable:
+            @wraps(original)
+            def inner(*args: Any, **kwargs: Any) -> Any:
+                start_time = time.time()
+
+                raw_input = kwargs.get("input")
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
+
+                span_attributes = {
+                    "service.name": "openai",
+                    "provider": "openai",
+                    "model": kwargs.get("model"),
+                    "endpoint": "responses.parse",
+                }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
+
+                base_url = None
+                if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
+                    try:
+                        base_url = str(responses_instance._client.base_url)
+                    except Exception:
+                        base_url = None
+                if base_url:
+                    span_attributes["base_url"] = base_url
+
+                if "tools" in kwargs and kwargs["tools"]:
+                    tools_info = []
+                    for tool in kwargs["tools"]:
+                        if isinstance(tool, dict) and tool.get("type") == "function":
+                            tools_info.append({
+                                "type": "function",
+                                "name": tool.get("function", {}).get("name"),
+                                "description": tool.get("function", {}).get("description"),
+                            })
+                    span_attributes["tools"] = tools_info
+                    span_attributes["tools_raw"] = kwargs["tools"]
+
+                if "tool_choice" in kwargs:
+                    span_attributes["tool_choice"] = kwargs["tool_choice"]
+
+                if "text_format" in kwargs and kwargs["text_format"] is not None:
+                    try:
+                        span_attributes["text_format"] = getattr(kwargs["text_format"], "__name__", str(kwargs["text_format"]))
+                    except Exception:
+                        span_attributes["text_format"] = "<unknown>"
+
+                if normalized_messages:
+                    span_attributes["messages"] = normalized_messages
+
+                span = self.tracer.start_span(
+                    name="openai.responses.parse",
+                    kind="llm",
+                    attributes=span_attributes,
+                    tags={"integration": "openai", "endpoint": "responses.parse"},
+                )
+                tracer = self.tracer
+
+                try:
+                    response = original(*args, **kwargs)
+
+                    elapsed = time.time() - start_time
+
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        input_tokens = getattr(usage, "input_tokens", 0)
+                        output_tokens = getattr(usage, "output_tokens", 0)
+                        span.attributes.update({
+                            "inputTokens": input_tokens,
+                            "outputTokens": output_tokens,
+                        })
+                        span.attributes["usage"] = {
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "total_tokens": getattr(usage, "total_tokens", input_tokens + output_tokens),
+                        }
+
+                    output_text = getattr(response, "output_text", "")
+                    if hasattr(response, "id"):
+                        span.attributes["openai_id"] = response.id
+                    if hasattr(response, "system_fingerprint"):
+                        span.attributes["system_fingerprint"] = response.system_fingerprint
+
+                    output_items = getattr(response, "output", [])
+                    tool_calls = []
+                    reasoning_trace = []
+                    for item in output_items:
+                        if hasattr(item, "type"):
+                            if item.type == "function_call":
+                                tool_call_id = getattr(item, "id", None) or getattr(item, "call_id", None)
+                                tool_calls.append({
+                                    "id": tool_call_id,
+                                    "type": "function",
+                                    "function": {"name": getattr(item, "name", None), "arguments": getattr(item, "arguments", "")},
+                                })
+                            elif item.type == "reasoning" and hasattr(item, "summary"):
+                                for summary in item.summary:
+                                    if hasattr(summary, "text"):
+                                        reasoning_trace.append(summary.text)
+
+                    if tool_calls:
+                        span.attributes["tool_calls"] = tool_calls
+                        try:
+                            existing_messages = span.attributes.get("messages") or normalized_messages or []
+                        except Exception:
+                            existing_messages = normalized_messages or []
+                        try:
+                            messages_with_assistant = list(existing_messages)
+                        except Exception:
+                            messages_with_assistant = []
+                        messages_with_assistant.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
+                        span.attributes["messages"] = messages_with_assistant
+                        for tc in tool_calls:
+                            fn = tc.get("function") or {}
+                            tool_span = tracer.start_span(
+                                name=f"tool.{fn.get('name')}",
+                                kind="tool",
+                                attributes={
+                                    "service.name": "openai",
+                                    "type": "tool",
+                                    "tool_name": fn.get("name"),
+                                    "tool_call_id": tc.get("id"),
+                                    "arguments": fn.get("arguments"),
+                                },
+                                tags={"integration": "openai", "tool": fn.get("name") or "function"},
+                            )
+                            tool_span.set_io(input_data=fn.get("arguments"), output_data=None)
+                            tracer.end_span(tool_span)
+
+                    if reasoning_trace:
+                        span.attributes["reasoning_trace"] = reasoning_trace
+
+                    throughput = (len(output_text) / elapsed) if (output_text and elapsed > 0) else 0
+                    span.attributes["throughput"] = round(throughput, 2)
+
+                    combined_output = output_text if output_text else (None if tool_calls else None)
+                    span.set_io(
+                        input_data=json.dumps(self._serialize_messages(normalized_messages)),
+                        output_data=combined_output,
+                    )
+
+                    tracer.end_span(span)
+                    if isinstance(response, dict) and not hasattr(response, "to_dict"):
+                        return _ResponseWrapper(response)
+                    return response
                 except Exception as e:
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
