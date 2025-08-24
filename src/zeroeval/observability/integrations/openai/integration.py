@@ -11,35 +11,52 @@ logger = logging.getLogger(__name__)
 
 def zeroeval_prompt(prompt: str, variables: Optional[dict] = None, task: Optional[str] = None) -> str:
     """
-    Helper function to create a prompt with zeroeval metadata.
+    Helper function to create a prompt with zeroeval metadata for tracing and observability.
+    
+    IMPORTANT: This function does NOT create or update tasks in ZeroEval. It only adds
+    metadata to OpenAI API calls for tracing purposes. Tasks must be created separately
+    using Dataset.run() or Experiment.run().
     
     Args:
         prompt: The actual prompt content (e.g., "You are a helpful assistant.")
         variables: Dictionary of variables to be interpolated in the prompt
-        task: Optional task identifier for this prompt
+        task: Optional task identifier for this prompt (must exist or be created separately)
     
     Returns:
         A string with the format: <zeroeval>{JSON}</zeroeval>prompt
         
     Example:
+        >>> # This adds metadata but does NOT create a task
         >>> zeroeval_prompt(
         ...     "You are a helpful assistant. The price is {{price}}",
         ...     variables={"price": 10},
-        ...     task="pricing_assistant"
+        ...     task="pricing_assistant"  # Task must exist or be created separately
         ... )
         '<zeroeval>{"variables": {"price": 10}, "task": "pricing_assistant"}</zeroeval>You are a helpful assistant. The price is {{price}}'
+        
+    Note:
+        - The 'task' parameter is for linking OpenAI calls to existing tasks
+        - Tasks are created through Dataset.run() or Experiment.run()
+        - Variables will be interpolated in the prompt when the OpenAI API is called
     """
     metadata = {}
     
     if variables:
         metadata["variables"] = variables
+        logger.debug(f"zeroeval_prompt: Adding variables to metadata: {variables}")
     
     if task:
         metadata["task"] = task
+        logger.info(f"zeroeval_prompt: Creating prompt with task ID: '{task}'")
     
     if metadata:
-        return f'<zeroeval>{json.dumps(metadata)}</zeroeval>{prompt}'
+        metadata_json = json.dumps(metadata)
+        logger.debug(f"zeroeval_prompt: Full metadata: {metadata_json}")
+        formatted_prompt = f'<zeroeval>{metadata_json}</zeroeval>{prompt}'
+        logger.debug(f"zeroeval_prompt: Formatted prompt preview (first 100 chars): {formatted_prompt[:100]}...")
+        return formatted_prompt
     
+    logger.debug("zeroeval_prompt: No metadata provided, returning prompt as-is")
     return prompt
 
 
@@ -163,28 +180,44 @@ class OpenAIIntegration(Integration):
         Returns:
             - Tuple of (metadata dict or None, cleaned content string)
         """
+        logger.debug(f"_extract_zeroeval_metadata: Searching for metadata in content (length: {len(content)} chars)")
+        
         # Look for <zeroeval>...</zeroeval> tags
         pattern = r'<zeroeval>(.*?)</zeroeval>'
         match = re.search(pattern, content, re.DOTALL)
         
         if not match:
+            logger.debug("_extract_zeroeval_metadata: No <zeroeval> tags found in content")
             return None, content
+        
+        logger.info("_extract_zeroeval_metadata: Found <zeroeval> tags, extracting metadata")
         
         try:
             # Extract and parse the JSON
             json_str = match.group(1).strip()
+            logger.debug(f"_extract_zeroeval_metadata: Raw JSON string: {json_str}")
+            
             metadata = json.loads(json_str)
+            logger.info(f"_extract_zeroeval_metadata: Successfully parsed metadata: {metadata}")
             
             # Validate required fields
             if not isinstance(metadata, dict):
                 raise ValueError("Metadata must be a JSON object")
             
+            # Log specific metadata fields
+            if "task" in metadata:
+                logger.info(f"_extract_zeroeval_metadata: Task ID found: '{metadata['task']}'")
+            if "variables" in metadata:
+                logger.debug(f"_extract_zeroeval_metadata: Variables found: {metadata['variables']}")
+            
             # Remove the <zeroeval> tags from content
             cleaned_content = re.sub(pattern, '', content, count=1).strip()
+            logger.debug(f"_extract_zeroeval_metadata: Cleaned content length: {len(cleaned_content)} chars")
             
             return metadata, cleaned_content
         except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"Failed to parse zeroeval metadata: {e}")
+            logger.error(f"_extract_zeroeval_metadata: Failed to parse metadata JSON: {e}")
+            logger.error(f"_extract_zeroeval_metadata: Invalid JSON string was: {json_str if 'json_str' in locals() else 'N/A'}")
             raise ValueError(f"Invalid JSON in <zeroeval> tags: {e}") from e
     
     def _interpolate_variables(self, text: str, variables: dict[str, Any]) -> str:
@@ -208,6 +241,23 @@ class OpenAIIntegration(Integration):
         
         return text
     
+    def _log_task_metadata(self, task_id: Optional[str], zeroeval_metadata: dict[str, Any], context: str = "OpenAI API call") -> None:
+        """
+        Log information about task metadata found in zeroeval_prompt.
+        
+        Args:
+            task_id: The task ID from metadata
+            zeroeval_metadata: Full metadata dictionary
+            context: Context string for the log message
+        """
+        if task_id:
+            logger.info(
+                f"{context}: Task ID '{task_id}' added to span attributes. "
+                f"This enables tracing but does NOT create/update tasks. "
+                f"Ensure the task exists or will be created through Dataset/Experiment.run()."
+            )
+        logger.debug(f"{context}: Full zeroeval metadata added to span: {zeroeval_metadata}")
+    
     def _process_messages_with_zeroeval(self, messages: Optional[list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], Optional[dict[str, Any]]]:
         """
         Process messages to extract zeroeval metadata and interpolate variables.
@@ -216,7 +266,10 @@ class OpenAIIntegration(Integration):
             - Tuple of (processed messages, zeroeval metadata)
         """
         if not messages:
+            logger.debug("_process_messages_with_zeroeval: No messages to process")
             return messages, None
+        
+        logger.debug(f"_process_messages_with_zeroeval: Processing {len(messages)} messages")
         
         # Deep copy messages to avoid modifying the original
         import copy
@@ -227,6 +280,7 @@ class OpenAIIntegration(Integration):
         # Check if first message is a system message with zeroeval tags
         if processed_messages and processed_messages[0].get("role") == "system":
             content = processed_messages[0].get("content", "")
+            logger.debug(f"_process_messages_with_zeroeval: Checking system message for zeroeval tags")
             
             # Extract zeroeval metadata
             metadata, cleaned_content = self._extract_zeroeval_metadata(content)
@@ -239,13 +293,31 @@ class OpenAIIntegration(Integration):
                 processed_messages[0]["content"] = cleaned_content
                 
                 # Log extraction
-                logger.debug(f"Extracted zeroeval metadata: task={metadata.get('task')}, variables={variables}")
+                task_id = metadata.get('task')
+                logger.info(f"_process_messages_with_zeroeval: Successfully extracted metadata - task: '{task_id}', variables: {list(variables.keys()) if variables else 'none'}")
+                
+                # Important warning for users
+                if task_id:
+                    logger.warning(
+                        f"_process_messages_with_zeroeval: Task ID '{task_id}' found in zeroeval_prompt. "
+                        f"Note: zeroeval_prompt does NOT automatically create or update tasks. "
+                        f"Tasks must be created separately using Dataset.run() or Experiment.run(). "
+                        f"This metadata is only used for tracing and observability."
+                    )
+            else:
+                logger.debug("_process_messages_with_zeroeval: No zeroeval metadata found in system message")
+        else:
+            logger.debug("_process_messages_with_zeroeval: First message is not a system message or no messages present")
         
         # Interpolate variables in all messages if we have any
         if variables:
-            for msg in processed_messages:
+            logger.debug(f"_process_messages_with_zeroeval: Interpolating {len(variables)} variables in all messages")
+            for i, msg in enumerate(processed_messages):
                 if msg.get("content"):
+                    original_content = msg["content"]
                     msg["content"] = self._interpolate_variables(msg["content"], variables)
+                    if original_content != msg["content"]:
+                        logger.debug(f"_process_messages_with_zeroeval: Variables interpolated in message {i}")
         
         return processed_messages, zeroeval_metadata
 
@@ -505,7 +577,12 @@ class OpenAIIntegration(Integration):
                 # Add zeroeval metadata to attributes if present
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
-                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    task_id = zeroeval_metadata.get("task")
+                    span_attributes["task"] = task_id
+                    
+                    # Log task metadata information
+                    self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
+                    
                     # Store the original system prompt template (with {{variables}})
                     if original_messages and original_messages[0].get("role") == "system":
                         # Extract just the content after the zeroeval tags
@@ -726,7 +803,12 @@ class OpenAIIntegration(Integration):
                 # Add zeroeval metadata to attributes if present
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
-                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    task_id = zeroeval_metadata.get("task")
+                    span_attributes["task"] = task_id
+                    
+                    # Log task metadata information
+                    self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
+                    
                     # Store the original system prompt template (with {{variables}})
                     if original_messages and original_messages[0].get("role") == "system":
                         # Extract just the content after the zeroeval tags
@@ -893,7 +975,11 @@ class OpenAIIntegration(Integration):
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
-                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    task_id = zeroeval_metadata.get("task")
+                    span_attributes["task"] = task_id
+                    
+                    # Log task metadata information
+                    self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
                 # Try to capture base_url if available (async client passes resource instance in args[0])
                 base_url = None
                 if args and hasattr(args[0], "_client") and hasattr(args[0]._client, "base_url"):
@@ -1083,7 +1169,11 @@ class OpenAIIntegration(Integration):
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
-                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    task_id = zeroeval_metadata.get("task")
+                    span_attributes["task"] = task_id
+                    
+                    # Log task metadata information
+                    self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
                 # base_url from client instance if available
                 base_url = None
                 if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
@@ -1275,7 +1365,11 @@ class OpenAIIntegration(Integration):
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
-                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    task_id = zeroeval_metadata.get("task")
+                    span_attributes["task"] = task_id
+                    
+                    # Log task metadata information
+                    self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
 
                 # base_url if available (resource instance is args[0])
                 base_url = None
@@ -1439,7 +1533,11 @@ class OpenAIIntegration(Integration):
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
-                    span_attributes["task"] = zeroeval_metadata.get("task")
+                    task_id = zeroeval_metadata.get("task")
+                    span_attributes["task"] = task_id
+                    
+                    # Log task metadata information
+                    self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
 
                 base_url = None
                 if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
