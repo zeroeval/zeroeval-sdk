@@ -1,6 +1,6 @@
 [project]
 name = "zeroeval"
-version = "0.6.103"
+version = "0.6.106"
 description = "ZeroEval SDK"
 readme = "README.md"
 authors = [
@@ -9,12 +9,11 @@ authors = [
 ]
 requires-python = ">=3.9,<4.0"
 dependencies = [
-    "rich >=13.9.4",
+    "rich >=13.7.1",
     "opentelemetry-api >=1.26.0",
     "opentelemetry-sdk >=1.26.0",
     "opentelemetry-exporter-otlp-proto-http>=1.26.0",
-    "requests >=2.32.3",
-    "google-genai==1.21.1",
+    "requests >=2.32.2",
     "python-dotenv>=1.0.0",
 ]
 keywords = ["evaluation", "LLM", "observability"]
@@ -40,6 +39,7 @@ dev = [
     "pytest-asyncio >=0.23.7, <1.0.0",
     "ruff >=0.12.2, <1.0.0",
     "tox >=4.0.0, <5.0.0",
+    "google-genai==1.21.1"
 ]
 
 [build-system]
