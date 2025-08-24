@@ -23,7 +23,7 @@ from .core.init import init
 from .providers import ZeroEvalOTLPProvider, SingleProcessorProvider, langfuse_zeroeval
 
 # Observability imports - import the actual classes/objects
-from .observability import tracer, span as _SpanClass
+from .observability import tracer, span as _SpanClass, zeroeval_prompt
 
 # Create convenience functions that match the expected API
 def start_span(name: str, **kwargs):
@@ -54,6 +54,9 @@ def set_tag(target, tags):
 # Use the imported span class directly
 span = _SpanClass
 
+# Create convenience alias for zeroeval_prompt
+prompt = zeroeval_prompt
+
 # Define what's exported
 __all__ = [
     # Core functionality
@@ -75,6 +78,9 @@ __all__ = [
     "get_current_trace",
     "get_current_session",
     "set_tag",
+    # Prompt utilities
+    "zeroeval_prompt",
+    "prompt",
 ]
 
 # Version info

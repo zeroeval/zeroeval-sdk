@@ -9,7 +9,7 @@ from ..base import Integration
 logger = logging.getLogger(__name__)
 
 
-def zeroeval_prompt(prompt: str, variables: Optional[dict] = None, task: Optional[str] = None) -> str:
+def zeroeval_prompt(name: str, content: str, variables: Optional[dict] = None) -> str:
     """
     Helper function to create a prompt with zeroeval metadata for tracing and observability.
     
@@ -18,46 +18,43 @@ def zeroeval_prompt(prompt: str, variables: Optional[dict] = None, task: Optiona
     using Dataset.run() or Experiment.run().
     
     Args:
-        prompt: The actual prompt content (e.g., "You are a helpful assistant.")
-        variables: Dictionary of variables to be interpolated in the prompt
-        task: Optional task identifier for this prompt (must exist or be created separately)
+        name: Required task identifier for this prompt
+        content: The actual prompt content (e.g., "You are a helpful assistant.")
+        variables: Optional dictionary of variables to be interpolated in the prompt
     
     Returns:
-        A string with the format: <zeroeval>{JSON}</zeroeval>prompt
+        A string with the format: <zeroeval>{JSON}</zeroeval>content
         
     Example:
         >>> # This adds metadata but does NOT create a task
         >>> zeroeval_prompt(
-        ...     "You are a helpful assistant. The price is {{price}}",
-        ...     variables={"price": 10},
-        ...     task="pricing_assistant"  # Task must exist or be created separately
+        ...     name="custom-bot-5",
+        ...     content="You are an assistant that helps users with {{task}}. Be {{tone}} in your responses.",
+        ...     variables={
+        ...         "task": "coding questions",
+        ...         "tone": "helpful and concise"
+        ...     }
         ... )
-        '<zeroeval>{"variables": {"price": 10}, "task": "pricing_assistant"}</zeroeval>You are a helpful assistant. The price is {{price}}'
+        '<zeroeval>{"task": "custom-bot-5", "variables": {"task": "coding questions", "tone": "helpful and concise"}}</zeroeval>You are an assistant that helps users with {{task}}. Be {{tone}} in your responses.'
         
     Note:
-        - The 'task' parameter is for linking OpenAI calls to existing tasks
+        - The 'name' parameter is for linking OpenAI calls to existing tasks
         - Tasks are created through Dataset.run() or Experiment.run()
         - Variables will be interpolated in the prompt when the OpenAI API is called
     """
-    metadata = {}
+    metadata = {"task": name}
     
     if variables:
         metadata["variables"] = variables
         logger.debug(f"zeroeval_prompt: Adding variables to metadata: {variables}")
     
-    if task:
-        metadata["task"] = task
-        logger.info(f"zeroeval_prompt: Creating prompt with task ID: '{task}'")
+    logger.info(f"zeroeval_prompt: Creating prompt with task ID: '{name}'")
     
-    if metadata:
-        metadata_json = json.dumps(metadata)
-        logger.debug(f"zeroeval_prompt: Full metadata: {metadata_json}")
-        formatted_prompt = f'<zeroeval>{metadata_json}</zeroeval>{prompt}'
-        logger.debug(f"zeroeval_prompt: Formatted prompt preview (first 100 chars): {formatted_prompt[:100]}...")
-        return formatted_prompt
-    
-    logger.debug("zeroeval_prompt: No metadata provided, returning prompt as-is")
-    return prompt
+    metadata_json = json.dumps(metadata)
+    logger.debug(f"zeroeval_prompt: Full metadata: {metadata_json}")
+    formatted_prompt = f'<zeroeval>{metadata_json}</zeroeval>{content}'
+    logger.debug(f"zeroeval_prompt: Formatted prompt preview (first 100 chars): {formatted_prompt[:100]}...")
+    return formatted_prompt
 
 
 class OpenAIIntegration(Integration):

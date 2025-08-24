@@ -113,13 +113,25 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
     ) -> Union[str, None]:
         from .experiment_class import Experiment, ExperimentResult
 
+        print(f"[DEBUG] ExperimentResultBackendWriter._write called with {type(experiment_or_result)}")
+        
         self._ensure_auth_setup()
+        print(f"[DEBUG] Auth setup complete. workspace_id={self._workspace_id}, api_url={self.api_url}")
 
         if isinstance(experiment_or_result, Experiment):
             experiment = experiment_or_result
             dataset_version_id = getattr(experiment.dataset, "_version_id", None)
+            
+            print(f"[DEBUG] Experiment write - name='{experiment.name}', dataset_version_id={dataset_version_id}")
 
-            if not self._workspace_id or not dataset_version_id:
+            if not self._workspace_id:
+                print(f"[ERROR] Missing workspace_id: {self._workspace_id}")
+                return None
+                
+            if not dataset_version_id:
+                print(f"[ERROR] Missing dataset_version_id: {dataset_version_id}")
+                print(f"[DEBUG] Dataset object: {experiment.dataset}")
+                print(f"[DEBUG] Dataset attributes: {dir(experiment.dataset)}")
                 return None
 
             exp_payload = {
@@ -128,24 +140,37 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 "name": experiment.name,
                 "description": experiment.description or "",
             }
+            
+            print(f"[DEBUG] Sending experiment payload: {exp_payload}")
+            
             try:
                 exp_response = requests.post(
                     f"{self.api_url}/workspaces/{self._workspace_id}/experiments",
                     json=exp_payload,
                     headers=self._headers,
                 )
+                print(f"[DEBUG] Experiment POST response status: {exp_response.status_code}")
+                print(f"[DEBUG] Experiment POST response text: {exp_response.text}")
+                
                 exp_response.raise_for_status()
                 exp_data = exp_response.json()
                 backend_experiment_id = exp_data["id"]
                 experiment._backend_id = backend_experiment_id
+                print(f"[SUCCESS] Created experiment with ID: {backend_experiment_id}")
                 return backend_experiment_id
-            except requests.RequestException:
+            except requests.RequestException as e:
+                print(f"[ERROR] Failed to create experiment: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"[ERROR] Response status: {e.response.status_code}")
+                    print(f"[ERROR] Response text: {e.response.text}")
                 return None
 
         elif isinstance(experiment_or_result, ExperimentResult):
             res = experiment_or_result
+            print(f"[DEBUG] ExperimentResult write - experiment_id={getattr(res, 'experiment_id', None)}")
 
             if not getattr(res, "experiment_id", None):
+                print(f"[ERROR] ExperimentResult missing experiment_id")
                 return None
 
             endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{res.experiment_id}/results"
@@ -156,12 +181,24 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 "trace_id": res.trace_id if res.trace_id else "",
                 "run_number": getattr(res, "run_number", 1),  # Default to 1 for backwards compatibility
             }
+            
+            print(f"[DEBUG] Sending result payload to {endpoint}: {payload}")
+            
             try:
                 response = requests.post(endpoint, json=payload, headers=self._headers)
+                print(f"[DEBUG] Result POST response status: {response.status_code}")
+                print(f"[DEBUG] Result POST response text: {response.text}")
+                
                 response.raise_for_status()
-                return response.json()["id"]
-            except requests.RequestException:
-                pass
+                result_id = response.json()["id"]
+                print(f"[SUCCESS] Created experiment result with ID: {result_id}")
+                return result_id
+            except requests.RequestException as e:
+                print(f"[ERROR] Failed to create experiment result: {e}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"[ERROR] Response status: {e.response.status_code}")
+                    print(f"[ERROR] Response text: {e.response.text}")
+                return None
 
             return None
 
@@ -185,6 +222,7 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
             self._headers = {"Authorization": f"Bearer {self._api_key}"}
 
     def write(self, dataset: "Dataset", create_new_version: bool = False) -> None:
+        print(f"[DEBUG] DatasetBackendWriter.write called for dataset '{dataset.name}'")
         self._ensure_auth_setup()
 
         # Use v1 API endpoint
@@ -193,14 +231,20 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
             "name": dataset.name,
             "description": dataset.description or "",
         }
+        
+        print(f"[DEBUG] Dataset create payload: {create_payload}")
 
         try:
             response = requests.post(
                 create_url, json=create_payload, headers=self._headers
             )
+            
+            print(f"[DEBUG] Dataset create response status: {response.status_code}")
+            print(f"[DEBUG] Dataset create response text: {response.text}")
 
             if response.status_code == 409:
                 # Dataset already exists, add data to it
+                print(f"[DEBUG] Dataset already exists, adding data to existing dataset")
                 self._post_data_to_existing_dataset_v1(dataset.name, dataset)
             elif response.status_code == 404:
                 raise ValueError("Workspace not found or no access")
@@ -208,33 +252,45 @@ class DatasetBackendWriter(_BackendWriter, DatasetWriter):
                 response.raise_for_status()
                 dataset_info = response.json()
                 dataset._backend_id = dataset_info["id"]
+                print(f"[DEBUG] Created new dataset with ID: {dataset._backend_id}")
                 self._post_data_to_existing_dataset_v1(dataset.name, dataset)
 
         except requests.HTTPError as e:
+            print(f"[ERROR] HTTP error in dataset write: {e}")
             self._handle_http_error(e)
         except requests.RequestException as e:
+            print(f"[ERROR] Request error in dataset write: {e}")
             raise RuntimeError(f"Connection error: {str(e)}")
 
     def _post_data_to_existing_dataset_v1(
         self, dataset_name: str, dataset: "Dataset"
     ) -> None:
         """Create a new version of the dataset with the given data using v1 API."""
+        print(f"[DEBUG] _post_data_to_existing_dataset_v1 called for dataset '{dataset_name}'")
         self._ensure_auth_setup()
         data_as_strings = [
             {k: json.dumps(v) if not isinstance(v, str) else v for k, v in row.items()}
             for row in dataset.data
         ]
+        
+        print(f"[DEBUG] Posting {len(data_as_strings)} rows to dataset")
 
         response = requests.post(
             f"{self.api_url}/v1/datasets/{dataset_name}/data",
             json={"data": data_as_strings},
             headers=self._headers,
         )
+        
+        print(f"[DEBUG] Dataset data POST response status: {response.status_code}")
+        print(f"[DEBUG] Dataset data POST response text: {response.text}")
+        
         response.raise_for_status()
 
         version_info = response.json()
         dataset._version_id = version_info["id"]
         dataset._version_number = version_info["version_number"]
+        
+        print(f"[SUCCESS] Dataset version created - ID: {dataset._version_id}, version: {dataset._version_number}")
 
     def _handle_http_error(self, error: requests.HTTPError) -> None:
         """Handle common HTTP errors with appropriate messages."""
@@ -262,6 +318,8 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
         """Write an evaluator or evaluation to the backend."""
         from .evaluator_class import Evaluation, Evaluator
 
+        print(f"[DEBUG] EvaluatorBackendWriter._write called with {type(evaluator_or_evaluation)}")
+        
         self._ensure_auth_setup()
 
         if isinstance(evaluator_or_evaluation, Evaluator):
@@ -273,24 +331,42 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
                 "evaluation_mode": evaluator_or_evaluation.evaluation_mode,
             }
 
+            print(f"[DEBUG] Creating evaluator with payload: {payload}")
+
             try:
                 endpoint = f"{self.api_url}/v1/experiments/{evaluator_or_evaluation.experiment_id}/evaluators"
                 response = requests.post(endpoint, json=payload, headers=self._headers)
+                
+                print(f"[DEBUG] Evaluator creation response status: {response.status_code}")
+                print(f"[DEBUG] Evaluator creation response text: {response.text}")
+                
                 response.raise_for_status()
                 evaluator_data = response.json()
-                return evaluator_data["id"]
-            except requests.RequestException:
+                evaluator_id = evaluator_data["id"]
+                print(f"[SUCCESS] Created evaluator with ID: {evaluator_id}")
+                return evaluator_id
+            except requests.RequestException as e:
+                print(f"[ERROR] Failed to create evaluator: {e}")
+                if hasattr(e, 'response') and e.response:
+                    print(f"[ERROR] Response status: {e.response.status_code}")
+                    print(f"[ERROR] Response text: {e.response.text}")
                 return None
 
         elif isinstance(evaluator_or_evaluation, Evaluation):
             # Create evaluation
+            print(f"[DEBUG] EvaluatorBackendWriter._write - processing Evaluation object")
             evaluation = evaluator_or_evaluation
             experiment_id = (
                 evaluation.evaluator.experiment_id
             )  # Get experiment ID from evaluator
             evaluator_id = evaluation.evaluator._backend_id
 
+            print(f"[DEBUG] Creating evaluation - experiment_id={experiment_id}, evaluator_id={evaluator_id}")
+            print(f"[DEBUG] Evaluator object: {evaluation.evaluator}")
+            print(f"[DEBUG] Evaluator._backend_id: {evaluation.evaluator._backend_id}")
+
             if not evaluator_id:
+                print(f"[ERROR] Cannot create evaluation - missing evaluator_id (evaluator_id={evaluator_id})")
                 return None
 
             payload = {
@@ -301,11 +377,27 @@ class EvaluatorBackendWriter(_BackendWriter, EvaluatorWriter):
                 "evaluation_type": "text",  # Default to text type
             }
 
+            print(f"[DEBUG] Creating evaluation with payload: {payload}")
+
             try:
                 endpoint = f"{self.api_url}/v1/experiments/{experiment_id}/evaluations"
                 response = requests.post(endpoint, json=payload, headers=self._headers)
+                
+                print(f"[DEBUG] Evaluation creation response status: {response.status_code}")
+                print(f"[DEBUG] Evaluation creation response text: {response.text}")
+                
                 response.raise_for_status()
                 evaluation_data = response.json()
-                return evaluation_data["id"]
-            except requests.RequestException:
+                evaluation_id = evaluation_data["id"]
+                print(f"[SUCCESS] Created evaluation with ID: {evaluation_id}")
+                return evaluation_id
+            except requests.RequestException as e:
+                print(f"[ERROR] Failed to create evaluation: {e}")
+                if hasattr(e, 'response') and e.response:
+                    print(f"[ERROR] Response status: {e.response.status_code}")
+                    print(f"[ERROR] Response text: {e.response.text}")
                 return None
+        
+        else:
+            print(f"[ERROR] EvaluatorBackendWriter._write called with unknown type: {type(evaluator_or_evaluation)}")
+            return None

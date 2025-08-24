@@ -3,23 +3,28 @@ import inspect
 from typing import Any, Callable, Optional
 
 
-def task(outputs: list[str]) -> Callable:
+def task(outputs: list[str], name: Optional[str] = None) -> Callable:
     """
     Decorator to mark a function as a task that can be run on a dataset.
     
     Args:
         outputs: List of output column names this task produces
+        name: Optional custom name for the task (defaults to function name)
         
     Example:
         @task(outputs=["pred"])
         def solve(row):
             return {"pred": llm_answer(row.question)}
+            
+        @task(outputs=["answer"], name="gpt4_solver")
+        def solve_with_gpt4(row):
+            return {"answer": gpt4_call(row.question)}
     """
     def decorator(func: Callable) -> Callable:
         # Store metadata on the function
         func._is_task = True
         func._outputs = outputs
-        func._task_name = func.__name__
+        func._task_name = name or func.__name__
         func._task_code = inspect.getsource(func)
         
         @functools.wraps(func)
@@ -39,7 +44,7 @@ def task(outputs: list[str]) -> Callable:
         # Preserve the metadata on the wrapper
         wrapper._is_task = True
         wrapper._outputs = outputs
-        wrapper._task_name = func.__name__
+        wrapper._task_name = name or func.__name__
         wrapper._task_code = func._task_code
         
         return wrapper

@@ -51,7 +51,13 @@ class DatasetBackendReader(DatasetReader):
         Workspace is automatically resolved from API key.
         """
         if not _validate_init():
-            return None
+            raise ValueError(
+                "ZeroEval SDK not initialized. Please call ze.init(api_key='YOUR_API_KEY') first.\n"
+                "You can set the API key in one of these ways:\n"
+                "1. Pass it directly: ze.init(api_key='sk_ze_...')\n"
+                "2. Set environment variable: export ZEROEVAL_API_KEY='sk_ze_...'\n"
+                "3. Create a .env file with: ZEROEVAL_API_KEY=sk_ze_..."
+            )
         self._ensure_auth_setup()
 
         from .dataset_class import Dataset
