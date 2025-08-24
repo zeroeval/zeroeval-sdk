@@ -19,10 +19,16 @@ class Evaluator:
 
     def _write(self) -> Optional[str]:
         """Writes the evaluator to the writer if it hasn't been written yet."""
+        print(f"[DEBUG] Evaluator._write called - current _backend_id={self._backend_id}")
         if not self._backend_id:
+            print(f"[DEBUG] Calling writer._write for evaluator...")
             assigned_id = self._writer._write(self)
+            print(f"[DEBUG] Writer returned assigned_id={assigned_id}")
             if assigned_id:
                 self._backend_id = assigned_id
+                print(f"[DEBUG] Set evaluator _backend_id to {self._backend_id}")
+        else:
+            print(f"[DEBUG] Evaluator already has _backend_id, skipping write")
         return self._backend_id
 
 class Evaluation:
@@ -39,4 +45,7 @@ class Evaluation:
     
     def _write(self) -> None:
         """Write this Evaluation to the writer."""
-        self._writer._write(self)
+        print(f"[DEBUG] Evaluation._write called - evaluator._backend_id={self.evaluator._backend_id}")
+        result = self._writer._write(self)
+        print(f"[DEBUG] Evaluation._write completed - writer returned: {result}")
+        return result

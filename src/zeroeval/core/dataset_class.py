@@ -172,7 +172,7 @@ class Dataset:
     
 
 
-    def run(self, task_func: Callable, run_number: int = 1, total_runs: int = 1, experiment_id: Optional[str] = None) -> "Run":
+    def run(self, task_func: Callable, run_number: int = 1, total_runs: int = 1, experiment_id: Optional[str] = None, parameters: Optional[dict] = None) -> "Run":
         """
         Run a task function on this dataset without mutating it.
         
@@ -236,10 +236,14 @@ class Dataset:
                     )
                     actual_data["_error"] = str(e)
                     
+                # Capture the trace_id from the span
+                if current_span and hasattr(current_span, 'trace_id'):
+                    actual_data["_trace_id"] = current_span.trace_id
+                    
             result_rows.append(actual_data)
             
         # Create and return Run object
-        return Run(
+        run = Run(
             dataset_name=self.name,
             dataset_id=getattr(self, "_backend_id", ""),
             dataset_version_id=getattr(self, "_version_id", ""),
@@ -251,8 +255,17 @@ class Dataset:
             total_runs=total_runs,
             task_func=task_func,
             dataset_ref=self,
-            experiment_id=experiment_id
+            experiment_id=experiment_id,
+            parameters=parameters
         )
+        
+        # Automatically create experiment and write results
+        print(f"[DEBUG] Dataset.run() calling _ensure_experiment_exists...")
+        run._ensure_experiment_exists()
+        print(f"[DEBUG] Dataset.run() calling _write_results...")
+        run._write_results()
+        
+        return run
 
     @classmethod
     def pull(
@@ -271,9 +284,20 @@ class Dataset:
             
         Returns:
             Dataset instance with the pulled data
+            
+        Raises:
+            ValueError: If SDK is not initialized with an API key
+            ValueError: If dataset is not found in your workspace
+            RuntimeError: If there's an error fetching the dataset
         """
         if not _validate_init():
-            return None
+            raise ValueError(
+                "ZeroEval SDK not initialized. Please call ze.init(api_key='YOUR_API_KEY') first.\n"
+                "You can set the API key in one of these ways:\n"
+                "1. Pass it directly: ze.init(api_key='sk_ze_...')\n"
+                "2. Set environment variable: export ZEROEVAL_API_KEY='sk_ze_...'\n"
+                "3. Create a .env file with: ZEROEVAL_API_KEY=sk_ze_..."
+            )
 
         reader = DatasetBackendReader()
         return reader.pull_by_name(name, version_number=version_number)

@@ -49,16 +49,21 @@ class Experiment:
         Run the task function on each row (either a given subset or the entire dataset).
         Store the output in self.results and automatically write each result to the backend.
         """
+        print(f"[DEBUG] Experiment.run_task called for experiment '{self.name}'")
         # Write (or ensure writing) of the Experiment to the backend, retrieving an experiment_id
         experiment_id = self._write(self._writer)  # sets self._backend_id internally
+        print(f"[DEBUG] Experiment write result: experiment_id={experiment_id}")
         if not experiment_id:
+            print(f"[ERROR] Failed to create experiment - experiment_id is None")
             return []
 
         # If subset is given, we assume it includes 'row_id' if needed
         rows_to_run = subset if subset is not None else self.dataset._get_all_full_rows()
+        print(f"[DEBUG] Running task on {len(rows_to_run)} rows")
         self.results = []
 
-        for row_data in rows_to_run:
+        for i, row_data in enumerate(rows_to_run):
+            print(f"[DEBUG] Processing row {i+1}/{len(rows_to_run)}: {row_data}")
             row_id = row_data.get("row_id") if isinstance(row_data, dict) else None
             # "data" sub-dict or entire row
             row_content = row_data["data"] if isinstance(row_data, dict) and "data" in row_data else row_data
@@ -85,6 +90,7 @@ class Experiment:
                 task_output = self.task(row_content)
                 trace_id = None
 
+            print(f"[DEBUG] Creating ExperimentResult for row_id={row_id}, result={task_output}")
             experiment_result = ExperimentResult(
                 experiment_id=experiment_id,
                 row_data=row_data,
@@ -93,7 +99,9 @@ class Experiment:
                 trace_id=trace_id,  # <-- Pass the captured trace ID along
                 run_number=1  # Default to run 1 for legacy Experiment class
             )
-            experiment_result._write(self._writer)
+            print(f"[DEBUG] Writing ExperimentResult to backend...")
+            write_result = experiment_result._write(self._writer)
+            print(f"[DEBUG] ExperimentResult write result: {write_result}")
             self.results.append(experiment_result)
 
         return self.results
@@ -257,4 +265,7 @@ class ExperimentResult:
 
     def _write(self, writer: 'ExperimentResultWriter'):
         """Write this ExperimentResult to the writer."""
+        print(f"[DEBUG] ExperimentResult._write called for experiment_id={self.experiment_id}, row_id={self.row_id}")
         self._backend_id = writer._write(self)
+        print(f"[DEBUG] ExperimentResult._write completed, backend_id={self._backend_id}")
+        return self._backend_id

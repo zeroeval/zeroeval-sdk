@@ -3,6 +3,7 @@ from .writer import ExperimentResultBackendWriter
 from .evaluator_class import Evaluator, Evaluation as EvaluationResult
 from .evaluation import Evaluation, EvaluationMode, get_evaluation
 from .metrics import ColumnMetric, RunMetric, get_column_metric, get_run_metric
+from .run_collection import RunCollection
 import requests
 
 
@@ -25,7 +26,8 @@ class Run:
         total_runs: int = 1,
         task_func: Optional[Callable] = None,
         dataset_ref: Optional[Any] = None,
-        experiment_id: Optional[str] = None  # Share experiment ID across runs
+        experiment_id: Optional[str] = None,  # Share experiment ID across runs
+        parameters: Optional[Dict[str, Any]] = None  # Add parameters support
     ):
         self.dataset_name = dataset_name
         self.dataset_id = dataset_id
@@ -39,6 +41,7 @@ class Run:
         self._task_func = task_func  # Store the task function for repeat()
         self._dataset_ref = dataset_ref  # Store dataset reference for repeat()
         self._experiment_id = experiment_id  # Can be shared across runs
+        self.parameters = parameters or {}  # Store parameters
         self._writer = ExperimentResultBackendWriter()
         self._evaluators = []
         self._evaluations = []
@@ -51,17 +54,23 @@ class Run:
         
     def _ensure_experiment_exists(self):
         """Create experiment if it doesn't exist yet."""
+        print(f"[DEBUG] Run._ensure_experiment_exists called")
+        print(f"[DEBUG] _experiment_created={self._experiment_created}, _experiment_id={self._experiment_id}")
+        
         if self._experiment_created or self._experiment_id:
+            print(f"[DEBUG] Experiment already exists, skipping creation")
             return
             
         # Check if we have valid dataset version ID
+        print(f"[DEBUG] Checking dataset_version_id: {self.dataset_version_id}")
         if not self.dataset_version_id:
-            print(f"Warning: Cannot create experiment without dataset version ID")
+            print(f"[ERROR] Cannot create experiment without dataset version ID")
             return
             
         # Create experiment (only once for all runs)
         import requests
         
+        print(f"[DEBUG] Setting up writer auth...")
         self._writer._ensure_auth_setup()
         
         # Create experiment with base name (no run number)
@@ -70,8 +79,11 @@ class Run:
             "name": self.task_name,
             "description": f"Experiment with {self.total_runs} runs" if self.total_runs > 1 else "",
             "alias": self.task_name,
-            "workspace_id": ""  # Will be overridden by API key workspace
+            "workspace_id": "",  # Will be overridden by API key workspace
+            "parameters": self.parameters  # Include parameters
         }
+        
+        print(f"[DEBUG] Creating experiment with payload: {exp_payload}")
         
         try:
             exp_response = requests.post(
@@ -79,43 +91,66 @@ class Run:
                 json=exp_payload,
                 headers=self._writer._headers,
             )
+            print(f"[DEBUG] Experiment creation response status: {exp_response.status_code}")
+            print(f"[DEBUG] Experiment creation response text: {exp_response.text}")
+            
             exp_response.raise_for_status()
             exp_data = exp_response.json()
             self._experiment_id = exp_data["id"]
             self._experiment_created = True
-            print(f"Created experiment: {self._experiment_id}")
+            print(f"[SUCCESS] Created experiment: {self._experiment_id}")
         except Exception as e:
-            print(f"Warning: Could not create experiment in backend: {e}")
+            print(f"[ERROR] Could not create experiment in backend: {e}")
             if hasattr(e, 'response') and e.response:
-                print(f"Response: {e.response.text}")
-                print(f"Request payload was: {exp_payload}")
+                print(f"[ERROR] Response status: {e.response.status_code}")
+                print(f"[ERROR] Response text: {e.response.text}")
+                print(f"[ERROR] Request payload was: {exp_payload}")
                 
     def _write_results(self):
         """Write results for this run to the backend."""
-        if not self._experiment_id or self._results_written:
+        print(f"[DEBUG] Run._write_results called")
+        print(f"[DEBUG] _experiment_id={self._experiment_id}, _results_written={self._results_written}")
+        
+        if not self._experiment_id:
+            print(f"[ERROR] Cannot write results: no experiment_id")
+            return
+            
+        if self._results_written:
+            print(f"[DEBUG] Results already written, skipping")
             return
             
         import requests
         
+        print(f"[DEBUG] Setting up writer auth...")
         # Ensure writer is set up
         self._writer._ensure_auth_setup()
         
+        print(f"[DEBUG] Writing {len(self.rows)} results to experiment {self._experiment_id}")
+        
         # Write each result with the current run_number
-        for row in self.rows:
+        for i, row in enumerate(self.rows):
+            print(f"[DEBUG] Processing result {i+1}/{len(self.rows)}: row_id={row.get('row_id')}")
+            
             if "row_id" not in row:
+                print(f"[WARNING] Skipping row {i+1} - no row_id")
                 continue
                 
             # Extract the task outputs
             result_data = {k: row.get(k) for k in self.outputs if k in row}
+            
+            # Get trace_id if available (captured during task execution)
+            trace_id = row.get("_trace_id", None)
             
             # Create experiment result
             result_payload = {
                 "dataset_row_id": row["row_id"],
                 "result": str(result_data),
                 "result_type": "text",
-                "trace_id": None,  # NULL instead of empty string
+                "trace_id": trace_id,  # Use captured trace_id
                 "run_number": self.run_number,
             }
+            
+            print(f"[DEBUG] Sending result payload: {result_payload}")
             
             try:
                 result_response = requests.post(
@@ -123,16 +158,22 @@ class Run:
                     json=result_payload,
                     headers=self._writer._headers,
                 )
+                print(f"[DEBUG] Result response status: {result_response.status_code}")
+                print(f"[DEBUG] Result response text: {result_response.text}")
+                
                 result_response.raise_for_status()
                 result_data = result_response.json()
                 self._result_ids[row["row_id"]] = result_data["id"]
+                print(f"[SUCCESS] Created result with ID: {result_data['id']}")
             except Exception as e:
-                print(f"Warning: Could not create result for row {row['row_id']}: {e}")
+                print(f"[ERROR] Could not create result for row {row['row_id']}: {e}")
                 if hasattr(e, 'response') and e.response:
-                    print(f"Response: {e.response.text}")
+                    print(f"[ERROR] Response status: {e.response.status_code}")
+                    print(f"[ERROR] Response text: {e.response.text}")
         
         # Mark results as written
         self._results_written = True
+        print(f"[SUCCESS] All results written to backend")
         
     def eval(self, evaluators: List[Union[Callable, Evaluation, str]], **kwargs) -> "Run":
         """
@@ -281,17 +322,26 @@ class Run:
     
     def _save_evaluation_result(self, evaluator_db: Evaluator, eval_result: dict, row: dict, row_idx: int):
         """Save evaluation result to database."""
+        print(f"[DEBUG] _save_evaluation_result called - row_id={row.get('row_id')}, eval_result={eval_result}")
+        
         experiment_result_id = self._result_ids.get(row.get("row_id", str(row_idx)))
+        print(f"[DEBUG] experiment_result_id lookup: {experiment_result_id} (for row_id={row.get('row_id', str(row_idx))})")
+        print(f"[DEBUG] Available result_ids: {self._result_ids}")
+        
         if not experiment_result_id:
+            print(f"[ERROR] No experiment_result_id found for row")
             return
             
+        print(f"[DEBUG] Creating EvaluationResult object...")
         evaluation = EvaluationResult(
             evaluator=evaluator_db,
             result=eval_result,
             experiment_result_id=experiment_result_id,
             dataset_row_id=row.get("row_id", str(row_idx))
         )
-        evaluation._write()
+        print(f"[DEBUG] Calling evaluation._write()...")
+        write_result = evaluation._write()
+        print(f"[DEBUG] evaluation._write() result: {write_result}")
         self._evaluations.append(evaluation)
     
     def _save_column_evaluation(self, eval_obj: Evaluation, eval_result: dict):
@@ -360,7 +410,7 @@ class Run:
         except Exception as e:
             print(f"Error saving run evaluation: {e}")
         
-    def repeat(self, n: int) -> list["Run"]:
+    def repeat(self, n: int) -> RunCollection:
         """
         Repeat the experiment n times total (including this run).
         
@@ -368,7 +418,7 @@ class Run:
             n: Total number of runs (must be at least 1)
             
         Returns:
-            List of all runs (including this one)
+            RunCollection containing all runs (including this one)
         """
         if not self._task_func or not self._dataset_ref:
             raise ValueError("Cannot repeat without task function and dataset reference. Use dataset.run() instead.")
@@ -391,7 +441,8 @@ class Run:
                 self._task_func, 
                 run_number=run_num, 
                 total_runs=n,
-                experiment_id=self._experiment_id  # Share the experiment ID
+                experiment_id=self._experiment_id,  # Share the experiment ID
+                parameters=self.parameters  # Pass parameters to repeated runs
             )
             
             # Share the evaluator objects from the first run
@@ -404,7 +455,7 @@ class Run:
             all_runs.append(new_run)
             
         self._all_runs = all_runs # Store all runs for run-level evaluations
-        return all_runs
+        return RunCollection(all_runs)
         
     def score(self, evaluators: list[Callable]) -> "Run":
         """
