@@ -163,6 +163,41 @@ class VocodeIntegration(Integration):
             logger.info(f"[Vocode] Starting conversation {conversation_id} with trace {root_span.trace_id}")
             
             try:
+                # Ensure that any pre-created OpenAI client inside the Vocode agent
+                # is patched to emit ZeroEval LLM spans (handles clients created before ze.init)
+                try:
+                    agent = getattr(conversation_instance, 'agent', None)
+                    if agent is not None and hasattr(agent, 'openai_client'):
+                        client = getattr(agent, 'openai_client')
+                        # Only patch if not already patched
+                        create_fn = getattr(getattr(client, 'chat', None), 'completions', None)
+                        create_fn = getattr(create_fn, 'create', None)
+                        already_patched = getattr(create_fn, '__ze_patched__', False)
+                        if create_fn and not already_patched:
+                            try:
+                                import openai as _openai
+                                from ..openai.integration import OpenAIIntegration as _ZEOpenAIIntegration
+                                is_async = isinstance(client, getattr(_openai, 'AsyncOpenAI', tuple())) or isinstance(client, getattr(_openai, 'AsyncAzureOpenAI', tuple()))
+                                ze_oai = _ZEOpenAIIntegration(self.tracer)
+                                # Use the same wrapper factories as the OpenAI integration
+                                if is_async:
+                                    self._patch_method(
+                                        client.chat.completions,
+                                        'create',
+                                        ze_oai._wrap_chat_completion_async()
+                                    )
+                                else:
+                                    self._patch_method(
+                                        client.chat.completions,
+                                        'create',
+                                        ze_oai._wrap_chat_completion_sync(client.chat.completions)
+                                    )
+                            except Exception:
+                                # Best-effort; do not break conversation startup if patching fails
+                                pass
+                except Exception:
+                    pass
+
                 # Additionally, wrap the transcriber's output queue to capture STT results
                 try:
                     if hasattr(conversation_instance, 'transcriber'):
