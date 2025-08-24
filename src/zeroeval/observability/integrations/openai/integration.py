@@ -341,6 +341,70 @@ class OpenAIIntegration(Integration):
         except Exception:
             return [{"role": "user", "content": str(input_data)}]
 
+    def _process_responses_input_with_zeroeval(self, input_data: Any) -> tuple[Any, list[dict[str, Any]], Optional[dict[str, Any]]]:
+        """
+        Process Responses API `input` to support zeroeval_prompt metadata and variable interpolation.
+
+        Returns:
+          - processed_input: original input shape with <zeroeval> removed and variables interpolated
+          - normalized_messages: best-effort normalized messages for span I/O
+          - zeroeval_metadata: extracted metadata dict or None
+        """
+        import copy as _copy
+
+        zeroeval_metadata: Optional[dict[str, Any]] = None
+        variables: dict[str, Any] = {}
+
+        def _process_text(text: Optional[str]) -> Optional[str]:
+            nonlocal zeroeval_metadata, variables
+            if not isinstance(text, str):
+                return text
+            if zeroeval_metadata is None:
+                meta, cleaned = self._extract_zeroeval_metadata(text)
+                if meta:
+                    zeroeval_metadata = meta
+                    variables = meta.get("variables", {}) or {}
+                    text = cleaned
+            if variables:
+                text = self._interpolate_variables(text, variables)
+            return text
+
+        # String input
+        if isinstance(input_data, str):
+            processed = _process_text(input_data)
+            return processed, self._serialize_responses_input(processed), zeroeval_metadata
+
+        # List input (messages or content parts)
+        if isinstance(input_data, list):
+            processed_list = _copy.deepcopy(input_data)
+            for item in processed_list:
+                if isinstance(item, dict):
+                    # Message-like
+                    if item.get("role") is not None and item.get("content") is not None:
+                        content = item.get("content")
+                        if isinstance(content, str):
+                            item["content"] = _process_text(content)
+                        elif isinstance(content, list):
+                            new_parts = []
+                            for part in content:
+                                if isinstance(part, dict) and "text" in part:
+                                    part = {**part, "text": _process_text(part.get("text"))}
+                                new_parts.append(part)
+                            item["content"] = new_parts
+                        continue
+
+                    # input_text-style
+                    if item.get("type") in ("input_text", "text") and item.get("text") is not None:
+                        item["text"] = _process_text(item.get("text"))
+                        continue
+            return processed_list, self._serialize_responses_input(processed_list), zeroeval_metadata
+
+        # Dict or other types: cannot safely mutate; process via normalized messages
+        normalized = self._serialize_responses_input(input_data)
+        if normalized and isinstance(normalized[0].get("content"), str):
+            normalized[0]["content"] = _process_text(normalized[0]["content"])  # type: ignore[index]
+        return input_data, normalized, zeroeval_metadata
+
     def _extract_tool_calls(self, message) -> Optional[list[dict[str, Any]]]:
         """Extract tool calls from a message object."""
         if not hasattr(message, 'tool_calls') or not message.tool_calls:
@@ -813,9 +877,12 @@ class OpenAIIntegration(Integration):
             async def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
                 
-                # Extract input and normalize to messages
+                # Extract input, process zeroeval metadata, and normalize to messages
                 raw_input = kwargs.get("input")
-                normalized_messages = self._serialize_responses_input(raw_input)
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                # Replace input with processed version so the model receives cleaned/interpolated text
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
                 
                 # Prepare span attributes
                 span_attributes = {
@@ -824,6 +891,9 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
                 }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
                 # Try to capture base_url if available (async client passes resource instance in args[0])
                 base_url = None
                 if args and hasattr(args[0], "_client") and hasattr(args[0]._client, "base_url"):
@@ -998,9 +1068,11 @@ class OpenAIIntegration(Integration):
             def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
                 
-                # Extract input messages/prompts and normalize
+                # Extract input, process zeroeval metadata, and normalize
                 raw_input = kwargs.get("input")
-                normalized_messages = self._serialize_responses_input(raw_input)
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
                 
                 # Prepare span attributes
                 span_attributes = {
@@ -1009,6 +1081,9 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
                 }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
                 # base_url from client instance if available
                 base_url = None
                 if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
@@ -1186,9 +1261,11 @@ class OpenAIIntegration(Integration):
             async def inner(*args: Any, **kwargs: Any) -> Any:
                 start_time = time.time()
 
-                # Normalize input to messages for consistent I/O display
+                # Process input to support zeroeval metadata and variable interpolation
                 raw_input = kwargs.get("input")
-                normalized_messages = self._serialize_responses_input(raw_input)
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
 
                 span_attributes = {
                     "service.name": "openai",
@@ -1196,6 +1273,9 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses.parse",
                 }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
 
                 # base_url if available (resource instance is args[0])
                 base_url = None
@@ -1347,7 +1427,9 @@ class OpenAIIntegration(Integration):
                 start_time = time.time()
 
                 raw_input = kwargs.get("input")
-                normalized_messages = self._serialize_responses_input(raw_input)
+                processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
+                if processed_input is not None:
+                    kwargs["input"] = processed_input
 
                 span_attributes = {
                     "service.name": "openai",
@@ -1355,6 +1437,9 @@ class OpenAIIntegration(Integration):
                     "model": kwargs.get("model"),
                     "endpoint": "responses.parse",
                 }
+                if zeroeval_metadata:
+                    span_attributes["variables"] = zeroeval_metadata.get("variables", {})
+                    span_attributes["task"] = zeroeval_metadata.get("task")
 
                 base_url = None
                 if hasattr(responses_instance, "_client") and hasattr(responses_instance._client, "base_url"):
