@@ -1771,10 +1771,9 @@ wheels = [
 
 [[package]]
 name = "zeroeval"
-version = "0.6.97"
+version = "0.6.110"
 source = { editable = "." }
 dependencies = [
-    { name = "google-genai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
@@ -1809,6 +1808,7 @@ openai = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "google-genai" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1818,7 +1818,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "google-genai", specifier = "==1.21.1" },
     { name = "google-genai", marker = "extra == 'all'", specifier = ">=1.21.1" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.21.1" },
     { name = "langchain-core", marker = "extra == 'all'", specifier = ">=0.1.0" },
@@ -1829,17 +1828,18 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.0.20" },
     { name = "openai", marker = "extra == 'all'", specifier = ">=1.59.6" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.59.6" },
-    { name = "opentelemetry-api", specifier = ">=1.30.0" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.34.1" },
-    { name = "opentelemetry-sdk", specifier = ">=1.30.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "requests", specifier = ">=2.32.3" },
-    { name = "rich", specifier = ">=13.9.4" },
+    { name = "opentelemetry-api", specifier = ">=1.26.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.26.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.26.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "requests", specifier = ">=2.32.2" },
+    { name = "rich", specifier = ">=13.7.1" },
 ]
 provides-extras = ["openai", "gemini", "langchain", "langgraph", "langfuse", "all"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "google-genai", specifier = "==1.21.1" },
     { name = "mypy", specifier = ">=1.16.1" },
     { name = "pytest", specifier = ">=8.2.2,<9.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.7,<1.0.0" },

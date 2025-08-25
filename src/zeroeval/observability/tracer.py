@@ -3,6 +3,7 @@ import builtins
 import contextlib
 import logging
 import os
+import random
 import threading
 import time
 import uuid
@@ -28,6 +29,7 @@ class Trace:
     trace_id: str
     spans: list[dict[str, Any]] = field(default_factory=list)
     ref_count: int = 0
+    is_sampled: bool = True  # Whether this trace is being sampled
 
 
 @dataclass
@@ -87,6 +89,15 @@ class Tracer:
         self._flush_lock = threading.Lock()
         self._integrations: dict[str, Any] = {}
         
+        # Sampling rate configuration (0.0 to 1.0, where 1.0 means sample everything)
+        sampling_env = os.environ.get("ZEROEVAL_SAMPLING_RATE", "1.0")
+        try:
+            self._sampling_rate = float(sampling_env)
+            self._sampling_rate = max(0.0, min(1.0, self._sampling_rate))  # Clamp to [0, 1]
+        except ValueError:
+            logger.warning(f"Invalid ZEROEVAL_SAMPLING_RATE value: {sampling_env}. Using default 1.0")
+            self._sampling_rate = 1.0
+        
         # Async signal writer (optional)
         self._async_signal_enabled = False
         self._signal_writer = None
@@ -115,7 +126,7 @@ class Tracer:
         self._trace_to_session: dict[str, dict[str, str]] = {}
         
         logger.info("Initializing tracer for streaming...")
-        logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}")
+        logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}, sampling_rate={self._sampling_rate}")
 
         # Start flush thread
         self._flush_thread = threading.Thread(target=self._flush_periodically, daemon=True)
@@ -294,8 +305,17 @@ class Tracer:
                   flush_interval: Optional[float] = None,
                   max_spans: Optional[int] = None,
                   collect_code_details: Optional[bool] = None,
-                  integrations: Optional[dict[str, bool]] = None) -> None:
-        """Configure the tracer with custom settings."""
+                  integrations: Optional[dict[str, bool]] = None,
+                  sampling_rate: Optional[float] = None) -> None:
+        """Configure the tracer with custom settings.
+        
+        Args:
+            flush_interval: How often to flush spans to the backend (seconds)
+            max_spans: Maximum number of spans to buffer before forcing a flush
+            collect_code_details: Whether to collect code details for spans
+            integrations: Dict of integration names to enable/disable
+            sampling_rate: Sampling rate from 0.0 to 1.0 (1.0 = sample everything)
+        """
         if flush_interval is not None:
             self._flush_interval = flush_interval
             logger.info(f"Tracer flush_interval configured to {flush_interval}s.")
@@ -310,6 +330,9 @@ class Tracer:
             # This configuration should ideally be called before integrations are used.
             self._integrations_config.update(integrations)
             logger.info(f"Tracer integrations configured to: {self._integrations_config}")
+        if sampling_rate is not None:
+            self._sampling_rate = max(0.0, min(1.0, sampling_rate))  # Clamp to [0, 1]
+            logger.info(f"Tracer sampling_rate configured to {self._sampling_rate}.")
     
     def set_global_tags(self, tags: dict[str, str]) -> None:
         """Set global tags that are applied to all spans, traces, and sessions.
@@ -428,7 +451,7 @@ class Tracer:
                             if session_from_baggage:
                                 otel_session_id = str(session_from_baggage)
                                 # Found session ID in baggage
-                        except Exception as e:
+                        except Exception:
                             pass  # Could not extract baggage
                     
                     # If still no session ID, check if we have a session for this trace ID
@@ -529,7 +552,11 @@ class Tracer:
         # --- Reference counting for the trace -------------------
         trace_id = span.trace_id
         if trace_id not in self._traces:
-            self._traces[trace_id] = Trace(trace_id=trace_id)
+            # New trace - make sampling decision
+            is_sampled = random.random() < self._sampling_rate
+            self._traces[trace_id] = Trace(trace_id=trace_id, is_sampled=is_sampled)
+            if not is_sampled:
+                logger.debug(f"Trace {trace_id} not sampled (sampling_rate={self._sampling_rate})")
         self._traces[trace_id].ref_count += 1
         
         # Store trace-to-session mapping for OTEL context propagation
@@ -549,6 +576,12 @@ class Tracer:
             
         if self.is_shutting_down() or span.name == "noop_span":
             return # Discard spans if shutting down or if it's a no-op span
+
+        # Check if this trace is being sampled
+        trace_id = span.trace_id
+        if trace_id in self._traces and not self._traces[trace_id].is_sampled:
+            logger.debug(f"Discarding span {span.name} from unsampled trace {trace_id}")
+            return
 
         duration = span.duration_ms
         logger.info(
