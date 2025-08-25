@@ -40,7 +40,8 @@ def init(
     enabled_integrations: list[str] = None,
     setup_otlp: bool = True,
     service_name: str = "zeroeval-app",
-    tags: Optional[dict[str, str]] = None
+    tags: Optional[dict[str, str]] = None,
+    sampling_rate: Optional[float] = None
 ):
     """
     Initialize the ZeroEval SDK.
@@ -64,7 +65,12 @@ def init(
                                 spans to ZeroEval. Defaults to True.
         service_name (str, optional): Service name for OTLP traces. Defaults to "zeroeval-app".
         tags (dict[str, str], optional): Global tags to apply to all traces, sessions, and spans.
+        sampling_rate (float, optional): Sampling rate from 0.0 to 1.0 (1.0 = sample everything).
+                                If not provided, uses ZEROEVAL_SAMPLING_RATE env var or defaults to 1.0.
     """
+    # Import tracer once at the beginning
+    from ..observability.tracer import tracer
+    
     # Set workspace name (always use the provided value)
     os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
     
@@ -72,7 +78,16 @@ def init(
     if api_key is not None:
         os.environ["ZEROEVAL_API_KEY"] = api_key
     if api_url is not None:
-        os.environ["ZEROEVAL_API_URL"] = api_url    
+        os.environ["ZEROEVAL_API_URL"] = api_url
+    
+    # Set sampling rate if provided
+    if sampling_rate is not None:
+        # Clamp to valid range
+        sampling_rate = max(0.0, min(1.0, sampling_rate))
+        os.environ["ZEROEVAL_SAMPLING_RATE"] = str(sampling_rate)
+        # Also configure the tracer directly if it's already initialized
+        # This ensures the sampling rate is applied even if the tracer was created before init()
+        tracer.configure(sampling_rate=sampling_rate)
     
     # Set up OTLP provider if requested (similar to how Langfuse does it)
     if setup_otlp and api_key:
@@ -216,11 +231,13 @@ def init(
         
         # Log all configuration values as the first log message
         masked_api_key = f"{api_key[:8]}..." if api_key and len(api_key) > 8 else "***" if api_key else "Not set"
+        current_sampling = os.environ.get("ZEROEVAL_SAMPLING_RATE", "1.0")
         logger.debug("ZeroEval SDK Configuration:")
         logger.debug(f"  Workspace: {workspace_name}")
         logger.debug(f"  API Key: {masked_api_key}")
         logger.debug(f"  API URL: {api_url}")
         logger.debug(f"  Debug Mode: {is_debug_mode}")
+        logger.debug(f"  Sampling Rate: {current_sampling}")
         logger.debug(f"  Enabled Integrations: {enabled_integrations or 'All available'}")
         logger.debug(f"  Disabled Integrations: {disabled_integrations or 'None'}")
         logger.debug(f"  Active Integrations: {active_integrations or 'None'}")
@@ -228,7 +245,6 @@ def init(
         logger.info("SDK initialized in debug mode.")
         
         # Apply global tags if provided, then reinitialize integrations
-        from ..observability.tracer import tracer
         if tags:
             tracer.set_global_tags(tags)
         tracer.reinitialize_integrations()
@@ -239,7 +255,6 @@ def init(
         logger.setLevel(logging.WARNING)
         
         # Apply global tags if provided, then reinitialize integrations
-        from ..observability.tracer import tracer
         if tags:
             tracer.set_global_tags(tags)
         tracer.reinitialize_integrations()
