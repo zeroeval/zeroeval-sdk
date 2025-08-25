@@ -6,6 +6,8 @@ from typing import Any
 
 import requests
 
+from .utils import safe_json_dumps, sanitize_for_json
+
 logger = logging.getLogger(__name__)
 
 class SpanWriter(ABC):
@@ -74,28 +76,30 @@ class SpanBackendWriter(SpanWriter):
         formatted_spans = []
         for span in spans_sorted:
             try:
+                # Sanitize the entire span to ensure all fields are JSON serializable
+                sanitized_span = sanitize_for_json(span)
                 # DEBUG: Log session information for this span
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
                         "Formatting span '%s' (session_id=%s, session_name=%s)",
-                        span.get("name"),
-                        span.get("session_id"),
-                        repr(span.get("session_name")),
+                        sanitized_span.get("name"),
+                        sanitized_span.get("session_id"),
+                        repr(sanitized_span.get("session_name")),
                     )
 
                 # Convert traceback object to string if present
-                error_stack = str(span.get("error_stack")) if span.get("error_stack") else None
+                error_stack = str(sanitized_span.get("error_stack")) if sanitized_span.get("error_stack") else None
                 
                 # Prepare session data if session_id is provided
                 # Only send session metadata when we have meaningful information (name or tags)
                 session_data = None
-                if span.get("session_id"):
-                    session_name = span.get("session_name")
-                    session_tags = span.get("session_tags")
+                if sanitized_span.get("session_id"):
+                    session_name = sanitized_span.get("session_name")
+                    session_tags = sanitized_span.get("session_tags")
 
                     # Build the payload only if we have a non-null name or at least one tag.
                     if session_name is not None or session_tags:
-                        session_data = {"id": span["session_id"]}
+                        session_data = {"id": sanitized_span["session_id"]}
 
                         # Include name only when it is explicitly provided (avoid null overwrite).
                         if session_name is not None:
@@ -110,39 +114,39 @@ class SpanBackendWriter(SpanWriter):
                     if session_data:
                         logger.debug(
                             "Session object to be sent for session_id %s: %s",
-                            span.get("session_id"),
+                            sanitized_span.get("session_id"),
                             session_data,
                         )
                     else:
                         logger.debug(
                             "No session metadata sent for session_id %s (no name/tags)",
-                            span.get("session_id"),
+                            sanitized_span.get("session_id"),
                         )
                 
                 formatted_span = {
-                    "id": span["span_id"],
-                    "session_id": span.get("session_id"),
-                    "trace_id": span["trace_id"],
-                    "parent_span_id": span["parent_id"],
-                    "name": span["name"],
-                    "kind": span.get("kind") or span.get("attributes", {}).get("kind", "generic"),  # Check attributes as fallback
-                    "started_at": span.get("start_time"),
-                    "ended_at": span.get("end_time"),
-                    "duration_ms": span["duration_ms"],
-                    "attributes": span.get("attributes", {}),
-                    "status": span.get("status", "unset"),
-                    "input_data": json.dumps(span["input_data"]) if isinstance(span["input_data"], (dict, list)) else span["input_data"],
-                    "output_data": json.dumps(span["output_data"]) if isinstance(span["output_data"], (dict, list)) else span["output_data"],
-                    "code": span.get("code"),
-                    "code_filepath": span.get("code_filepath"),
-                    "code_lineno": span.get("code_lineno"),
-                    "error_code": span.get("error_code"),
-                    "error_message": span.get("error_message"),
+                    "id": sanitized_span["span_id"],
+                    "session_id": sanitized_span.get("session_id"),
+                    "trace_id": sanitized_span["trace_id"],
+                    "parent_span_id": sanitized_span["parent_id"],
+                    "name": sanitized_span["name"],
+                    "kind": sanitized_span.get("kind") or sanitized_span.get("attributes", {}).get("kind", "generic"),  # Check attributes as fallback
+                    "started_at": sanitized_span.get("start_time"),
+                    "ended_at": sanitized_span.get("end_time"),
+                    "duration_ms": sanitized_span["duration_ms"],
+                    "attributes": sanitized_span.get("attributes", {}),
+                    "status": sanitized_span.get("status", "unset"),
+                    "input_data": safe_json_dumps(sanitized_span["input_data"]) if isinstance(sanitized_span["input_data"], (dict, list)) else sanitized_span["input_data"],
+                    "output_data": safe_json_dumps(sanitized_span["output_data"]) if isinstance(sanitized_span["output_data"], (dict, list)) else sanitized_span["output_data"],
+                    "code": sanitized_span.get("code"),
+                    "code_filepath": sanitized_span.get("code_filepath"),
+                    "code_lineno": sanitized_span.get("code_lineno"),
+                    "error_code": sanitized_span.get("error_code"),
+                    "error_message": sanitized_span.get("error_message"),
                     "error_stack": error_stack,
-                    "experiment_result_id": span.get("experiment_result_id"),
-                    "tags": filter_null_values(span.get("tags", {})),
-                    "trace_tags": filter_null_values(span.get("trace_tags", {})),
-                    "session_tags": filter_null_values(span.get("session_tags", {}))
+                    "experiment_result_id": sanitized_span.get("experiment_result_id"),
+                    "tags": filter_null_values(sanitized_span.get("tags", {})),
+                    "trace_tags": filter_null_values(sanitized_span.get("trace_tags", {})),
+                    "session_tags": filter_null_values(sanitized_span.get("session_tags", {}))
                 }
                 
                 # Add session object if we have session name or tags
@@ -152,7 +156,7 @@ class SpanBackendWriter(SpanWriter):
             except Exception:
                 logger.error(
                     "Failed to format span during write: %s",
-                    span.get("name", "unnamed"),
+                    sanitized_span.get("name", "unnamed") if 'sanitized_span' in locals() else span.get("name", "unnamed"),
                     exc_info=True,
                 )
                 continue
@@ -204,11 +208,11 @@ class SpanBackendWriter(SpanWriter):
         logger.info(f"  - Method: POST")
         logger.info(f"  - Headers: {headers}")
         logger.info(f"  - API Key Present: {'Yes' if api_key else 'No'}")
-        logger.info(f"  - Payload size: {len(json.dumps(formatted_spans))} bytes")
+        logger.info(f"  - Payload size: {len(safe_json_dumps(formatted_spans))} bytes")
         
         # Log full payload at DEBUG level
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Full request payload: {json.dumps(formatted_spans, indent=2)}")
+            logger.debug(f"Full request payload: {safe_json_dumps(formatted_spans, indent=2)}")
         
         try:
             logger.info("Sending request...")
@@ -224,7 +228,7 @@ class SpanBackendWriter(SpanWriter):
             # Log response body
             try:
                 response_body = response.json()
-                logger.info(f"  - Response Body: {json.dumps(response_body, indent=2)}")
+                logger.info(f"  - Response Body: {safe_json_dumps(response_body, indent=2)}")
             except:
                 logger.info(f"  - Response Body (text): {response.text}")
             
@@ -251,7 +255,7 @@ class SpanBackendWriter(SpanWriter):
             # Log error response body
             try:
                 error_body = e.response.json()
-                logger.error(f"  - Error Response Body: {json.dumps(error_body, indent=2)}")
+                logger.error(f"  - Error Response Body: {safe_json_dumps(error_body, indent=2)}")
             except:
                 logger.error(f"  - Error Response Body (text): {e.response.text}")
             
