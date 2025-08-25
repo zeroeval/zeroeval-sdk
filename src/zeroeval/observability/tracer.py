@@ -576,14 +576,56 @@ class Tracer:
         """
         def _do_flush():
             if not self._spans:
+                logger.info("No spans to flush (buffer is empty).")
                 return
 
             spans_to_flush = self._spans.copy()
             self._spans.clear()
             self._last_flush_time = time.time()
 
-            logger.info(f"Flushing {len(spans_to_flush)} spans to writer.")
-            self._writer.write(spans_to_flush)
+            logger.info(f"=== TRACER FLUSH: Starting flush of {len(spans_to_flush)} spans ===")
+            
+            # Log span summaries being flushed
+            logger.info("Spans being flushed:")
+            for i, span in enumerate(spans_to_flush):
+                logger.info(f"  [{i+1}/{len(spans_to_flush)}] {span.get('name', 'unnamed')}")
+                logger.info(f"       - span_id: {span.get('span_id')}")
+                logger.info(f"       - trace_id: {span.get('trace_id')}")
+                logger.info(f"       - session_id: {span.get('session_id')}")
+                logger.info(f"       - status: {span.get('status')}")
+                logger.info(f"       - duration_ms: {span.get('duration_ms')}")
+            
+            # Call writer and capture the result
+            try:
+                result = self._writer.write(spans_to_flush)
+                
+                # Log the writer result
+                logger.info(f"=== TRACER FLUSH RESULT ===")
+                if result:
+                    if result.get("success"):
+                        logger.info(f"✅ Flush SUCCESSFUL!")
+                        logger.info(f"  - Spans sent: {result.get('spans_sent', len(spans_to_flush))}")
+                        logger.info(f"  - Status code: {result.get('status_code', 'N/A')}")
+                        logger.info(f"  - Response time: {result.get('response_time', 'N/A')}s")
+                        if result.get('response_body'):
+                            logger.info(f"  - Response preview: {result.get('response_body')[:200]}...")
+                    else:
+                        logger.error(f"❌ Flush FAILED!")
+                        logger.error(f"  - Error: {result.get('error', 'Unknown error')}")
+                        logger.error(f"  - Status code: {result.get('status_code', 'N/A')}")
+                        logger.error(f"  - Exception type: {result.get('exception_type', 'N/A')}")
+                        if result.get('response_body'):
+                            logger.error(f"  - Error response: {result.get('response_body')}")
+                else:
+                    logger.warning("Writer returned no result information")
+                    
+                logger.info(f"=== TRACER FLUSH COMPLETE ===")
+                
+            except Exception as e:
+                logger.error(f"=== TRACER FLUSH EXCEPTION ===")
+                logger.error(f"Unexpected error during flush: {e}")
+                logger.error(f"Exception type: {type(e).__name__}")
+                logger.error(f"Exception details: {str(e)}", exc_info=True)
             
         if in_lock:
             _do_flush()
