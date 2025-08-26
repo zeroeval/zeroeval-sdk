@@ -9,6 +9,50 @@ from ..base import Integration
 logger = logging.getLogger(__name__)
 
 
+def extract_pydantic_schema_for_openai(model_type: Any) -> Optional[dict[str, Any]]:
+    """
+    Extract Pydantic schema in OpenAI's response_format structure.
+    
+    Returns a dict that can be directly used as the response_format parameter
+    in openai.chat.completions.create calls.
+    """
+    try:
+        # Check if it's a Pydantic model
+        import pydantic
+        
+        if not (isinstance(model_type, type) and issubclass(model_type, pydantic.BaseModel)):
+            logger.debug(f"Type {model_type} is not a Pydantic BaseModel")
+            return None
+            
+        # Get the JSON schema from the Pydantic model
+        if hasattr(model_type, 'model_json_schema'):
+            # Pydantic v2
+            schema = model_type.model_json_schema()
+        elif hasattr(model_type, 'schema'):
+            # Pydantic v1
+            schema = model_type.schema()
+        else:
+            logger.warning(f"Unable to extract schema from {model_type}")
+            return None
+            
+        # Return in OpenAI's response_format structure
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": model_type.__name__,
+                "schema": schema,
+                "strict": True
+            }
+        }
+        
+    except ImportError:
+        logger.debug("Pydantic not installed, cannot extract model schema")
+        return None
+    except Exception as e:
+        logger.warning(f"Error extracting Pydantic model schema: {e}")
+        return None
+
+
 def zeroeval_prompt(name: str, content: str, variables: Optional[dict] = None) -> str:
     """
     Helper function to create a prompt with zeroeval metadata for tracing and observability.
@@ -1393,11 +1437,20 @@ class OpenAIIntegration(Integration):
                 if "tool_choice" in kwargs:
                     span_attributes["tool_choice"] = kwargs["tool_choice"]
 
-                # Capture text_format info for debugging visibility
+                # Capture text_format info with full Pydantic schema in OpenAI format
                 if "text_format" in kwargs and kwargs["text_format"] is not None:
                     try:
-                        span_attributes["text_format"] = getattr(kwargs["text_format"], "__name__", str(kwargs["text_format"]))
-                    except Exception:
+                        # Extract Pydantic schema in OpenAI's response_format structure
+                        response_format = extract_pydantic_schema_for_openai(kwargs["text_format"])
+                        if response_format:
+                            span_attributes["text_format_response_format"] = response_format
+                            # Also keep the simple name for backward compatibility
+                            span_attributes["text_format"] = response_format["json_schema"]["name"]
+                        else:
+                            # Fallback to simple name if not a Pydantic model
+                            span_attributes["text_format"] = getattr(kwargs["text_format"], "__name__", str(kwargs["text_format"]))
+                    except Exception as e:
+                        logger.debug(f"Error capturing text_format: {e}")
                         span_attributes["text_format"] = "<unknown>"
 
                 if normalized_messages:
@@ -1562,8 +1615,17 @@ class OpenAIIntegration(Integration):
 
                 if "text_format" in kwargs and kwargs["text_format"] is not None:
                     try:
-                        span_attributes["text_format"] = getattr(kwargs["text_format"], "__name__", str(kwargs["text_format"]))
-                    except Exception:
+                        # Extract Pydantic schema in OpenAI's response_format structure
+                        response_format = extract_pydantic_schema_for_openai(kwargs["text_format"])
+                        if response_format:
+                            span_attributes["text_format_response_format"] = response_format
+                            # Also keep the simple name for backward compatibility
+                            span_attributes["text_format"] = response_format["json_schema"]["name"]
+                        else:
+                            # Fallback to simple name if not a Pydantic model
+                            span_attributes["text_format"] = getattr(kwargs["text_format"], "__name__", str(kwargs["text_format"]))
+                    except Exception as e:
+                        logger.debug(f"Error capturing text_format: {e}")
                         span_attributes["text_format"] = "<unknown>"
 
                 if normalized_messages:
