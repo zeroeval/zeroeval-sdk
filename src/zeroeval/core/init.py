@@ -92,7 +92,6 @@ def init(
         # Also configure the tracer directly if it's already initialized
         # This ensures the sampling rate is applied even if the tracer was created before init()
         tracer.configure(sampling_rate=sampling_val)
-
     # Set up OTLP provider if requested (similar to how Langfuse does it)
     if setup_otlp and api_key:
         try:

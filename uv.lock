@@ -1771,7 +1771,7 @@ wheels = [
 
 [[package]]
 name = "zeroeval"
-version = "0.6.110"
+version = "0.6.112"
 source = { editable = "." }
 dependencies = [
     { name = "opentelemetry-api" },
