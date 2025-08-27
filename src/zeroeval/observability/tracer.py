@@ -552,11 +552,16 @@ class Tracer:
         # --- Reference counting for the trace -------------------
         trace_id = span.trace_id
         if trace_id not in self._traces:
-            # New trace - make sampling decision
-            is_sampled = random.random() < self._sampling_rate
-            self._traces[trace_id] = Trace(trace_id=trace_id, is_sampled=is_sampled)
-            if not is_sampled:
-                logger.debug(f"Trace {trace_id} not sampled (sampling_rate={self._sampling_rate})")
+            # New trace: decide sampling unless coming from OTEL
+            if otel_trace_id:
+                # When joining existing OTEL trace, do not drop it
+                self._traces[trace_id] = Trace(trace_id=trace_id, is_sampled=True)
+            else:
+                is_sampled = random.random() < self._sampling_rate
+                self._traces[trace_id] = Trace(trace_id=trace_id, is_sampled=is_sampled)
+                if not is_sampled and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Trace {trace_id} not sampled (sampling_rate={self._sampling_rate})")
+        # Increment ref count for every started span in the trace
         self._traces[trace_id].ref_count += 1
         
         # Store trace-to-session mapping for OTEL context propagation
@@ -577,10 +582,32 @@ class Tracer:
         if self.is_shutting_down() or span.name == "noop_span":
             return # Discard spans if shutting down or if it's a no-op span
 
-        # Check if this trace is being sampled
         trace_id = span.trace_id
-        if trace_id in self._traces and not self._traces[trace_id].is_sampled:
-            logger.debug(f"Discarding span {span.name} from unsampled trace {trace_id}")
+        
+        # Always remove from active spans stack (even for unsampled traces)
+        stack = self._active_spans_ctx.get()
+        if stack and stack[-1].span_id == span.span_id:
+            self._active_spans_ctx.set(stack[:-1])
+        
+        # Check sampling decision before cleanup
+        is_sampled = True  # Default to sampled if trace not in registry
+        if trace_id in self._traces:
+            is_sampled = self._traces[trace_id].is_sampled
+            
+            # Decrement reference count for trace cleanup
+            self._traces[trace_id].ref_count -= 1
+            
+            # Clean up trace if no more active spans
+            if self._traces[trace_id].ref_count <= 0:
+                logger.debug(f"Cleaning up trace {trace_id} (ref_count=0, sampled={is_sampled})")
+                del self._traces[trace_id]
+                # Also clean up trace-to-session mapping
+                if trace_id in self._trace_to_session:
+                    del self._trace_to_session[trace_id]
+
+        # Check if this trace is being sampled - if not, skip buffering/sending
+        if not is_sampled:
+            logger.debug(f"Not sending span {span.name} from unsampled trace {trace_id}")
             return
 
         duration = span.duration_ms
@@ -588,10 +615,6 @@ class Tracer:
             f"Ending span: {span.name} (status: {span.status}, duration: {duration:.2f}ms)"
             if duration else f"Ending span: {span.name} (status: {span.status})"
         )
-        
-        stack = self._active_spans_ctx.get()
-        if stack and stack[-1].span_id == span.span_id:
-            self._active_spans_ctx.set(stack[:-1])
         
         with self._flush_lock:
             self._spans.append(span.to_dict())
