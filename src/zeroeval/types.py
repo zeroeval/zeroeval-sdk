@@ -11,6 +11,7 @@ class Prompt:
     version_id: Optional[str]
     tag: Optional[str]
     is_latest: bool
+    model: Optional[str]
     created_by: Optional[str]
     updated_by: Optional[str]
     created_at: Optional[str]
@@ -26,6 +27,7 @@ class Prompt:
             version_id=data.get("version_id"),
             tag=data.get("tag"),
             is_latest=bool(data.get("is_latest", False)),
+            model=data.get("model_id") or data.get("model"),
             created_by=data.get("created_by"),
             updated_by=data.get("updated_by"),
             created_at=data.get("created_at"),
