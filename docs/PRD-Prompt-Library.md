@@ -45,6 +45,7 @@ class ZeroEval:
         tag: Optional[str] = None,
         fallback: Optional[str] = None,
         variables: Optional[dict[str, Any]] = None,
+        task_name: Optional[str] = None,
         render: bool = True,
         missing: Literal["error", "leave"] = "error",
         use_cache: bool = True,
@@ -61,6 +62,11 @@ Notes:
 - Runtime templating:
   - If `variables` is provided and `render=True` (default), the SDK performs client-side rendering by substituting `{{variable_name}}` with values from `variables` (see §18).
   - `missing` controls behavior when a referenced variable has no value: `"error"` raises; `"leave"` leaves the token intact.
+- Task association (optional):
+  - If `task_name` is provided, the returned `Prompt.content` is decorated with a ZeroEval metadata header so downstream OpenAI calls are traced against that task, mirroring `ze.prompt` behavior.
+  - Format: `<zeroeval>{"task": "<task_name>", "variables": { ...optional... }}</zeroeval><content>`.
+  - Included variables: when `variables` is passed, those keys are embedded in the header for observability. Rendering of `content` still follows `render`/`missing` semantics.
+  - This does not change server-side storage; it only affects the returned content for observability and automatic task creation/association.
 
 Convenience:
 
@@ -119,15 +125,39 @@ Special handling of `latest`:
 
 ## 6) Caching
 
-- In-memory LRU cache with TTL (default 60s, configurable on client):
+Design goals:
+
+- Keep hot prompts fast with a tiny in-process cache.
+- Avoid correctness bugs with runtime variables by caching only the raw server content.
+- Keep stale windows short and controllable (TTL).
+- Be thread-safe within a process; do not share across processes.
+
+Mechanics:
+
+- In-memory LRU cache with TTL (default 60s; configurable):
   - Cache key: `(api_key_namespace, slug, version|None, tag|resolved_default_tag)`.
-  - Cache value: `Prompt` instance.
-- Do not cache `fallback` results.
-- Provide `use_cache=False` to bypass cache.
+    - `api_key_namespace`: last 6 chars of the API key (or equivalent) to prevent cross-tenant collisions.
+    - `resolved_default_tag`: if the caller did not pass `version` or `tag`, use the client’s resolved default tag (see §5).
+  - Cache value: Raw server `Prompt` (unrendered content + metadata), `source="server"`.
+    - Do NOT cache rendered variants (those depend on caller-provided `variables`).
+    - Do NOT cache `fallback` results.
+  - Eviction: LRU by insertion/access with bounded `maxsize` (default 512; configurable).
+  - Expiration: entries older than `ttl_seconds` are treated as misses.
+  - Thread-safety: `Lock` around `get/set/clear`.
+
+Behavioral notes:
+
+- Bypass with `use_cache=False` to force a fresh network fetch.
+- Pseudo-tag `latest`: treated as a normal tag at the cache key level; short TTL keeps drift limited.
+- Errors and non-200s are not cached. If `fallback` is used, return a non-cached `Prompt(source="fallback")`.
+- Rendering: if `variables` are provided and `render=True`, render AFTER retrieval using the raw cached content; the rendered result is NOT stored back into the cache.
+- Invalidation: provide a `.clear()` on the internal cache. Optional DX: `ZeroEval.clear_prompt_cache()` convenience method.
+- `task_name` decoration: when provided, the ZeroEval header decoration is applied AFTER retrieval (and after optional rendering) and is NOT cached. The cache stores only the raw server `Prompt`.
 
 Implementation suggestion:
 
-- Add `zeroeval/cache.py` with a small LRU (e.g., `functools.lru_cache` isn’t TTL-aware; implement a tiny TTL cache with `OrderedDict`).
+- Add `zeroeval/cache.py` with a minimal TTL LRU built on `OrderedDict`.
+- Store and return copies or new `Prompt` instances when applying rendering so cached raw content is never mutated.
 
 ## 7) Errors and Exceptions
 
@@ -164,6 +194,7 @@ Edit/add the following files:
    - Add helper `_validate_slug(slug: str) -> str`.
    - Add helper `_resolve_default_tag() -> str`.
    - If `variables` provided and `render=True`, call `render_template(content, variables, missing=missing)` before returning.
+   - If `task_name` is provided, decorate the returned content with the ZeroEval header. Prefer reusing `zeroeval_prompt(name=task_name, content=content, variables=variables)` to ensure parity with `ze.prompt`. Ensure the cached value remains the undecorated server `Prompt`.
 
 2. `src/zeroeval/types.py`
 
@@ -179,7 +210,7 @@ Edit/add the following files:
 
 5. `src/zeroeval/__init__.py`
 
-   - Export `Prompt` and `ZeroEval.get_prompt` in the public API.
+   - Export `Prompt` and `ZeroEval.get_prompt` in the public API. Pass through `task_name` from `ze.get_prompt`/`ze.prompts.get`.
 
 6. `examples/openai_responses_parse_with_prompt.py`
 
@@ -215,6 +246,7 @@ Edit/add the following files:
   - Error handling and `fallback` behavior.
   - Response mapping to `Prompt`.
   - Templating render: basic replacement, escaping, missing variable policies (`error`/`leave`).
+  - `task_name` decoration: header presence/format, inclusion of `variables`, and that cache contents remain undecorated.
 
 - Integration tests (requires backend dev server or mocked responses):
   - Fetch by `version`.
@@ -253,6 +285,16 @@ print(p.content)  # "You are creating an event with title ZeroEval Launch"
 
 # Alternatively, use the namespace wrapper
 p = ze.prompts.get("support-triage", tag="production")
+
+# With task association (mirrors ze.prompt behavior in returned content)
+tasked = ze.get_prompt(
+    "support-triage",
+    tag="production",
+    variables={"customer": "Acme"},
+    task_name="support-triage",
+)
+# Use in OpenAI call to ensure spans are linked to the task
+# client.chat.completions.create(messages=[{"role": "system", "content": tasked.content}, ...])
 ```
 
 ## 16) Risks & Mitigations

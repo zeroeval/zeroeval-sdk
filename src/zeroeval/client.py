@@ -10,6 +10,7 @@ from .cache import TTLCache
 from .errors import PromptNotFoundError, PromptRequestError
 from .template import render_template
 from .types import Prompt
+from .observability import zeroeval_prompt
 
 
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
@@ -59,6 +60,7 @@ class ZeroEval:
         tag: Optional[str] = None,
         fallback: Optional[str] = None,
         variables: Optional[Dict[str, Any]] = None,
+        task_name: Optional[str] = None,
         render: bool = True,
         missing: str = "error",
         use_cache: bool = True,
@@ -113,7 +115,7 @@ class ZeroEval:
                     metadata={},
                     source="fallback",
                 )
-                return self._post_process(prompt, variables, render, missing, use_cache, cache_key)
+                return self._post_process(prompt, variables, task_name, render, missing, use_cache, cache_key)
             raise PromptRequestError(str(e), status=None)
 
         if resp.status_code == 404:
@@ -130,7 +132,7 @@ class ZeroEval:
                     metadata={},
                     source="fallback",
                 )
-                return self._post_process(prompt, variables, render, missing, use_cache, cache_key)
+                return self._post_process(prompt, variables, task_name, render, missing, use_cache, cache_key)
             raise PromptNotFoundError(slug, version, effective_tag)
         if resp.status_code >= 400:
             if fallback is not None:
@@ -146,19 +148,20 @@ class ZeroEval:
                     metadata={},
                     source="fallback",
                 )
-                return self._post_process(prompt, variables, render, missing, use_cache, cache_key)
+                return self._post_process(prompt, variables, task_name, render, missing, use_cache, cache_key)
             raise PromptRequestError(
                 f"Request failed with status {resp.status_code}: {resp.text}", status=resp.status_code
             )
 
         data = resp.json()
         prompt = Prompt.from_response(data)
-        return self._post_process(prompt, variables, render, missing, use_cache, cache_key)
+        return self._post_process(prompt, variables, task_name, render, missing, use_cache, cache_key)
 
     def _post_process(
         self,
         prompt: Prompt,
         variables: Optional[Dict[str, Any]],
+        task_name: Optional[str],
         render: bool,
         missing: str,
         use_cache: bool,
@@ -181,6 +184,21 @@ class ZeroEval:
         # Cache only server-sourced
         if use_cache and prompt.source == "server":
             self._cache.set(cache_key, prompt)
+        # Decorate with ZeroEval task header (not cached)
+        if task_name:
+            decorated = Prompt(
+                content=zeroeval_prompt(name=task_name, content=prompt.content, variables=variables or {}),
+                version=prompt.version,
+                tag=prompt.tag,
+                is_latest=prompt.is_latest,
+                created_by=prompt.created_by,
+                updated_by=prompt.updated_by,
+                created_at=prompt.created_at,
+                updated_at=prompt.updated_at,
+                metadata=prompt.metadata,
+                source=prompt.source,
+            )
+            return decorated
         return prompt
 
 
