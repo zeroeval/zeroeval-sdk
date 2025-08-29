@@ -96,7 +96,7 @@ Response 200 (JSON):
 
 Errors:
 
-- 404: library/entry not found OR requested `version`/`tag` not pinned.
+- 404: slug not found OR requested `version`/`tag` not pinned.
 - 400: invalid slug, invalid parameters.
 - 401/403: auth failures.
 - 5xx: server errors.
@@ -120,7 +120,7 @@ Special handling of `latest`:
 ## 6) Caching
 
 - In-memory LRU cache with TTL (default 60s, configurable on client):
-  - Cache key: `(org_id, slug, version|None, tag|resolved_default_tag)`.
+  - Cache key: `(api_key_namespace, slug, version|None, tag|resolved_default_tag)`.
   - Cache value: `Prompt` instance.
 - Do not cache `fallback` results.
 - Provide `use_cache=False` to bypass cache.
@@ -148,7 +148,7 @@ Raise `PromptNotFoundError` for 404s; `PromptRequestError` otherwise. On `fallba
 
 `ZeroEval` client accepts / reads:
 
-- `base_url` (default from `ZEROEVAL_BASE_URL` or `https://api.zeroeval.com`)
+- `base_url` (default from `ZEROEVAL_BASE_URL` or `ZEROEVAL_API_URL` or `https://api.zeroeval.com`)
 - `api_key` (from `ZEROEVAL_API_KEY`)
 - `default_tag` (from `ZEROEVAL_PROMPT_TAG` or env mapping)
 - `timeout` (default 10s)
@@ -161,7 +161,7 @@ Edit/add the following files:
 1. `src/zeroeval/client.py`
 
    - Add method `get_prompt(...)` implementing resolution order, request building, caching, and fallback.
-   - Add helper `_parse_slug(slug: str) -> tuple[str, str]`.
+   - Add helper `_validate_slug(slug: str) -> str`.
    - Add helper `_resolve_default_tag() -> str`.
    - If `variables` provided and `render=True`, call `render_template(content, variables, missing=missing)` before returning.
 
@@ -229,26 +229,30 @@ Edit/add the following files:
 ## 15) Example Usage
 
 ```python
-ze = ZeroEval(api_key=os.environ["ZEROEVAL_API_KEY"])  # default_tag auto-resolved
+import os
+import zeroeval as ze
 
 # Latest in non-prod, production in prod:
-prompt = ze.get_prompt("support/triage", fallback="You are a helpful assistant.")
+p = ze.get_prompt("support-triage", fallback="You are a helpful assistant.")
 
 # Explicit tag:
-prompt = ze.get_prompt("support-triage", tag="staging")
+p = ze.get_prompt("support-triage", tag="staging")
 
 # Explicit version (ignores tag):
-prompt = ze.get_prompt("support-triage", version=12)
+p = ze.get_prompt("support-triage", version=12)
 
-print(prompt.content)
+print(p.content)
 
 # With variables and rendering
-prompt = ze.get_prompt(
+p = ze.get_prompt(
     "events-create",
     tag="production",
     variables={"event_name": "ZeroEval Launch"},
 )
-print(prompt.content)  # "You are creating an event with title ZeroEval Launch"
+print(p.content)  # "You are creating an event with title ZeroEval Launch"
+
+# Alternatively, use the namespace wrapper
+p = ze.prompts.get("support-triage", tag="production")
 ```
 
 ## 16) Risks & Mitigations
