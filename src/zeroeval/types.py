@@ -8,6 +8,7 @@ from typing import Any, Optional, Dict
 class Prompt:
     content: str
     version: Optional[int]
+    version_id: Optional[str]
     tag: Optional[str]
     is_latest: bool
     created_by: Optional[str]
@@ -22,6 +23,7 @@ class Prompt:
         return Prompt(
             content=str(data.get("content", "")),
             version=data.get("version"),
+            version_id=data.get("version_id"),
             tag=data.get("tag"),
             is_latest=bool(data.get("is_latest", False)),
             created_by=data.get("created_by"),

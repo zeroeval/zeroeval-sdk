@@ -106,6 +106,7 @@ class ZeroEval:
                 prompt = Prompt(
                     content=fallback,
                     version=None,
+                    version_id=None,
                     tag=None,
                     is_latest=False,
                     created_by=None,
@@ -123,6 +124,7 @@ class ZeroEval:
                 prompt = Prompt(
                     content=fallback,
                     version=None,
+                    version_id=None,
                     tag=None,
                     is_latest=False,
                     created_by=None,
@@ -139,6 +141,7 @@ class ZeroEval:
                 prompt = Prompt(
                     content=fallback,
                     version=None,
+                    version_id=None,
                     tag=None,
                     is_latest=False,
                     created_by=None,
@@ -154,14 +157,22 @@ class ZeroEval:
             )
 
         data = resp.json()
+        # Normalize version_id from payload if present in metadata
+        if "version_id" not in data:
+            meta = data.get("metadata") or {}
+            if isinstance(meta, dict):
+                vid = meta.get("version_id") or meta.get("prompt_version_id")
+                if vid:
+                    data["version_id"] = vid
         prompt = Prompt.from_response(data)
-        return self._post_process(prompt, variables, task_name, render, missing, use_cache, cache_key)
+        return self._post_process(prompt, variables, task_name, slug, render, missing, use_cache, cache_key)
 
     def _post_process(
         self,
         prompt: Prompt,
         variables: Optional[Dict[str, Any]],
         task_name: Optional[str],
+        prompt_slug: Optional[str],
         render: bool,
         missing: str,
         use_cache: bool,
@@ -172,6 +183,7 @@ class ZeroEval:
             prompt = Prompt(
                 content=render_template(prompt.content, variables, missing=missing),
                 version=prompt.version,
+                version_id=getattr(prompt, "version_id", None),
                 tag=prompt.tag,
                 is_latest=prompt.is_latest,
                 created_by=prompt.created_by,
@@ -187,8 +199,16 @@ class ZeroEval:
         # Decorate with ZeroEval task header (not cached)
         if task_name:
             decorated = Prompt(
-                content=zeroeval_prompt(name=task_name, content=prompt.content, variables=variables or {}),
+                content=zeroeval_prompt(
+                    name=task_name,
+                    content=prompt.content,
+                    variables=variables or {},
+                    prompt_slug=prompt_slug,
+                    prompt_version=prompt.version,
+                    prompt_version_id=getattr(prompt, "version_id", None),
+                ),
                 version=prompt.version,
+                version_id=getattr(prompt, "version_id", None),
                 tag=prompt.tag,
                 is_latest=prompt.is_latest,
                 created_by=prompt.created_by,

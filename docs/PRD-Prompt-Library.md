@@ -27,6 +27,7 @@ from dataclasses import dataclass
 class Prompt:
     content: str
     version: Optional[int]
+    version_id: Optional[str]
     tag: Optional[str]
     is_latest: bool
     created_by: Optional[str]
@@ -64,7 +65,8 @@ Notes:
   - `missing` controls behavior when a referenced variable has no value: `"error"` raises; `"leave"` leaves the token intact.
 - Task association (optional):
   - If `task_name` is provided, the returned `Prompt.content` is decorated with a ZeroEval metadata header so downstream OpenAI calls are traced against that task, mirroring `ze.prompt` behavior.
-  - Format: `<zeroeval>{"task": "<task_name>", "variables": { ...optional... }}</zeroeval><content>`.
+  - The header ALSO includes `prompt_slug`, `prompt_version`, and `prompt_version_id` when available so the backend can link spans to the exact prompt version.
+  - Format: `<zeroeval>{"task": "<task_name>", "prompt_slug": "<slug>", "prompt_version": <int>, "prompt_version_id": "<uuid>", "variables": { ...optional... }}</zeroeval><content>`.
   - Included variables: when `variables` is passed, those keys are embedded in the header for observability. Rendering of `content` still follows `render`/`missing` semantics.
   - This does not change server-side storage; it only affects the returned content for observability and automatic task creation/association.
 
