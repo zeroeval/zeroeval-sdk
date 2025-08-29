@@ -53,7 +53,15 @@ def extract_pydantic_schema_for_openai(model_type: Any) -> Optional[dict[str, An
         return None
 
 
-def zeroeval_prompt(name: str, content: str, variables: Optional[dict] = None) -> str:
+def zeroeval_prompt(
+    name: str,
+    content: str,
+    variables: Optional[dict] = None,
+    *,
+    prompt_slug: Optional[str] = None,
+    prompt_version: Optional[int] = None,
+    prompt_version_id: Optional[str] = None,
+) -> str:
     """
     Helper function to create a prompt with zeroeval metadata for tracing and observability.
     
@@ -91,6 +99,13 @@ def zeroeval_prompt(name: str, content: str, variables: Optional[dict] = None) -
     if variables:
         metadata["variables"] = variables
         logger.debug(f"zeroeval_prompt: Adding variables to metadata: {variables}")
+    # Optional prompt linkage metadata
+    if prompt_slug:
+        metadata["prompt_slug"] = prompt_slug
+    if prompt_version is not None:
+        metadata["prompt_version"] = int(prompt_version)
+    if prompt_version_id:
+        metadata["prompt_version_id"] = str(prompt_version_id)
     
     logger.info(f"zeroeval_prompt: Creating prompt with task ID: '{name}'")
     
@@ -620,6 +635,8 @@ class OpenAIIntegration(Integration):
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
+                    # Attach full zeroeval metadata so backend can read prompt_version_id, prompt_slug, etc.
+                    span_attributes["zeroeval"] = zeroeval_metadata
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
@@ -846,6 +863,7 @@ class OpenAIIntegration(Integration):
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
+                    span_attributes["zeroeval"] = zeroeval_metadata
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
@@ -1018,6 +1036,7 @@ class OpenAIIntegration(Integration):
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
+                    span_attributes["zeroeval"] = zeroeval_metadata
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
@@ -1212,6 +1231,7 @@ class OpenAIIntegration(Integration):
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
+                    span_attributes["zeroeval"] = zeroeval_metadata
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
@@ -1408,6 +1428,7 @@ class OpenAIIntegration(Integration):
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
+                    span_attributes["zeroeval"] = zeroeval_metadata
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
@@ -1585,6 +1606,7 @@ class OpenAIIntegration(Integration):
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
+                    span_attributes["zeroeval"] = zeroeval_metadata
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
