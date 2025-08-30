@@ -26,6 +26,9 @@ from .providers import ZeroEvalOTLPProvider, SingleProcessorProvider
 from .observability import tracer, span as _SpanClass, zeroeval_prompt
 from .types import Prompt
 from .client import ZeroEval as PromptClient
+from .utils.hash import sha256_hex
+import re
+from .errors import PromptNotFoundError, PromptRequestError
 
 # Create convenience functions that match the expected API
 def start_span(name: str, **kwargs):
@@ -56,8 +59,64 @@ def set_tag(target, tags):
 # Use the imported span class directly
 span = _SpanClass
 
-# Create convenience alias for zeroeval_prompt
-prompt = zeroeval_prompt
+# Version-aware prompt wrapper
+def prompt(
+    name: str,
+    *,
+    content: "Optional[str]" = None,
+    variables: "Optional[dict]" = None,
+    from_: "Optional[str]" = None,
+) -> str:
+    """
+    Version-aware prompt helper integrated with Prompt Library.
+
+    Exactly one of `content` or `from_` must be provided. If `from_` is "latest",
+    fetch the latest version for the task-attached prompt. Otherwise `from_` must be
+    a 64-char lowercase hex SHA-256 content hash.
+    """
+    if (content is None and from_ is None) or (content is not None and from_ is not None):
+        raise ValueError("Provide exactly one of 'content' or 'from_'")
+
+    client = _ensure_prompt_client()
+
+    # Ensure/fetch the prompt version via backend
+    if content is not None:
+        content_hash = sha256_hex(content)
+        prompt_obj = client.ensure_task_prompt_version(task_name=name, content=content, content_hash=content_hash)
+    else:
+        assert from_ is not None
+        if from_ == "latest":
+            try:
+                prompt_obj = client.get_task_prompt_latest(task_name=name)
+            except PromptNotFoundError as _e:
+                raise PromptRequestError(
+                    f"No prompt versions found for task '{name}'. "
+                    f"Create one with ze.prompt(name, content=...) or publish a version in the Prompt Library."
+                )
+        else:
+            if not re.fullmatch(r"[0-9a-f]{64}", from_):
+                raise ValueError("from_ must be 'latest' or a 64-char lowercase hex SHA-256 hash")
+            prompt_obj = client.get_task_prompt_version_by_hash(task_name=name, content_hash=from_)
+
+    # Pull linkage metadata for decoration
+    prompt_slug = None
+    try:
+        # Prefer metadata.prompt_slug if provided by server
+        prompt_slug = (prompt_obj.metadata or {}).get("prompt_slug")
+        if not prompt_slug:
+            prompt_slug = (prompt_obj.metadata or {}).get("prompt")
+    except Exception:
+        prompt_slug = None
+
+    return zeroeval_prompt(
+        name=name,
+        content=prompt_obj.content,
+        variables=variables,
+        prompt_slug=prompt_slug,
+        prompt_version=prompt_obj.version,
+        prompt_version_id=getattr(prompt_obj, "version_id", None),
+        content_hash=content_hash if content is not None else None,
+    )
 
 # Prompt library convenience wrappers
 from typing import Optional
@@ -139,4 +198,4 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "0.6.9"
+__version__ = "0.6.115"

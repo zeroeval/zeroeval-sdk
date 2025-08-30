@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import os
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -61,6 +62,7 @@ def zeroeval_prompt(
     prompt_slug: Optional[str] = None,
     prompt_version: Optional[int] = None,
     prompt_version_id: Optional[str] = None,
+    content_hash: Optional[str] = None,
 ) -> str:
     """
     Helper function to create a prompt with zeroeval metadata for tracing and observability.
@@ -106,6 +108,8 @@ def zeroeval_prompt(
         metadata["prompt_version"] = int(prompt_version)
     if prompt_version_id:
         metadata["prompt_version_id"] = str(prompt_version_id)
+    if content_hash:
+        metadata["content_hash"] = str(content_hash)
     
     logger.info(f"zeroeval_prompt: Creating prompt with task ID: '{name}'")
     
@@ -637,6 +641,17 @@ class OpenAIIntegration(Integration):
                     span_attributes["task"] = task_id
                     # Attach full zeroeval metadata so backend can read prompt_version_id, prompt_slug, etc.
                     span_attributes["zeroeval"] = zeroeval_metadata
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
@@ -656,7 +671,36 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                # Temporarily route via ZeroEval proxy if model is a ZeroEval-prefixed id
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if args and hasattr(args[0], "_client"):
+                            # For resources like chat.completions that have a _client
+                            if hasattr(args[0]._client, "base_url"):
+                                original_base_url = args[0]._client.base_url
+                                args[0]._client.base_url = ze_base
+                            if ze_api_key and hasattr(args[0]._client, "api_key"):
+                                original_api_key = args[0]._client.api_key
+                                args[0]._client.api_key = ze_api_key
+                        elif args and hasattr(args[0], "base_url"):
+                            # For direct client instances
+                            original_base_url = args[0].base_url
+                            args[0].base_url = ze_base
+                            if ze_api_key and hasattr(args[0], "api_key"):
+                                original_api_key = args[0].api_key
+                                args[0].api_key = ze_api_key
+
                     response = await original(*args, **kwargs)
                     if is_streaming:
                         logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
@@ -775,6 +819,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if args and hasattr(args[0], "_client"):
+                            if original_base_url is not None and hasattr(args[0]._client, "base_url"):
+                                args[0]._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0]._client, "api_key"):
+                                args[0]._client.api_key = original_api_key
+                        elif args:
+                            if original_base_url is not None and hasattr(args[0], "base_url"):
+                                args[0].base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0], "api_key"):
+                                args[0].api_key = original_api_key
+                    except Exception:
+                        pass
 
             return inner
 
@@ -864,6 +922,50 @@ class OpenAIIntegration(Integration):
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
                     span_attributes["zeroeval"] = zeroeval_metadata
+                    # Attempt to patch model via content_hash+task or version_id
+                    try:
+                        from ....client import ZeroEval as _PromptClient
+                        _pc = _PromptClient()
+                        _patched_model = None
+                        task_name = zeroeval_metadata.get("task")
+                        chash = zeroeval_metadata.get("content_hash")
+                        if task_name and chash:
+                            try:
+                                prompt_obj = _pc.get_task_prompt_version_by_hash(task_name=task_name, content_hash=chash)
+                                if getattr(prompt_obj, "model", None):
+                                    _patched_model = prompt_obj.model
+                            except Exception:
+                                pass
+                        if not _patched_model:
+                            prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                            if prompt_version_id:
+                                _patched_model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                        if _patched_model:
+                            kwargs["model"] = _patched_model
+                    except Exception:
+                        pass
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
@@ -883,7 +985,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if hasattr(completions_instance, "_client"):
+                            if hasattr(completions_instance._client, "base_url"):
+                                original_base_url = completions_instance._client.base_url
+                                completions_instance._client.base_url = ze_base
+                            if ze_api_key and hasattr(completions_instance._client, "api_key"):
+                                original_api_key = completions_instance._client.api_key
+                                completions_instance._client.api_key = ze_api_key
+                        elif hasattr(completions_instance, "base_url"):
+                            original_base_url = completions_instance.base_url
+                            completions_instance.base_url = ze_base
+                            if ze_api_key and hasattr(completions_instance, "api_key"):
+                                original_api_key = completions_instance.api_key
+                                completions_instance.api_key = ze_api_key
+
                     response = original(*args, **kwargs)
                     if is_streaming:
                         logger.debug("Sync wrapper -> returning _StreamingResponseProxy (sync)")
@@ -1002,6 +1130,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if hasattr(completions_instance, "_client"):
+                            if original_base_url is not None and hasattr(completions_instance._client, "base_url"):
+                                completions_instance._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(completions_instance._client, "api_key"):
+                                completions_instance._client.api_key = original_api_key
+                        else:
+                            if original_base_url is not None and hasattr(completions_instance, "base_url"):
+                                completions_instance.base_url = original_base_url
+                            if original_api_key is not None and hasattr(completions_instance, "api_key"):
+                                completions_instance.api_key = original_api_key
+                    except Exception:
+                        pass
             return inner
         return wrapper
     
@@ -1081,7 +1223,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if args and hasattr(args[0], "_client"):
+                            if hasattr(args[0]._client, "base_url"):
+                                original_base_url = args[0]._client.base_url
+                                args[0]._client.base_url = ze_base
+                            if ze_api_key and hasattr(args[0]._client, "api_key"):
+                                original_api_key = args[0]._client.api_key
+                                args[0]._client.api_key = ze_api_key
+                        elif args and hasattr(args[0], "base_url"):
+                            original_base_url = args[0].base_url
+                            args[0].base_url = ze_base
+                            if ze_api_key and hasattr(args[0], "api_key"):
+                                original_api_key = args[0].api_key
+                                args[0].api_key = ze_api_key
+
                     response = await original(*args, **kwargs)
                     
                     elapsed = time.time() - start_time
@@ -1276,7 +1444,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if hasattr(responses_instance, "_client"):
+                            if hasattr(responses_instance._client, "base_url"):
+                                original_base_url = responses_instance._client.base_url
+                                responses_instance._client.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance._client, "api_key"):
+                                original_api_key = responses_instance._client.api_key
+                                responses_instance._client.api_key = ze_api_key
+                        elif hasattr(responses_instance, "base_url"):
+                            original_base_url = responses_instance.base_url
+                            responses_instance.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance, "api_key"):
+                                original_api_key = responses_instance.api_key
+                                responses_instance.api_key = ze_api_key
+
                     response = original(*args, **kwargs)
                     
                     elapsed = time.time() - start_time
@@ -1430,6 +1624,18 @@ class OpenAIIntegration(Integration):
                     span_attributes["task"] = task_id
                     span_attributes["zeroeval"] = zeroeval_metadata
                     
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
+                    
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
 
@@ -1485,7 +1691,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if args and hasattr(args[0], "_client"):
+                            if hasattr(args[0]._client, "base_url"):
+                                original_base_url = args[0]._client.base_url
+                                args[0]._client.base_url = ze_base
+                            if ze_api_key and hasattr(args[0]._client, "api_key"):
+                                original_api_key = args[0]._client.api_key
+                                args[0]._client.api_key = ze_api_key
+                        elif args and hasattr(args[0], "base_url"):
+                            original_base_url = args[0].base_url
+                            args[0].base_url = ze_base
+                            if ze_api_key and hasattr(args[0], "api_key"):
+                                original_api_key = args[0].api_key
+                                args[0].api_key = ze_api_key
+
                     response = await original(*args, **kwargs)
 
                     elapsed = time.time() - start_time
@@ -1577,6 +1809,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if args and hasattr(args[0], "_client"):
+                            if original_base_url is not None and hasattr(args[0]._client, "base_url"):
+                                args[0]._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0]._client, "api_key"):
+                                args[0]._client.api_key = original_api_key
+                        elif args:
+                            if original_base_url is not None and hasattr(args[0], "base_url"):
+                                args[0].base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0], "api_key"):
+                                args[0].api_key = original_api_key
+                    except Exception:
+                        pass
 
             return inner
         return wrapper
@@ -1607,6 +1853,18 @@ class OpenAIIntegration(Integration):
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
                     span_attributes["zeroeval"] = zeroeval_metadata
+                    
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI responses")
@@ -1661,7 +1919,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if hasattr(responses_instance, "_client"):
+                            if hasattr(responses_instance._client, "base_url"):
+                                original_base_url = responses_instance._client.base_url
+                                responses_instance._client.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance._client, "api_key"):
+                                original_api_key = responses_instance._client.api_key
+                                responses_instance._client.api_key = ze_api_key
+                        elif hasattr(responses_instance, "base_url"):
+                            original_base_url = responses_instance.base_url
+                            responses_instance.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance, "api_key"):
+                                original_api_key = responses_instance.api_key
+                                responses_instance.api_key = ze_api_key
+
                     response = original(*args, **kwargs)
 
                     elapsed = time.time() - start_time
@@ -1752,6 +2036,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if hasattr(responses_instance, "_client"):
+                            if original_base_url is not None and hasattr(responses_instance._client, "base_url"):
+                                responses_instance._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(responses_instance._client, "api_key"):
+                                responses_instance._client.api_key = original_api_key
+                        else:
+                            if original_base_url is not None and hasattr(responses_instance, "base_url"):
+                                responses_instance.base_url = original_base_url
+                            if original_api_key is not None and hasattr(responses_instance, "api_key"):
+                                responses_instance.api_key = original_api_key
+                    except Exception:
+                        pass
 
             return inner
         return wrapper
