@@ -11,6 +11,7 @@ from .errors import PromptNotFoundError, PromptRequestError
 from .template import render_template
 from .types import Prompt
 from .observability import zeroeval_prompt
+from .utils.hash import normalize_prompt_text
 
 
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
@@ -36,6 +37,8 @@ class ZeroEval:
         self._cache: TTLCache[Tuple[str, str, Optional[int], Optional[str]], Prompt] = TTLCache(
             ttl_seconds=cache_ttl_seconds
         )
+        # Short TTL cache for prompt_version_id -> model lookups
+        self._model_cache: TTLCache[str, Optional[str]] = TTLCache(ttl_seconds=60.0)
 
     def _resolve_default_tag(self) -> str:
         # Explicit override
@@ -109,6 +112,7 @@ class ZeroEval:
                     version_id=None,
                     tag=None,
                     is_latest=False,
+                    model=None,
                     created_by=None,
                     updated_by=None,
                     created_at=None,
@@ -127,6 +131,7 @@ class ZeroEval:
                     version_id=None,
                     tag=None,
                     is_latest=False,
+                    model=None,
                     created_by=None,
                     updated_by=None,
                     created_at=None,
@@ -144,6 +149,7 @@ class ZeroEval:
                     version_id=None,
                     tag=None,
                     is_latest=False,
+                    model=None,
                     created_by=None,
                     updated_by=None,
                     created_at=None,
@@ -167,6 +173,80 @@ class ZeroEval:
         prompt = Prompt.from_response(data)
         return self._post_process(prompt, variables, task_name, slug, render, missing, use_cache, cache_key)
 
+    # ---- Prompt Library: task-attached prompt helpers ----
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._api_key}",
+            "User-Agent": f"zeroeval-sdk-python/{os.getenv('ZEROEVAL_SDK_VERSION', 'unknown')}",
+            "Content-Type": "application/json",
+        }
+
+    def ensure_task_prompt_version(self, *, task_name: str, content: str, content_hash: str) -> Prompt:
+        url = f"{self._base_url}/v1/tasks/{task_name}/prompt/versions/ensure"
+        payload: Dict[str, Any] = {"content": normalize_prompt_text(content), "content_hash": content_hash, "metadata": None, "model_id": None}
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
+        if resp.status_code >= 400:
+            raise PromptRequestError(f"ensure_task_prompt_version failed: {resp.text}", status=resp.status_code)
+        data = resp.json()
+        if "version_id" not in data:
+            meta = data.get("metadata") or {}
+            if isinstance(meta, dict):
+                vid = meta.get("version_id") or meta.get("prompt_version_id")
+                if vid:
+                    data["version_id"] = vid
+        return Prompt.from_response(data)
+
+    def get_task_prompt_version_by_hash(self, *, task_name: str, content_hash: str) -> Prompt:
+        url = f"{self._base_url}/v1/tasks/{task_name}/prompt/versions/by-hash/{content_hash}"
+        resp = requests.get(url, headers=self._headers(), timeout=self._timeout)
+        if resp.status_code == 404:
+            raise PromptNotFoundError(task_name, None, content_hash)
+        if resp.status_code >= 400:
+            raise PromptRequestError(f"get_task_prompt_version_by_hash failed: {resp.text}", status=resp.status_code)
+        data = resp.json()
+        if "version_id" not in data:
+            meta = data.get("metadata") or {}
+            if isinstance(meta, dict):
+                vid = meta.get("version_id") or meta.get("prompt_version_id")
+                if vid:
+                    data["version_id"] = vid
+        return Prompt.from_response(data)
+
+    def get_task_prompt_latest(self, *, task_name: str) -> Prompt:
+        url = f"{self._base_url}/v1/tasks/{task_name}/prompt/latest"
+        resp = requests.get(url, headers=self._headers(), timeout=self._timeout)
+        if resp.status_code == 404:
+            # Specific guidance for latest when no versions exist
+            raise PromptNotFoundError(task_name, None, "latest")
+        if resp.status_code >= 400:
+            raise PromptRequestError(f"get_task_prompt_latest failed: {resp.text}", status=resp.status_code)
+        data = resp.json()
+        if "version_id" not in data:
+            meta = data.get("metadata") or {}
+            if isinstance(meta, dict):
+                vid = meta.get("version_id") or meta.get("prompt_version_id")
+                if vid:
+                    data["version_id"] = vid
+        return Prompt.from_response(data)
+
+    def get_model_for_prompt_version(self, *, prompt_version_id: str) -> Optional[str]:
+        cached = self._model_cache.get(prompt_version_id)
+        if cached is not None:
+            return cached
+        url = f"{self._base_url}/v1/prompt-versions/{prompt_version_id}/model"
+        resp = requests.get(url, headers=self._headers(), timeout=self._timeout)
+        if resp.status_code >= 400:
+            # Cache negative to avoid hammering
+            self._model_cache.set(prompt_version_id, None)
+            return None
+        data = resp.json() or {}
+        model = data.get("model")
+        if isinstance(model, str) and model:
+            if not model.startswith("zeroeval/"):
+                model = f"zeroeval/{model}"
+        self._model_cache.set(prompt_version_id, model)
+        return model
+
     def _post_process(
         self,
         prompt: Prompt,
@@ -186,6 +266,7 @@ class ZeroEval:
                 version_id=getattr(prompt, "version_id", None),
                 tag=prompt.tag,
                 is_latest=prompt.is_latest,
+                model=prompt.model,
                 created_by=prompt.created_by,
                 updated_by=prompt.updated_by,
                 created_at=prompt.created_at,
@@ -211,6 +292,7 @@ class ZeroEval:
                 version_id=getattr(prompt, "version_id", None),
                 tag=prompt.tag,
                 is_latest=prompt.is_latest,
+                model=prompt.model,
                 created_by=prompt.created_by,
                 updated_by=prompt.updated_by,
                 created_at=prompt.created_at,
