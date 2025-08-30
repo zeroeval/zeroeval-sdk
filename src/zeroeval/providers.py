@@ -132,7 +132,7 @@ class SingleProcessorProvider(ZeroEvalOTLPProvider):
     A ZeroEval provider that only accepts one span processor.
     
     This is useful when integrating with libraries that automatically add their
-    own span processors (like Langfuse, Arize, etc.) but you want to ensure
+    own span processors (like other observability tools) but you want to ensure
     traces only go to ZeroEval. The first processor added (ZeroEval's) is kept,
     and subsequent processors are silently ignored.
     
@@ -140,17 +140,10 @@ class SingleProcessorProvider(ZeroEvalOTLPProvider):
     with auto-instrumenting libraries.
     
     Example:
-        # With Langfuse - prevents duplicate exports
-        from langfuse import Langfuse
-        
+        # With third-party libraries - prevents duplicate exports
         provider = SingleProcessorProvider()
-        langfuse = Langfuse(
-            public_key="pk-dummy",
-            secret_key="sk-dummy",
-            tracer_provider=provider
-        )
         
-        # Langfuse's auto-added processor is ignored, only ZeroEval receives traces
+        # Third-party processors are ignored, only ZeroEval receives traces
     """
     
     def __init__(self, **kwargs):
@@ -170,72 +163,3 @@ class SingleProcessorProvider(ZeroEvalOTLPProvider):
         super().add_span_processor(span_processor)
 
 
-def langfuse_zeroeval(
-    api_key: Optional[str] = None,
-    api_url: Optional[str] = None,
-    public_key: str = "-",
-    secret_key: str = "-",
-    service_name: str = "zeroeval-langfuse",
-) -> Any:
-    """
-    Create a Langfuse client that sends all traces to ZeroEval.
-    
-    This is the simplest way to use Langfuse with ZeroEval. It handles all the
-    configuration automatically and prevents authentication errors.
-    
-    Args:
-        api_key: ZeroEval API key (defaults to ZEROEVAL_API_KEY env var)
-        api_url: ZeroEval API URL (defaults to ZEROEVAL_API_URL env var)
-        public_key: Placeholder Langfuse public key
-        secret_key: Placeholder Langfuse secret key
-        service_name: Service name for traces
-        
-    Returns:
-        Configured Langfuse client that sends all traces to ZeroEval
-        
-    Example:
-        from zeroeval.providers import langfuse_zeroeval
-        
-        # One line setup - reads API key from environment
-        langfuse = langfuse_zeroeval()
-        
-        # Now use Langfuse normally
-        from langfuse.openai import openai
-        client = openai.OpenAI()
-        
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": "Hello!"}]
-        )
-        
-        # All traces automatically go to ZeroEval!
-    """
-    # Check for API key early for better DX
-    api_key = api_key or os.getenv("ZEROEVAL_API_KEY")
-    api_url = api_url or os.getenv("ZEROEVAL_API_URL", "https://api.zeroeval.com")
-    if not api_key:
-        raise ValueError("langfuse_zeroeval() requires a ZeroEval API key. Set ZEROEVAL_API_KEY environment variable or pass api_key parameter.")
-    
-    try:
-        from langfuse import Langfuse
-    except ImportError as e:
-        raise ImportError(
-            "Langfuse is required. Install with: pip install langfuse"
-        ) from e
-    
-    # Create provider that only accepts one processor (prevents 401 errors)
-    provider = SingleProcessorProvider(
-        api_key=api_key,
-        api_url=api_url,
-        service_name=service_name
-    )
-    
-    # Also set globally for any other OTEL instrumentation
-    otel_trace_api.set_tracer_provider(provider)
-    
-    # Return Langfuse client configured with our provider
-    return Langfuse(
-        public_key=public_key,
-        secret_key=secret_key,
-        tracer_provider=provider
-    )

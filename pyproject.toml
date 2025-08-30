@@ -26,8 +26,7 @@ openai = ["openai>=1.59.6"]
 gemini = ["google-genai>=1.21.1"]
 langchain = ["langchain-core>=0.1.0"]
 langgraph = ["langgraph>=0.0.20"]
-langfuse = ["langfuse>=3.2.1"]
-all = ["openai>=1.59.6", "google-genai>=1.21.1", "langchain-core>=0.1.0", "langgraph>=0.0.20", "langfuse>=3.2.1"]
+all = ["openai>=1.59.6", "google-genai>=1.21.1", "langchain-core>=0.1.0", "langgraph>=0.0.20"]
 
 [project.scripts]
 zeroeval = "zeroeval.cli:main"

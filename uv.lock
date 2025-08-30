@@ -552,25 +552,7 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6e/7d/9f75023c478e3b854d67da31d721e39f0eb30ae969ec6e755430cb1c0fb5/langchain_core-0.3.72-py3-none-any.whl", hash = "sha256:9fa15d390600eb6b6544397a7aa84be9564939b6adf7a2b091179ea30405b240", size = 442806, upload-time = "2025-07-24T00:40:06.994Z" },
 ]
 
-[[package]]
-name = "langfuse"
-version = "3.2.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "backoff" },
-    { name = "httpx" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp" },
-    { name = "opentelemetry-sdk" },
-    { name = "packaging" },
-    { name = "pydantic" },
-    { name = "requests" },
-    { name = "wrapt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/61/0d/8fc51099cf337fb3b56cb7d305074bc0223c62e1ccabf80cc6285ccf5b31/langfuse-3.2.1.tar.gz", hash = "sha256:f79b0380dfcf52c7525bb5d7f8e9d8786a6fc8b37867def047bb388930a7beb3", size = 153369, upload-time = "2025-07-16T09:50:28.434Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/b0/8f08df3f0fa584c4132937690c6dd33e0a116f963ecf2b35567f614e0ca7/langfuse-3.2.1-py3-none-any.whl", hash = "sha256:07a84e8c1eed6ac8e149bdda1431fd866e4aee741b66124316336fb2bc7e6a32", size = 299315, upload-time = "2025-07-16T09:50:26.582Z" },
-]
+
 
 [[package]]
 name = "langgraph"
@@ -1786,7 +1768,6 @@ dependencies = [
 all = [
     { name = "google-genai" },
     { name = "langchain-core" },
-    { name = "langfuse" },
     { name = "langgraph" },
     { name = "openai" },
 ]
@@ -1796,9 +1777,7 @@ gemini = [
 langchain = [
     { name = "langchain-core" },
 ]
-langfuse = [
-    { name = "langfuse" },
-]
+
 langgraph = [
     { name = "langgraph" },
 ]
@@ -1822,8 +1801,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.21.1" },
     { name = "langchain-core", marker = "extra == 'all'", specifier = ">=0.1.0" },
     { name = "langchain-core", marker = "extra == 'langchain'", specifier = ">=0.1.0" },
-    { name = "langfuse", marker = "extra == 'all'", specifier = ">=3.2.1" },
-    { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=3.2.1" },
+
     { name = "langgraph", marker = "extra == 'all'", specifier = ">=0.0.20" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.0.20" },
     { name = "openai", marker = "extra == 'all'", specifier = ">=1.59.6" },
@@ -1835,7 +1813,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.32.2" },
     { name = "rich", specifier = ">=13.7.1" },
 ]
-provides-extras = ["openai", "gemini", "langchain", "langgraph", "langfuse", "all"]
+provides-extras = ["openai", "gemini", "langchain", "langgraph", "all"]
 
 [package.metadata.requires-dev]
 dev = [
