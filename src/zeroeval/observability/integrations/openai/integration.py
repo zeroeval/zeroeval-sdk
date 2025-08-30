@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import os
 from functools import wraps
 from typing import Any, Callable, Optional
 
@@ -656,7 +657,36 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                # Temporarily route via ZeroEval proxy if model is a ZeroEval-prefixed id
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if args and hasattr(args[0], "_client"):
+                            # For resources like chat.completions that have a _client
+                            if hasattr(args[0]._client, "base_url"):
+                                original_base_url = args[0]._client.base_url
+                                args[0]._client.base_url = ze_base
+                            if ze_api_key and hasattr(args[0]._client, "api_key"):
+                                original_api_key = args[0]._client.api_key
+                                args[0]._client.api_key = ze_api_key
+                        elif args and hasattr(args[0], "base_url"):
+                            # For direct client instances
+                            original_base_url = args[0].base_url
+                            args[0].base_url = ze_base
+                            if ze_api_key and hasattr(args[0], "api_key"):
+                                original_api_key = args[0].api_key
+                                args[0].api_key = ze_api_key
+
                     response = await original(*args, **kwargs)
                     if is_streaming:
                         logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
@@ -775,6 +805,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if args and hasattr(args[0], "_client"):
+                            if original_base_url is not None and hasattr(args[0]._client, "base_url"):
+                                args[0]._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0]._client, "api_key"):
+                                args[0]._client.api_key = original_api_key
+                        elif args:
+                            if original_base_url is not None and hasattr(args[0], "base_url"):
+                                args[0].base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0], "api_key"):
+                                args[0].api_key = original_api_key
+                    except Exception:
+                        pass
 
             return inner
 
@@ -883,7 +927,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if hasattr(completions_instance, "_client"):
+                            if hasattr(completions_instance._client, "base_url"):
+                                original_base_url = completions_instance._client.base_url
+                                completions_instance._client.base_url = ze_base
+                            if ze_api_key and hasattr(completions_instance._client, "api_key"):
+                                original_api_key = completions_instance._client.api_key
+                                completions_instance._client.api_key = ze_api_key
+                        elif hasattr(completions_instance, "base_url"):
+                            original_base_url = completions_instance.base_url
+                            completions_instance.base_url = ze_base
+                            if ze_api_key and hasattr(completions_instance, "api_key"):
+                                original_api_key = completions_instance.api_key
+                                completions_instance.api_key = ze_api_key
+
                     response = original(*args, **kwargs)
                     if is_streaming:
                         logger.debug("Sync wrapper -> returning _StreamingResponseProxy (sync)")
@@ -1002,6 +1072,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if hasattr(completions_instance, "_client"):
+                            if original_base_url is not None and hasattr(completions_instance._client, "base_url"):
+                                completions_instance._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(completions_instance._client, "api_key"):
+                                completions_instance._client.api_key = original_api_key
+                        else:
+                            if original_base_url is not None and hasattr(completions_instance, "base_url"):
+                                completions_instance.base_url = original_base_url
+                            if original_api_key is not None and hasattr(completions_instance, "api_key"):
+                                completions_instance.api_key = original_api_key
+                    except Exception:
+                        pass
             return inner
         return wrapper
     
@@ -1081,7 +1165,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if args and hasattr(args[0], "_client"):
+                            if hasattr(args[0]._client, "base_url"):
+                                original_base_url = args[0]._client.base_url
+                                args[0]._client.base_url = ze_base
+                            if ze_api_key and hasattr(args[0]._client, "api_key"):
+                                original_api_key = args[0]._client.api_key
+                                args[0]._client.api_key = ze_api_key
+                        elif args and hasattr(args[0], "base_url"):
+                            original_base_url = args[0].base_url
+                            args[0].base_url = ze_base
+                            if ze_api_key and hasattr(args[0], "api_key"):
+                                original_api_key = args[0].api_key
+                                args[0].api_key = ze_api_key
+
                     response = await original(*args, **kwargs)
                     
                     elapsed = time.time() - start_time
@@ -1276,7 +1386,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if hasattr(responses_instance, "_client"):
+                            if hasattr(responses_instance._client, "base_url"):
+                                original_base_url = responses_instance._client.base_url
+                                responses_instance._client.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance._client, "api_key"):
+                                original_api_key = responses_instance._client.api_key
+                                responses_instance._client.api_key = ze_api_key
+                        elif hasattr(responses_instance, "base_url"):
+                            original_base_url = responses_instance.base_url
+                            responses_instance.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance, "api_key"):
+                                original_api_key = responses_instance.api_key
+                                responses_instance.api_key = ze_api_key
+
                     response = original(*args, **kwargs)
                     
                     elapsed = time.time() - start_time
@@ -1485,7 +1621,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if args and hasattr(args[0], "_client"):
+                            if hasattr(args[0]._client, "base_url"):
+                                original_base_url = args[0]._client.base_url
+                                args[0]._client.base_url = ze_base
+                            if ze_api_key and hasattr(args[0]._client, "api_key"):
+                                original_api_key = args[0]._client.api_key
+                                args[0]._client.api_key = ze_api_key
+                        elif args and hasattr(args[0], "base_url"):
+                            original_base_url = args[0].base_url
+                            args[0].base_url = ze_base
+                            if ze_api_key and hasattr(args[0], "api_key"):
+                                original_api_key = args[0].api_key
+                                args[0].api_key = ze_api_key
+
                     response = await original(*args, **kwargs)
 
                     elapsed = time.time() - start_time
@@ -1577,6 +1739,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if args and hasattr(args[0], "_client"):
+                            if original_base_url is not None and hasattr(args[0]._client, "base_url"):
+                                args[0]._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0]._client, "api_key"):
+                                args[0]._client.api_key = original_api_key
+                        elif args:
+                            if original_base_url is not None and hasattr(args[0], "base_url"):
+                                args[0].base_url = original_base_url
+                            if original_api_key is not None and hasattr(args[0], "api_key"):
+                                args[0].api_key = original_api_key
+                    except Exception:
+                        pass
 
             return inner
         return wrapper
@@ -1661,7 +1837,33 @@ class OpenAIIntegration(Integration):
                 )
                 tracer = self.tracer
 
+                original_base_url = None
+                original_api_key = None
                 try:
+                    model_value = kwargs.get("model", "")
+                    if isinstance(model_value, str) and model_value.startswith("zeroeval/"):
+                        kwargs["model"] = model_value.split("/", 1)[1]
+                        ze_base = (os.getenv("ZEROEVAL_BASE_URL") or os.getenv("ZEROEVAL_API_URL") or "https://api.zeroeval.com").rstrip("/") + "/v1"
+                        ze_api_key = os.getenv("ZEROEVAL_API_KEY")
+                        
+                        # Update span attributes to reflect ZeroEval routing
+                        span.attributes["base_url"] = ze_base
+                        span.attributes["api_version"] = "v1"
+                        
+                        if hasattr(responses_instance, "_client"):
+                            if hasattr(responses_instance._client, "base_url"):
+                                original_base_url = responses_instance._client.base_url
+                                responses_instance._client.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance._client, "api_key"):
+                                original_api_key = responses_instance._client.api_key
+                                responses_instance._client.api_key = ze_api_key
+                        elif hasattr(responses_instance, "base_url"):
+                            original_base_url = responses_instance.base_url
+                            responses_instance.base_url = ze_base
+                            if ze_api_key and hasattr(responses_instance, "api_key"):
+                                original_api_key = responses_instance.api_key
+                                responses_instance.api_key = ze_api_key
+
                     response = original(*args, **kwargs)
 
                     elapsed = time.time() - start_time
@@ -1752,6 +1954,20 @@ class OpenAIIntegration(Integration):
                     span.set_error(code=type(e).__name__, message=str(e), stack=getattr(e, "__traceback__", None))
                     tracer.end_span(span)
                     raise
+                finally:
+                    try:
+                        if hasattr(responses_instance, "_client"):
+                            if original_base_url is not None and hasattr(responses_instance._client, "base_url"):
+                                responses_instance._client.base_url = original_base_url
+                            if original_api_key is not None and hasattr(responses_instance._client, "api_key"):
+                                responses_instance._client.api_key = original_api_key
+                        else:
+                            if original_base_url is not None and hasattr(responses_instance, "base_url"):
+                                responses_instance.base_url = original_base_url
+                            if original_api_key is not None and hasattr(responses_instance, "api_key"):
+                                responses_instance.api_key = original_api_key
+                    except Exception:
+                        pass
 
             return inner
         return wrapper

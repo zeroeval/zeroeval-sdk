@@ -21,13 +21,16 @@ class Prompt:
 
     @staticmethod
     def from_response(data: Dict[str, Any]) -> "Prompt":
+        model_value = data.get("model_id") or data.get("model")
+        if isinstance(model_value, str) and model_value:
+            model_value = f"zeroeval/{model_value}"
         return Prompt(
             content=str(data.get("content", "")),
             version=data.get("version"),
             version_id=data.get("version_id"),
             tag=data.get("tag"),
             is_latest=bool(data.get("is_latest", False)),
-            model=data.get("model_id") or data.get("model"),
+            model=model_value,
             created_by=data.get("created_by"),
             updated_by=data.get("updated_by"),
             created_at=data.get("created_at"),
