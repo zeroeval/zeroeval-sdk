@@ -24,10 +24,16 @@ class Prompt:
         model_value = data.get("model_id") or data.get("model")
         if isinstance(model_value, str) and model_value:
             model_value = f"zeroeval/{model_value}"
+        # Normalize version_id from payload or nested metadata
+        version_id_value = data.get("version_id")
+        if not version_id_value:
+            meta = data.get("metadata") or {}
+            if isinstance(meta, dict):
+                version_id_value = meta.get("version_id") or meta.get("prompt_version_id")
         return Prompt(
             content=str(data.get("content", "")),
             version=data.get("version"),
-            version_id=data.get("version_id"),
+            version_id=version_id_value,
             tag=data.get("tag"),
             is_latest=bool(data.get("is_latest", False)),
             model=model_value,
