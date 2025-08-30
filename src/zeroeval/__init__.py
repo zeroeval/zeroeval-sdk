@@ -115,6 +115,7 @@ def prompt(
         prompt_slug=prompt_slug,
         prompt_version=prompt_obj.version,
         prompt_version_id=getattr(prompt_obj, "version_id", None),
+        content_hash=content_hash if content is not None else None,
     )
 
 # Prompt library convenience wrappers
