@@ -638,6 +638,17 @@ class OpenAIIntegration(Integration):
                     span_attributes["task"] = task_id
                     # Attach full zeroeval metadata so backend can read prompt_version_id, prompt_slug, etc.
                     span_attributes["zeroeval"] = zeroeval_metadata
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
@@ -908,6 +919,61 @@ class OpenAIIntegration(Integration):
                     task_id = zeroeval_metadata.get("task")
                     span_attributes["task"] = task_id
                     span_attributes["zeroeval"] = zeroeval_metadata
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
+                    # Attempt to patch model from prompt_version_id if present
+                    try:
+                        prompt_version_id = zeroeval_metadata.get("prompt_version_id")
+                        if prompt_version_id:
+                            from ....client import ZeroEval as _PromptClient
+                            _pc = _PromptClient()
+                            _model = _pc.get_model_for_prompt_version(prompt_version_id=prompt_version_id)
+                            if _model:
+                                kwargs["model"] = _model
+                    except Exception:
+                        pass
                     
                     # Log task metadata information
                     self._log_task_metadata(task_id, zeroeval_metadata, "OpenAI chat.completions.create")
