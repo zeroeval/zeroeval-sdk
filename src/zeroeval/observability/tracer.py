@@ -426,7 +426,7 @@ class Tracer:
                         # Common attribute names for session ID
                         session_attrs = [
                             'zeroeval.session.id', 'session.id', 'session_id',
-                            'langfuse.sessionId', 'trace.session_id'
+                            'trace.session_id'
                         ]
                         for attr in session_attrs:
                             if attr in otel_span.attributes:

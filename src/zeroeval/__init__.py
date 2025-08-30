@@ -20,7 +20,7 @@ from .core.metrics import column_metric, run_metric
 from .core.init import init
 
 # Provider imports
-from .providers import ZeroEvalOTLPProvider, SingleProcessorProvider, langfuse_zeroeval
+from .providers import ZeroEvalOTLPProvider, SingleProcessorProvider
 
 # Observability imports - import the actual classes/objects
 from .observability import tracer, span as _SpanClass, zeroeval_prompt
@@ -119,7 +119,7 @@ __all__ = [
     # Providers
     "ZeroEvalOTLPProvider", 
     "SingleProcessorProvider", 
-    "langfuse_zeroeval",
+
     # Observability
     "tracer",
     "span",
