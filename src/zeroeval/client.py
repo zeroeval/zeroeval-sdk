@@ -183,7 +183,26 @@ class ZeroEval:
 
     def ensure_task_prompt_version(self, *, task_name: str, content: str, content_hash: str) -> Prompt:
         url = f"{self._base_url}/v1/tasks/{task_name}/prompt/versions/ensure"
-        payload: Dict[str, Any] = {"content": normalize_prompt_text(content), "content_hash": content_hash, "metadata": None, "model_id": None}
+        # Inherit model_id from the latest version if it exists; otherwise leave empty
+        inherited_model_id: Optional[str] = None
+        try:
+            latest = self.get_task_prompt_latest(task_name=task_name)
+            model_str = getattr(latest, "model", None)
+            if isinstance(model_str, str) and model_str:
+                # Stored as "zeroeval/<id>". Strip prefix if present to get raw model_id
+                inherited_model_id = model_str.split("/", 1)[1] if model_str.startswith("zeroeval/") else model_str
+        except PromptNotFoundError:
+            inherited_model_id = None
+        except PromptRequestError:
+            # On transient errors fetching latest, proceed without inheriting
+            inherited_model_id = None
+
+        payload: Dict[str, Any] = {
+            "content": normalize_prompt_text(content),
+            "content_hash": content_hash,
+            "metadata": None,
+            "model_id": inherited_model_id,
+        }
         resp = requests.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
         if resp.status_code >= 400:
             raise PromptRequestError(f"ensure_task_prompt_version failed: {resp.text}", status=resp.status_code)
