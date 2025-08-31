@@ -66,16 +66,27 @@ def prompt(
     content: "Optional[str]" = None,
     variables: "Optional[dict]" = None,
     from_: "Optional[str]" = None,
+    **kwargs,
 ) -> str:
     """
     Version-aware prompt helper integrated with Prompt Library.
 
-    Exactly one of `content` or `from_` must be provided. If `from_` is "latest",
-    fetch the latest version for the task-attached prompt. Otherwise `from_` must be
+    Exactly one of `content` or `from` must be provided. If `from` is "latest",
+    fetch the latest version for the task-attached prompt. Otherwise `from` must be
     a 64-char lowercase hex SHA-256 content hash.
+
+    For backward compatibility, `from_` is still accepted and behaves the same as `from`.
     """
+    # Accept `from` via kwargs and map to `from_`
+    if kwargs:
+        if "from" in kwargs:
+            if from_ is not None:
+                raise ValueError("Provide only one of 'from' or 'from_'")
+            from_ = kwargs.pop("from")
+        if kwargs:
+            raise TypeError("Unexpected keyword arguments: " + ", ".join(kwargs.keys()))
     if (content is None and from_ is None) or (content is not None and from_ is not None):
-        raise ValueError("Provide exactly one of 'content' or 'from_'")
+        raise ValueError("Provide exactly one of 'content' or 'from'")
 
     client = _ensure_prompt_client()
 
@@ -95,7 +106,7 @@ def prompt(
                 )
         else:
             if not re.fullmatch(r"[0-9a-f]{64}", from_):
-                raise ValueError("from_ must be 'latest' or a 64-char lowercase hex SHA-256 hash")
+                raise ValueError("from must be 'latest' or a 64-char lowercase hex SHA-256 hash")
             prompt_obj = client.get_task_prompt_version_by_hash(task_name=name, content_hash=from_)
 
     # Pull linkage metadata for decoration
