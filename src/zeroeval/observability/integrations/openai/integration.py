@@ -663,6 +663,12 @@ class OpenAIIntegration(Integration):
                         if template_content:
                             span_attributes["system_prompt_template"] = template_content
                     
+                # Ensure we record the resolved model/provider after any ZeroEval prompt resolution
+                _span_model = kwargs.get("model")
+                if isinstance(_span_model, str) and _span_model.startswith("zeroeval/"):
+                    span_attributes["provider"] = "zeroeval"
+                    _span_model = _span_model.split("/", 1)[1]
+                span_attributes["model"] = _span_model
                 span = self.tracer.start_span(
                     name="openai.chat.completions.create",
                     kind="llm",
@@ -684,6 +690,7 @@ class OpenAIIntegration(Integration):
                         # Update span attributes to reflect ZeroEval routing
                         span.attributes["base_url"] = ze_base
                         span.attributes["api_version"] = "v1"
+                        span.attributes["provider"] = "zeroeval"
                         
                         if args and hasattr(args[0], "_client"):
                             # For resources like chat.completions that have a _client
@@ -977,6 +984,12 @@ class OpenAIIntegration(Integration):
                         if template_content:
                             span_attributes["system_prompt_template"] = template_content
                     
+                # Ensure we record the resolved model/provider after any ZeroEval prompt resolution
+                _span_model = kwargs.get("model")
+                if isinstance(_span_model, str) and _span_model.startswith("zeroeval/"):
+                    span_attributes["provider"] = "zeroeval"
+                    _span_model = _span_model.split("/", 1)[1]
+                span_attributes["model"] = _span_model
                 span = self.tracer.start_span(
                     name="openai.chat.completions.create",
                     kind="llm",
@@ -997,6 +1010,7 @@ class OpenAIIntegration(Integration):
                         # Update span attributes to reflect ZeroEval routing
                         span.attributes["base_url"] = ze_base
                         span.attributes["api_version"] = "v1"
+                        span.attributes["provider"] = "zeroeval"
                         
                         if hasattr(completions_instance, "_client"):
                             if hasattr(completions_instance._client, "base_url"):
@@ -1215,6 +1229,12 @@ class OpenAIIntegration(Integration):
                 if "reasoning" in kwargs:
                     span_attributes["reasoning"] = kwargs["reasoning"]
                 
+                # Ensure we record the resolved model/provider prior to span creation
+                _span_model = kwargs.get("model")
+                if isinstance(_span_model, str) and _span_model.startswith("zeroeval/"):
+                    span_attributes["provider"] = "zeroeval"
+                    _span_model = _span_model.split("/", 1)[1]
+                span_attributes["model"] = _span_model
                 span = self.tracer.start_span(
                     name="openai.responses.create",
                     kind="llm",
@@ -1235,6 +1255,7 @@ class OpenAIIntegration(Integration):
                         # Update span attributes to reflect ZeroEval routing
                         span.attributes["base_url"] = ze_base
                         span.attributes["api_version"] = "v1"
+                        span.attributes["provider"] = "zeroeval"
                         
                         if args and hasattr(args[0], "_client"):
                             if hasattr(args[0]._client, "base_url"):
@@ -1436,6 +1457,12 @@ class OpenAIIntegration(Integration):
                 if "reasoning" in kwargs:
                     span_attributes["reasoning"] = kwargs["reasoning"]
                 
+                # Ensure we record the resolved model/provider prior to span creation
+                _span_model = kwargs.get("model")
+                if isinstance(_span_model, str) and _span_model.startswith("zeroeval/"):
+                    span_attributes["provider"] = "zeroeval"
+                    _span_model = _span_model.split("/", 1)[1]
+                span_attributes["model"] = _span_model
                 span = self.tracer.start_span(
                     name="openai.responses.create",
                     kind="llm",
@@ -1456,6 +1483,7 @@ class OpenAIIntegration(Integration):
                         # Update span attributes to reflect ZeroEval routing
                         span.attributes["base_url"] = ze_base
                         span.attributes["api_version"] = "v1"
+                        span.attributes["provider"] = "zeroeval"
                         
                         if hasattr(responses_instance, "_client"):
                             if hasattr(responses_instance._client, "base_url"):
