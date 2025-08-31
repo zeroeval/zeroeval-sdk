@@ -209,4 +209,4 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "0.6.115"
+__version__ = "0.6.116"
