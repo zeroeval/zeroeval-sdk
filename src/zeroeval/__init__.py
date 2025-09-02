@@ -49,7 +49,7 @@ def get_current_session():
 
 def set_tag(target, tags):
     """Attach tags to a Span, trace or session.
-    
+
     Args:
         target: Can be a Span instance, trace_id string, or session_id string
         tags: Dictionary of tags to apply
@@ -180,15 +180,15 @@ prompts = _PromptsNamespace()
 # Define what's exported
 __all__ = [
     # Core functionality
-    "Dataset", 
-    "task", 
-    "evaluation", 
-    "column_metric", 
-    "run_metric", 
+    "Dataset",
+    "task",
+    "evaluation",
+    "column_metric",
+    "run_metric",
     "init",
     # Providers
-    "ZeroEvalOTLPProvider", 
-    "SingleProcessorProvider", 
+    "ZeroEvalOTLPProvider",
+    "SingleProcessorProvider",
 
     # Observability
     "tracer",
@@ -209,4 +209,4 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "0.6.118"
+__version__ = "0.6.119"
