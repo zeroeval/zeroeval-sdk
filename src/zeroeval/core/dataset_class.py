@@ -276,7 +276,7 @@ class Dataset:
         """
         Pull a dataset by name, optionally specifying version_number.
         
-        The workspace is automatically resolved from your API key.
+        The project is automatically resolved from your API key.
         
         Args:
             name: Name of the dataset to pull
@@ -287,7 +287,7 @@ class Dataset:
             
         Raises:
             ValueError: If SDK is not initialized with an API key
-            ValueError: If dataset is not found in your workspace
+            ValueError: If dataset is not found in your project
             RuntimeError: If there's an error fetching the dataset
         """
         if not _validate_init():

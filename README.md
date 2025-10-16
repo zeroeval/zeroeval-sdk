@@ -30,7 +30,6 @@ pip install zeroeval[openai]      # For OpenAI integration
 pip install zeroeval[gemini]      # For Google Gemini integration
 pip install zeroeval[langchain]   # For LangChain integration
 pip install zeroeval[langgraph]   # For LangGraph integration
-
 pip install zeroeval[all]         # Install all integrations
 ```
 

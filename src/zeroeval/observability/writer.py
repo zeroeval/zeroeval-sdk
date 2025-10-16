@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import requests
+import uuid
 
 from .utils import safe_json_dumps, sanitize_for_json
 
@@ -90,24 +91,38 @@ class SpanBackendWriter(SpanWriter):
                 # Convert traceback object to string if present
                 error_stack = str(sanitized_span.get("error_stack")) if sanitized_span.get("error_stack") else None
                 
-                # Prepare session data if session_id is provided
-                # Only send session metadata when we have meaningful information (name or tags)
+                # Prepare session data, normalizing session_id to UUID when necessary
                 session_data = None
-                if sanitized_span.get("session_id"):
-                    session_name = sanitized_span.get("session_name")
-                    session_tags = sanitized_span.get("session_tags")
+                session_id_val = sanitized_span.get("session_id")
+                session_name_val = sanitized_span.get("session_name")
+                session_tags = sanitized_span.get("session_tags")
 
-                    # Build the payload only if we have a non-null name or at least one tag.
-                    if session_name is not None or session_tags:
-                        session_data = {"id": sanitized_span["session_id"]}
+                # Helper to detect UUID-like strings (36-char with hyphens)
+                def _looks_like_uuid(val: Any) -> bool:
+                    try:
+                        uuid.UUID(str(val))
+                        return True
+                    except Exception:
+                        return False
 
-                        # Include name only when it is explicitly provided (avoid null overwrite).
-                        if session_name is not None:
-                            session_data["name"] = session_name
+                normalized_session_id = None
+                if session_id_val:
+                    if _looks_like_uuid(session_id_val):
+                        normalized_session_id = str(session_id_val)
+                    else:
+                        # Deterministically derive a UUIDv5 from the provided session_id string
+                        normalized_session_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(session_id_val)))
+                        # If no explicit name provided, use the original string as the name
+                        if session_name_val is None:
+                            session_name_val = str(session_id_val)
 
-                        # Include tags if they exist and are non empty.
-                        if session_tags:
-                            session_data["tags"] = filter_null_values(session_tags)
+                # Only include session object if we have a normalized ID and either a name or tags
+                if normalized_session_id and (session_name_val is not None or session_tags):
+                    session_data = {"id": normalized_session_id}
+                    if session_name_val is not None:
+                        session_data["name"] = session_name_val
+                    if session_tags:
+                        session_data["tags"] = filter_null_values(session_tags)
 
                 # DEBUG: Log whether session_data will be included
                 if logger.isEnabledFor(logging.DEBUG):
@@ -125,7 +140,7 @@ class SpanBackendWriter(SpanWriter):
                 
                 formatted_span = {
                     "id": sanitized_span["span_id"],
-                    "session_id": sanitized_span.get("session_id"),
+                    "session_id": normalized_session_id or sanitized_span.get("session_id"),
                     "trace_id": sanitized_span["trace_id"],
                     "parent_span_id": sanitized_span["parent_id"],
                     "name": sanitized_span["name"],

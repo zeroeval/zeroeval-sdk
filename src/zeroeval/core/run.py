@@ -79,7 +79,6 @@ class Run:
             "name": self.task_name,
             "description": f"Experiment with {self.total_runs} runs" if self.total_runs > 1 else "",
             "alias": self.task_name,
-            "workspace_id": "",  # Will be overridden by API key workspace
             "parameters": self.parameters  # Include parameters
         }
         
@@ -379,36 +378,23 @@ class Run:
     
     def _save_run_evaluation(self, eval_obj: Evaluation, eval_result: dict, all_runs: List["Run"]):
         """Save run-level evaluation to database."""
-        try:
-            # Create evaluator if needed
-            evaluator_db = Evaluator(
-                name=eval_obj.name,
-                code=eval_obj._code,
-                description=eval_obj.description,
-                experiment_id=self._experiment_id,
-                evaluation_mode="run"
-            )
-            evaluator_db._write()
-            evaluator_id = evaluator_db._backend_id
-            
-            payload = {
-                "evaluator_id": evaluator_id,
-                "experiment_id": self._experiment_id,
-                "total_runs": len(all_runs),
-                "evaluation_results": eval_result
-            }
-            
-            response = requests.post(
-                f"{self._writer.api_url}/workspaces/{self._writer.workspace_id}/experiments/{self._experiment_id}/run-evaluations",
-                json=payload,
-                headers=self._writer._headers
-            )
-            
-            if response.status_code not in [200, 201]:
-                print(f"Warning: Failed to save run evaluation: {response.text}")
-                
-        except Exception as e:
-            print(f"Error saving run evaluation: {e}")
+        # TODO: Run-level evaluations are not yet supported in the backend
+        # For now, we just store them locally in self.metrics
+        print(f"Run-level evaluation '{eval_obj.name}' completed (stored locally only)")
+        return
+
+        # Original implementation commented out until backend support is added:
+        # try:
+        #     evaluator_db = Evaluator(...)
+        #     evaluator_db._write()
+        #     ...
+        #     response = requests.post(
+        #         f"{self._writer.api_url}/v1/experiments/{self._experiment_id}/run-evaluations",
+        #         json=payload,
+        #         headers=self._writer._headers
+        #     )
+        # except Exception as e:
+        #     print(f"Error saving run evaluation: {e}")
         
     def repeat(self, n: int) -> RunCollection:
         """

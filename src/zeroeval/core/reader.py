@@ -18,7 +18,7 @@ class DatasetReader(ABC):
     def pull_by_name(self, dataset_name: str, version_number: Optional[int] = None) -> "Dataset":
         """
         Pull a dataset from a destination using its dataset name.
-        Workspace is automatically resolved from API key.
+        Project is automatically resolved from API key.
         """
         pass
 
@@ -48,7 +48,7 @@ class DatasetBackendReader(DatasetReader):
     def pull_by_name(self, dataset_name: str, version_number: Optional[int] = None) -> "Dataset":
         """
         Pull a dataset by dataset name using the v1 API.
-        Workspace is automatically resolved from API key.
+        Project is automatically resolved from API key.
         """
         if not _validate_init():
             raise ValueError(
@@ -72,7 +72,7 @@ class DatasetBackendReader(DatasetReader):
             # If we received a 404, raise a more friendly error indicating that the dataset was not found
             if e.response is not None and e.response.status_code == 404:
                 raise ValueError(
-                    f"Dataset '{dataset_name}' not found in your workspace. "
+                    f"Dataset '{dataset_name}' not found in your project. "
                     "Verify that the dataset name is correct."
                 ) from e
             # Otherwise, raise a generic runtime error
@@ -101,7 +101,7 @@ class DatasetBackendReader(DatasetReader):
             except requests.RequestException as e:
                 if e.response is not None and e.response.status_code == 404:
                     raise ValueError(
-                        f"No data found for dataset '{dataset_name}' in your workspace "
+                        f"No data found for dataset '{dataset_name}' in your project "
                         f"(version: {version_number if version_number else 'latest'})."
                     ) from e
                 raise RuntimeError(f"Failed to fetch dataset rows by name: {e}") from e

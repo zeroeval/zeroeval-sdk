@@ -1,0 +1,129 @@
+---
+description: Documentation requirements for Python SDK changes - update docs with examples
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# Documentation Guidelines
+
+## Documentation Requirement
+
+**For every change in the Python SDK, check the @docs/ folder and document the changes.**
+
+## Documentation Location
+
+SDK documentation is located at:
+
+- `/docs/tracing/sdks/python/` - Main Python SDK docs
+- `/docs/tracing/sdks/python/setup.mdx` - Setup instructions
+- `/docs/tracing/sdks/python/reference.mdx` - API reference
+- `/docs/tracing/sdks/python/integrations.mdx` - Integration guides
+
+## Documentation Standards
+
+**The documentation should be simple to understand, detailed, and with a mini example. Always readable and concise.**
+
+## Documentation Structure
+
+### For New Features
+
+````mdx
+## Feature Name
+
+Brief description of what this feature does and why it's useful.
+
+### Setup
+
+```python
+from zeroeval import FeatureName
+
+# Basic setup
+feature = FeatureName(api_key="your_key")
+```
+````
+
+### Usage
+
+```python
+# Simple example
+result = feature.execute(
+    input_data="example",
+    options={"param": "value"}
+)
+
+print(result)
+```
+
+### Parameters
+
+| Parameter    | Type   | Required | Description                  |
+| ------------ | ------ | -------- | ---------------------------- |
+| `input_data` | `str`  | Yes      | Description of the parameter |
+| `options`    | `dict` | No       | Optional configuration       |
+
+### Returns
+
+Returns a `FeatureResult` object with the following properties:
+
+- `data`: The processed result
+- `metadata`: Additional information about the operation
+
+````
+
+### For API Changes
+- Update the API reference section
+- Add deprecation warnings if needed
+- Update version information
+- Include migration examples
+
+### For Integration Changes
+- Update relevant integration guide
+- Add new integration examples
+- Update compatibility matrix
+
+## Example Documentation Update
+
+When adding a new tracing feature:
+
+```mdx
+## Manual Span Creation
+
+Create custom spans to track specific operations in your application.
+
+### Basic Usage
+
+```python
+from zeroeval import tracer
+
+# Create a custom span
+with tracer.span("custom_operation", tags={"user_id": "123"}) as span:
+    # Your operation here
+    result = perform_operation()
+    span.set_attribute("result_count", len(result))
+````
+
+### Advanced Usage
+
+```python
+# Nested spans with custom attributes
+with tracer.span("parent_operation") as parent:
+    parent.set_attribute("operation_type", "batch_process")
+
+    with tracer.span("child_operation", parent=parent) as child:
+        child.set_attribute("item_count", 10)
+        process_items()
+```
+
+```
+
+## Checklist
+
+When making SDK changes:
+- [ ] Identify affected documentation sections
+- [ ] Update relevant .mdx files
+- [ ] Add mini examples for new features
+- [ ] Ensure examples are tested and work
+- [ ] Keep language simple and clear
+- [ ] Include parameter descriptions
+- [ ] Add return value documentation
+```

@@ -17,13 +17,12 @@ def _send_signals_immediately(
     Private helper to send a batch of signals for a single entity immediately.
     """
     # Get configuration from environment
-    api_url = os.getenv("ZEROEVAL_API_URL", "http://localhost:8000")
+    api_url = os.getenv("ZEROEVAL_API_URL", "https://api.zeroeval.com")
     api_key = os.getenv("ZEROEVAL_API_KEY")
-    workspace_id = os.getenv("ZEROEVAL_WORKSPACE_ID")
 
-    if not all([api_key, workspace_id, api_url]):
+    if not all([api_key, api_url]):
         logger.warning(
-            "Cannot send signals. Missing ZEROEVAL_API_KEY, ZEROEVAL_WORKSPACE_ID, or ZEROEVAL_API_URL."
+            "Cannot send signals. Missing ZEROEVAL_API_KEY or ZEROEVAL_API_URL."
         )
         return False
 

@@ -120,6 +120,41 @@ def zeroeval_prompt(
     return formatted_prompt
 
 
+def get_provider_from_base_url(base_url: Optional[str]) -> str:
+    """
+    Determine the provider based on the base URL.
+
+    Args:
+        base_url: The base URL of the OpenAI-compatible API
+
+    Returns:
+        The provider name (e.g., "openai", "zeroeval", "novita", etc.)
+    """
+    if not base_url:
+        return "openai"
+
+    base_url = base_url.lower()
+
+    # Map of URL patterns to provider names
+    provider_mapping = {
+        "localhost": "zeroeval",
+        "127.0.0.1": "zeroeval",
+        "api.zeroeval.com": "zeroeval",
+        "api.openai.com": "openai",
+        "api.novita.ai": "novita",
+        "api.deepinfra.com": "deepinfra",
+        "api.llm-stats.com": "llm-stats",
+    }
+
+    # Check each pattern in the base URL
+    for pattern, provider in provider_mapping.items():
+        if pattern in base_url:
+            return provider
+
+    # Default to "openai" if no match found
+    return "openai"
+
+
 class OpenAIIntegration(Integration):
     """
     Integration for OpenAI's Python client library.
@@ -591,7 +626,7 @@ class OpenAIIntegration(Integration):
                 # Prepare span attributes
                 span_attributes = {
                     "service.name": "openai",
-                    "provider": "openai",
+                    "provider": get_provider_from_base_url(base_url),
                     "model": kwargs.get("model"),
                     "streaming": is_streaming,
                     "base_url": base_url,
@@ -602,14 +637,31 @@ class OpenAIIntegration(Integration):
                     # Store tool definitions for rendering
                     tools_info = []
                     for tool in kwargs["tools"]:
-                        if tool.get("type") == "function" and "function" in tool:
+                        # Handle both dict and Pydantic objects
+                        if hasattr(tool, "model_dump"):
+                            tool_dict = tool.model_dump()
+                        elif hasattr(tool, "dict"):
+                            tool_dict = tool.dict()
+                        else:
+                            tool_dict = tool
+
+                        if tool_dict.get("type") == "function" and "function" in tool_dict:
                             tools_info.append({
                                 "type": "function",
-                                "name": tool["function"].get("name"),
-                                "description": tool["function"].get("description")
+                                "name": tool_dict["function"].get("name"),
+                                "description": tool_dict["function"].get("description")
                             })
                     span_attributes["tools"] = tools_info
-                    span_attributes["tools_raw"] = kwargs["tools"]  # Keep raw format too
+                    
+                    # Convert tools to serializable format for storage
+                    try:
+                        tools_raw = [
+                            t.model_dump() if hasattr(t, "model_dump") else (t.dict() if hasattr(t, "dict") else t)
+                            for t in kwargs["tools"]
+                        ]
+                        span_attributes["tools_raw"] = tools_raw
+                    except Exception:
+                        pass
                 # Back-compat: capture legacy 'functions' param as tools metadata
                 if "functions" in kwargs and kwargs["functions"] and not span_attributes.get("tools"):
                     try:
@@ -882,7 +934,7 @@ class OpenAIIntegration(Integration):
                 # Prepare span attributes
                 span_attributes = {
                     "service.name": "openai",
-                    "provider": "openai",
+                    "provider": get_provider_from_base_url(base_url),
                     "model": kwargs.get("model"),
                     "streaming": is_streaming,
                     "base_url": base_url,
@@ -893,14 +945,31 @@ class OpenAIIntegration(Integration):
                     # Store tool definitions for rendering
                     tools_info = []
                     for tool in kwargs["tools"]:
-                        if tool.get("type") == "function" and "function" in tool:
+                        # Handle both dict and Pydantic objects
+                        if hasattr(tool, "model_dump"):
+                            tool_dict = tool.model_dump()
+                        elif hasattr(tool, "dict"):
+                            tool_dict = tool.dict()
+                        else:
+                            tool_dict = tool
+
+                        if tool_dict.get("type") == "function" and "function" in tool_dict:
                             tools_info.append({
                                 "type": "function",
-                                "name": tool["function"].get("name"),
-                                "description": tool["function"].get("description")
+                                "name": tool_dict["function"].get("name"),
+                                "description": tool_dict["function"].get("description")
                             })
                     span_attributes["tools"] = tools_info
-                    span_attributes["tools_raw"] = kwargs["tools"]  # Keep raw format too
+                    
+                    # Convert tools to serializable format for storage
+                    try:
+                        tools_raw = [
+                            t.model_dump() if hasattr(t, "model_dump") else (t.dict() if hasattr(t, "dict") else t)
+                            for t in kwargs["tools"]
+                        ]
+                        span_attributes["tools_raw"] = tools_raw
+                    except Exception:
+                        pass
                 # Back-compat: capture legacy 'functions' param as tools metadata
                 if "functions" in kwargs and kwargs["functions"] and not span_attributes.get("tools"):
                     try:
@@ -1180,13 +1249,19 @@ class OpenAIIntegration(Integration):
                 # Replace input with processed version so the model receives cleaned/interpolated text
                 if processed_input is not None:
                     kwargs["input"] = processed_input
-                
+
+                # Try to get base_url from client instance
+                base_url = None
+                if args and hasattr(args[0], 'base_url'):
+                    base_url = str(args[0].base_url)
+
                 # Prepare span attributes
                 span_attributes = {
                     "service.name": "openai",
-                    "provider": "openai",
+                    "provider": get_provider_from_base_url(base_url),
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
+                    "base_url": base_url,
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
@@ -1408,13 +1483,19 @@ class OpenAIIntegration(Integration):
                 processed_input, normalized_messages, zeroeval_metadata = self._process_responses_input_with_zeroeval(raw_input)
                 if processed_input is not None:
                     kwargs["input"] = processed_input
-                
+
+                # Try to get base_url from client instance
+                base_url = None
+                if args and hasattr(args[0], 'base_url'):
+                    base_url = str(args[0].base_url)
+
                 # Prepare span attributes
                 span_attributes = {
                     "service.name": "openai",
-                    "provider": "openai",
+                    "provider": get_provider_from_base_url(base_url),
                     "model": kwargs.get("model"),
                     "endpoint": "responses",
+                    "base_url": base_url,
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
@@ -1640,11 +1721,17 @@ class OpenAIIntegration(Integration):
                 if processed_input is not None:
                     kwargs["input"] = processed_input
 
+                # Try to get base_url from client instance
+                base_url = None
+                if args and hasattr(args[0], 'base_url'):
+                    base_url = str(args[0].base_url)
+
                 span_attributes = {
                     "service.name": "openai",
-                    "provider": "openai",
+                    "provider": get_provider_from_base_url(base_url),
                     "model": kwargs.get("model"),
                     "endpoint": "responses.parse",
+                    "base_url": base_url,
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})
@@ -1870,11 +1957,17 @@ class OpenAIIntegration(Integration):
                 if processed_input is not None:
                     kwargs["input"] = processed_input
 
+                # Try to get base_url from client instance
+                base_url = None
+                if args and hasattr(args[0], 'base_url'):
+                    base_url = str(args[0].base_url)
+
                 span_attributes = {
                     "service.name": "openai",
-                    "provider": "openai",
+                    "provider": get_provider_from_base_url(base_url),
                     "model": kwargs.get("model"),
                     "endpoint": "responses.parse",
+                    "base_url": base_url,
                 }
                 if zeroeval_metadata:
                     span_attributes["variables"] = zeroeval_metadata.get("variables", {})

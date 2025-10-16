@@ -33,9 +33,10 @@ class ColoredFormatter(logging.Formatter):
 
 def init(
     api_key: Optional[str] = None,
-    workspace_name: str = "Personal Workspace",
+    workspace_name: str = "Personal Organization",  # Deprecated, kept for backward compatibility, use organization_name
+    organization_name: Optional[str] = None,
     debug: bool = False,
-    api_url: str = "https://api.zeroeval.com",
+    api_url: Optional[str] = None,
     disabled_integrations: Optional[list[str]] = None,
     enabled_integrations: Optional[list[str]] = None,
     setup_otlp: bool = True,
@@ -48,7 +49,8 @@ def init(
 
     Args:
         api_key (str, optional): Your ZeroEval API key.
-        workspace_name (str, optional): The name of your workspace.
+        workspace_name (str, optional): DEPRECATED. Use organization_name instead. The name of your organization.
+        organization_name (str, optional): The name of your organization.
         debug (bool, optional): If True, enables detailed logging for debugging.
                                 Can also be enabled by setting the ZEROEVAL_DEBUG=true
                                 environment variable.
@@ -71,8 +73,11 @@ def init(
     # Import tracer once at the beginning
     from ..observability.tracer import tracer
 
-    # Set workspace name (always use the provided value)
-    os.environ["ZEROEVAL_WORKSPACE_NAME"] = workspace_name
+    # Set organization name (prefer organization_name over workspace_name for backward compatibility)
+    final_organization_name = organization_name if organization_name is not None else workspace_name
+    # Keep both env vars for compatibility - new code uses ORGANIZATION_NAME, old code uses WORKSPACE_NAME
+    os.environ["ZEROEVAL_ORGANIZATION_NAME"] = final_organization_name
+    os.environ["ZEROEVAL_WORKSPACE_NAME"] = final_organization_name  # Backward compatibility
 
     # Only override environment variables if values are explicitly provided
     if api_key is not None:
@@ -233,12 +238,15 @@ def init(
                 active_integrations.append(integration_name)
 
         # Log all configuration values as the first log message
-        masked_api_key = f"{api_key[:8]}..." if api_key and len(api_key) > 8 else "***" if api_key else "Not set"
+        # Read actual values from environment for debug display
+        actual_api_key = api_key or os.environ.get("ZEROEVAL_API_KEY")
+        actual_api_url = api_url or os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com")
+        masked_api_key = f"{actual_api_key[:8]}..." if actual_api_key and len(actual_api_key) > 8 else "***" if actual_api_key else "Not set"
         current_sampling = os.environ.get("ZEROEVAL_SAMPLING_RATE", "1.0")
         logger.debug("ZeroEval SDK Configuration:")
-        logger.debug(f"  Workspace: {workspace_name}")
+        logger.debug(f"  Organization: {final_organization_name}")
         logger.debug(f"  API Key: {masked_api_key}")
-        logger.debug(f"  API URL: {api_url}")
+        logger.debug(f"  API URL: {actual_api_url}")
         logger.debug(f"  Debug Mode: {is_debug_mode}")
         logger.debug(f"  Sampling Rate: {current_sampling}")
         logger.debug(f"  Enabled Integrations: {enabled_integrations or 'All available'}")
@@ -265,7 +273,7 @@ def init(
 def _validate_init():
     """Validate the initialization of the ZeroEval SDK."""
     logger = logging.getLogger("zeroeval")
-    if not os.environ.get("ZEROEVAL_WORKSPACE_NAME") or not os.environ.get("ZEROEVAL_API_KEY"):
+    if (not os.environ.get("ZEROEVAL_ORGANIZATION_NAME") and not os.environ.get("ZEROEVAL_WORKSPACE_NAME")) or not os.environ.get("ZEROEVAL_API_KEY"):
         logger.error(
             "ZeroEval SDK not initialized. Please call ze.init(api_key='YOUR_API_KEY') first."
         )

@@ -10,6 +10,7 @@ Main API:
     ze.get_current_trace() - Get the current trace ID
     ze.get_current_session() - Get the current session ID
     ze.set_tag() - Attach tags to a span, trace, or session
+    ze.choose() - Make weighted A/B test choices
 """
 
 # Core functionality imports
@@ -24,6 +25,8 @@ from .providers import ZeroEvalOTLPProvider, SingleProcessorProvider
 
 # Observability imports - import the actual classes/objects
 from .observability import tracer, span as _SpanClass, zeroeval_prompt
+from .observability.choice import choose
+from .observability.signals import set_signal
 from .types import Prompt
 from .client import ZeroEval as PromptClient
 from .utils.hash import sha256_hex
@@ -198,6 +201,8 @@ __all__ = [
     "get_current_trace",
     "get_current_session",
     "set_tag",
+    "set_signal",
+    "choose",
     # Prompt utilities
     "zeroeval_prompt",
     "prompt",
