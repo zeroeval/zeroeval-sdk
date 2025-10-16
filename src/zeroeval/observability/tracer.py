@@ -83,7 +83,7 @@ class Tracer:
         self._active_spans: dict[str, list[Span]] = {}  # For legacy/compatibility
         self._traces: dict[str, Trace] = {}  # Replaces _trace_buckets and _trace_counts
         self._last_flush_time = time.time()
-        self._writer: SpanWriter = SpanBackendWriter()
+        self._writer: Optional[SpanWriter] = None  # Lazy-loaded to allow env vars to be set first
         self._flush_interval: float = 1.0  # Flush more frequently for streaming
         self._max_spans: int = 20
         self._flush_lock = threading.Lock()
@@ -137,7 +137,14 @@ class Tracer:
         
         # Register shutdown hook
         atexit.register(self.shutdown)
-    
+
+    @property
+    def writer(self) -> SpanWriter:
+        """Lazy-load writer to ensure environment variables are available."""
+        if self._writer is None:
+            self._writer = SpanBackendWriter()
+        return self._writer
+
     def ensure_integrations_initialized(self) -> None:
         """Ensure integrations are initialized, but only once."""
         if not self._integrations_initialized:
@@ -653,7 +660,7 @@ class Tracer:
             
             # Call writer and capture the result
             try:
-                result = self._writer.write(spans_to_flush)
+                result = self.writer.write(spans_to_flush)
                 
                 # Log the writer result
                 logger.info(f"=== TRACER FLUSH RESULT ===")

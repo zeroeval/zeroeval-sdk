@@ -1,0 +1,91 @@
+---
+description: Testing requirements for Python SDK - test after modifications and new features
+globs: ["**/*.py"]
+alwaysApply: true
+---
+
+# Testing Guidelines
+
+## Test After Every Modification
+
+**After each modification, double check the tests and run them.**
+
+## New Feature Testing
+
+**If it's a new feature, it should be tested.**
+
+## Implementation Standards
+
+**Implementations should be concise and well designed. Simple.**
+
+## Test Structure
+
+Tests are located in:
+
+- `/tests/` - Main test directory
+- `/tests/core/` - Core functionality tests
+- `/tests/performance/` - Performance tests
+
+## Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run specific test file
+pytest tests/core/test_decorator.py
+
+# Run with coverage
+pytest --cov=src/zeroeval
+```
+
+## Test Requirements
+
+### For Modifications
+
+1. **Run existing tests** to ensure nothing breaks
+2. **Update tests** if behavior changes
+3. **Verify test coverage** remains adequate
+
+### For New Features
+
+1. **Write unit tests** for core functionality
+2. **Add integration tests** if needed
+3. **Include edge case tests**
+4. **Test error conditions**
+
+## Example Test Structure
+
+```python
+# tests/core/test_new_feature.py
+import pytest
+from zeroeval import NewFeature
+
+class TestNewFeature:
+    def test_basic_functionality(self):
+        """Test the core functionality works as expected."""
+        feature = NewFeature()
+        result = feature.execute()
+        assert result is not None
+
+    def test_edge_cases(self):
+        """Test edge cases and error conditions."""
+        feature = NewFeature()
+        with pytest.raises(ValueError):
+            feature.execute(invalid_input=True)
+
+    def test_integration(self):
+        """Test integration with other components."""
+        # Integration test logic
+        pass
+```
+
+## Checklist
+
+Before submitting changes:
+
+- [ ] All existing tests pass
+- [ ] New functionality is tested
+- [ ] Tests are simple and focused
+- [ ] Edge cases are covered
+- [ ] Error conditions are tested

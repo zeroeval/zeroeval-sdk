@@ -713,7 +713,7 @@ Quick Start
    
    ze.init(
        api_key="your-api-key",
-       workspace_name="Voice Apps"
+       organization_name="Voice Apps"
    )
    ```
 

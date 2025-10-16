@@ -12,8 +12,7 @@ if TYPE_CHECKING:
     from .experiment_class import Experiment, ExperimentResult
 
 
-# Default to production API; for local dev set BACKEND_URL env var to "https://api.zeroeval.com" (or another URL)
-API_URL = os.environ.get("BACKEND_URL", "https://api.zeroeval.com")
+# Default to production API; environment variables are read lazily at runtime
 
 
 class DatasetWriter(ABC):
@@ -61,45 +60,26 @@ class _BackendWriter:
     """Base class for backend writers to handle authentication."""
 
     def __init__(self):
-        self.api_url = os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
         self._api_key: Optional[str] = None
-        self._workspace_id: Optional[str] = None
         self._headers: Optional[dict[str, str]] = None
 
+    @property
+    def api_url(self):
+        """Lazily get API URL from environment to ensure it's read after load_dotenv()"""
+        return os.environ.get("ZEROEVAL_API_URL", "https://api.zeroeval.com").rstrip("/")
+
     def _ensure_auth_setup(self):
-        """Ensure API key and workspace ID are resolved and headers are set."""
+        """Ensure API key is resolved and headers are set."""
         if self._api_key is None:
             self._api_key = os.environ.get("ZEROEVAL_API_KEY")
             if not self._api_key:
                 raise ValueError("ZEROEVAL_API_KEY environment variable not set")
 
-        if self._workspace_id is None:
-            try:
-                response = requests.post(
-                    f"{self.api_url}/api-keys/resolve", json={"api_key": self._api_key}
-                )
-                response.raise_for_status()
-                response_data = response.json()
-
-                if "workspace_id" not in response_data:
-                    raise ValueError("API key does not resolve to a workspace")
-
-                self._workspace_id = response_data["workspace_id"]
-
-            except requests.HTTPError as e:
-                if e.response.status_code == 401:
-                    raise ValueError("Invalid API key")
-                elif e.response.status_code == 404:
-                    raise ValueError("API key does not resolve to a workspace")
-                else:
-                    raise ValueError(
-                        f"Failed to resolve API key (HTTP {e.response.status_code})"
-                    )
-            except requests.RequestException as e:
-                raise RuntimeError(f"Network error while resolving API key: {str(e)}")
-
         if self._headers is None:
-            self._headers = {"Authorization": f"Bearer {self._api_key}"}
+            self._headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            }
 
 
 class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
@@ -116,7 +96,7 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
         print(f"[DEBUG] ExperimentResultBackendWriter._write called with {type(experiment_or_result)}")
         
         self._ensure_auth_setup()
-        print(f"[DEBUG] Auth setup complete. workspace_id={self._workspace_id}, api_url={self.api_url}")
+        print(f"[DEBUG] Auth setup complete. api_url={self.api_url}")
 
         if isinstance(experiment_or_result, Experiment):
             experiment = experiment_or_result
@@ -124,10 +104,6 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
             
             print(f"[DEBUG] Experiment write - name='{experiment.name}', dataset_version_id={dataset_version_id}")
 
-            if not self._workspace_id:
-                print(f"[ERROR] Missing workspace_id: {self._workspace_id}")
-                return None
-                
             if not dataset_version_id:
                 print(f"[ERROR] Missing dataset_version_id: {dataset_version_id}")
                 print(f"[DEBUG] Dataset object: {experiment.dataset}")
@@ -135,7 +111,6 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 return None
 
             exp_payload = {
-                "workspace_id": self._workspace_id,
                 "dataset_version_id": dataset_version_id,
                 "name": experiment.name,
                 "description": experiment.description or "",
@@ -145,7 +120,7 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
             
             try:
                 exp_response = requests.post(
-                    f"{self.api_url}/workspaces/{self._workspace_id}/experiments",
+                    f"{self.api_url}/v1/experiments",
                     json=exp_payload,
                     headers=self._headers,
                 )
@@ -173,7 +148,7 @@ class ExperimentResultBackendWriter(_BackendWriter, ExperimentResultWriter):
                 print(f"[ERROR] ExperimentResult missing experiment_id")
                 return None
 
-            endpoint = f"{self.api_url}/workspaces/{self._workspace_id}/experiments/{res.experiment_id}/results"
+            endpoint = f"{self.api_url}/v1/experiments/{res.experiment_id}/results"
             payload = {
                 "dataset_row_id": res.row_id or "",
                 "result": str(res.result),
