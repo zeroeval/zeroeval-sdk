@@ -161,7 +161,8 @@ class SpanBackendWriter(SpanWriter):
                     "experiment_result_id": sanitized_span.get("experiment_result_id"),
                     "tags": filter_null_values(sanitized_span.get("tags", {})),
                     "trace_tags": filter_null_values(sanitized_span.get("trace_tags", {})),
-                    "session_tags": filter_null_values(sanitized_span.get("session_tags", {}))
+                    "session_tags": filter_null_values(sanitized_span.get("session_tags", {})),
+                    "ab_choices": sanitized_span.get("ab_choices", [])
                 }
                 
                 # Add session object if we have session name or tags

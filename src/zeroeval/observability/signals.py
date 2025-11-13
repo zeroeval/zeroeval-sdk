@@ -70,6 +70,9 @@ def set_signal(
 
     This is a fire-and-forget operation that sends signals directly to the
     ZeroEval backend, independent of the span flushing mechanism.
+    
+    For Span targets, signals are ALSO attached to the span object itself
+    so they get sent together with the span payload, enabling linkage to AB choices.
 
     Args:
         target: The entity to attach signals to. Can be a `Span` object,
@@ -90,6 +93,14 @@ def set_signal(
     if isinstance(target, Span):
         entity_type = "span"
         entity_id = target.span_id
+        
+        # CRITICAL: Also attach signals to the span object itself
+        # This ensures signals are sent WITH the span payload for AB choice linkage
+        for signal_name, signal_value in signals.items():
+            target.set_signal(signal_name, signal_value)
+        
+        logger.debug(f"Attached {len(signals)} signals to span {entity_id} for AB choice linkage")
+        
     elif isinstance(target, str):
         entity_id = target
         if tracer.is_active_trace(target):
