@@ -5,8 +5,14 @@ Comedian A/B Testing Example
 
 This example demonstrates a real-world A/B test comparing OpenAI models
 for generating comedy material. We test which model produces funnier jokes
-across different comedy segments, using ze.choose() for model selection and
-nested spans to track joke generation and audience feedback.
+across different comedy segments, using ze.choose() for model selection with
+timeboxed experiments and signals to track joke quality.
+
+Features demonstrated:
+- Timeboxed experiments with duration_days
+- Signal tracking for joke quality (success/failure)
+- Model comparison with performance metrics
+- Nested spans for detailed tracing
 
 Usage:
     python comedian_ab_test.py              # Run once
@@ -18,9 +24,10 @@ import json
 import os
 from pathlib import Path
 from collections import defaultdict
+import re
 
 from dotenv import load_dotenv
-import openai
+from openai import OpenAI
 import zeroeval as ze
 
 
@@ -28,24 +35,18 @@ def ensure_env():
     """Load and validate environment variables."""
     env_path = Path(__file__).parent.parent / ".env"
     load_dotenv(env_path)
-    
-    # zeroeval_key = os.getenv("ZEROEVAL_API_KEY")
-    # openai_key = os.getenv("OPENAI_API_KEY")
-    # zeroeval_key = "sk_ze_bX2iOXWzqLKTjpE-OftrlHKdkCZfaX_83msOeRUbGpI"
-    # openai_key = "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"
-    zeroeval_key = "sk_ze_nbeChxOaGURGfqeYBV148Ua0GBFgTDcm6XPArEBOanE"
-    openai_key = "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"
-    
+
+    # # PROD
+    zeroeval_key = os.getenv("ZEROEVAL_API_KEY")
+    zeroeval_api_url = os.getenv("ZEROEVAL_API_URL", "https://api.zeroeval.com")
+    llm_base_url = os.getenv("ZEROEVAL_LLM_BASE_URL", "https://api.zeroeval.com/v1")
+
     if not zeroeval_key:
         raise RuntimeError(
             "Missing ZEROEVAL_API_KEY. Please set it in your .env file or environment."
         )
-    if not openai_key:
-        raise RuntimeError(
-            "Missing OPENAI_API_KEY. Please set it in your .env file or environment."
-        )
-    
-    return zeroeval_key, openai_key
+
+    return zeroeval_key, zeroeval_api_url, llm_base_url
 
 
 COMEDY_SEGMENTS = [
@@ -72,13 +73,13 @@ COMEDY_SEGMENTS = [
 ]
 
 MODEL_VARIANTS = {
-    "mini": "gpt-4o-mini",
-    "pro": "gpt-4o",
+    "mini": "gpt-4.1-mini-2025-04-14",
+    "advanced": "claude-opus-4-20250514",
 }
 
 MODEL_WEIGHTS = {
-    "mini": 0.7,
-    "pro": 0.3,
+    "mini": 0.5,
+    "advanced": 0.5,
 }
 
 TOUR_METADATA = {
@@ -95,11 +96,16 @@ def run_comedy_show(client, run_number=None):
     print(f"\n{show_prefix}🎭 Welcome to ZeroEval Comedy Night!")
     print("=" * 60)
     
+    # IMPORTANT: ze.choose() must be called within a span context
+    # All signals attached to this span will be linked to the AB test variant
     with ze.span("comedy_show", tags=TOUR_METADATA) as show_span:
+        # Make the AB test choice - this attaches ab_choice_id to show_span
         selected_model = ze.choose(
-            "comedy_model_experiment",
+            name="comedy_model_advanced_vs_mini_v4",
             variants=MODEL_VARIANTS,
-            weights=MODEL_WEIGHTS
+            weights=MODEL_WEIGHTS,
+            duration_days=14,  # Run experiment for 2 weeks
+            default_variant="mini"  # Use mini as fallback after experiment ends
         )
         
         # Find which variant key was selected for reporting
@@ -121,7 +127,7 @@ def run_comedy_show(client, run_number=None):
                     "segment": segment["theme"],
                     "model_variant": variant_key,
                     "model_name": selected_model,
-                    "segment_number": i
+                    "segment_number": str(i)
                 }
             ):
                 response = client.chat.completions.create(
@@ -140,8 +146,8 @@ def run_comedy_show(client, run_number=None):
                             "content": f"{segment['prompt']}\n\nConstraints: {segment['constraints']}"
                         }
                     ],
-                    temperature=0.8,
-                    max_tokens=256
+                    temperature=1.0,
+                    max_completion_tokens=256
                 )
                 
                 joke = response.choices[0].message.content.strip()
@@ -151,9 +157,9 @@ def run_comedy_show(client, run_number=None):
                 "audience_feedback",
                 tags={
                     "segment": segment["theme"],
-                    "segment_number": i
+                    "segment_number": str(i)
                 }
-            ):
+            ) as feedback_span:
                 feedback_response = client.chat.completions.create(
                     model=selected_model,
                     messages=[
@@ -174,16 +180,45 @@ def run_comedy_show(client, run_number=None):
                             )
                         }
                     ],
-                    temperature=0.3,
-                    max_tokens=150,
+                    temperature=1.0,
+                    max_completion_tokens=150,
                     response_format={"type": "json_object"}
                 )
-                
-                feedback_data = json.loads(feedback_response.choices[0].message.content)
+
+                feedback_message = feedback_response.choices[0].message
+                raw_content = feedback_message.content
+
+                if isinstance(raw_content, list):
+                    raw_content = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in raw_content
+                    ).strip()
+                elif raw_content is None:
+                    raw_content = ""
+                else:
+                    raw_content = str(raw_content).strip()
+
+                feedback_data = {}
+                if raw_content:
+                    try:
+                        feedback_data = json.loads(raw_content)
+                    except json.JSONDecodeError:
+                        match = re.search(r"(\d+(?:\.\d+)?)", raw_content)
+                        if match:
+                            feedback_data["rating"] = float(match.group(1))
+                        feedback_data["notes"] = raw_content
+                else:
+                    feedback_data["notes"] = "No feedback returned"
+
                 rating = float(feedback_data.get("rating", 0))
                 notes = feedback_data.get("notes", "No feedback provided")
-                
-                print(f"🎯 Audience Rating: {rating}/10")
+
+                # Track individual joke quality (optional - for detailed analysis)
+                ze.set_signal(feedback_span, {
+                    "joke_quality": rating >= 7.0,
+                })
+
+                print(f"🎯 Audience Rating: {rating}/10 {'✅' if rating >= 7.0 else '❌'}")
                 print(f"💬 Notes: {notes}")
             
             results.append({
@@ -193,12 +228,26 @@ def run_comedy_show(client, run_number=None):
                 "notes": notes
             })
         
+        # After all segments, attach aggregate signals to the show span
+        # CRITICAL: These signals are attached to the same span where ze.choose() was called
+        # This links them to the AB test variant via span_ab_choices table in the backend
+        average_rating = sum(item["rating"] for item in results) / len(results)
+        solid_jokes = sum(1 for r in results if r["rating"] >= 7.0)
+        standout_jokes = sum(1 for r in results if r["rating"] >= 8.5)
+        needs_revision = sum(1 for r in results if r["rating"] <= 5.5)
+
+        # Attach signals to the comedy_show span (same level as the choice)
+        # These will automatically appear in the AB test dashboard's signal distribution chart
+        # For A/B testing, use a single primary success metric to get meaningful comparison
+        ze.set_signal(show_span, {
+            "show_quality": average_rating >= 7.0,  # Primary metric: good show
+        })
+        
         print("\n" + "=" * 60)
         print(f"{show_prefix}📊 SHOW SUMMARY")
         print("=" * 60)
         print(f"\n🤖 Model Tested: {variant_key} ({selected_model})")
         
-        average_rating = sum(item["rating"] for item in results) / len(results)
         best_segment = max(results, key=lambda item: item["rating"])
         worst_segment = min(results, key=lambda item: item["rating"])
         
@@ -206,11 +255,23 @@ def run_comedy_show(client, run_number=None):
         print(f"   Average Rating: {average_rating:.2f}/10")
         print(f"   Best Segment: {best_segment['segment'].replace('_', ' ').title()} ({best_segment['rating']}/10)")
         print(f"   Weakest Segment: {worst_segment['segment'].replace('_', ' ').title()} ({worst_segment['rating']}/10)")
-        
+        print(f"   Solid Laughs: {solid_jokes}/{len(results)} segments (rating ≥ 7.0)")
+        print(f"   Standout Bits: {standout_jokes}/{len(results)} segments (rating ≥ 8.5)")
+        print(f"   Needs Revision: {needs_revision}/{len(results)} segments (rating ≤ 5.5)")
+
         print(f"\n🎭 Segment Breakdown:")
         for item in results:
             segment_name = item['segment'].replace('_', ' ').title()
             print(f"   • {segment_name}: {item['rating']}/10")
+        
+        # Display tracked signals
+        success_rate = (solid_jokes / len(results)) * 100
+        
+        print(f"\n🎯 Signal Tracked (attached to comedy_show span):")
+        print(f"   ✓ show_quality: {average_rating >= 7.0} (average rating: {average_rating:.1f}/10)")
+        print(f"\n   📊 Success Rate: {success_rate:.1f}% ({solid_jokes}/{len(results)} segments rated ≥7.0)")
+        print(f"   💡 This signal is automatically linked to the AB test variant!")
+        print(f"   💡 View variant performance comparison in the ZeroEval dashboard")
         
         print("\n" + "=" * 60)
         print(f"{show_prefix}✅ Comedy show complete!")
@@ -236,9 +297,9 @@ def main():
     )
     args = parser.parse_args()
     
-    zeroeval_key, openai_key = ensure_env()
-    ze.init(api_key=zeroeval_key, api_url="http://localhost:8000")
-    client = openai.OpenAI(api_key=openai_key)
+    zeroeval_key, zeroeval_api_url, llm_base_url = ensure_env()
+    ze.init(api_key=zeroeval_key, api_url=zeroeval_api_url, debug=True)
+    client = OpenAI(api_key=zeroeval_key, base_url=llm_base_url)
     
     if args.runs == 1:
         run_comedy_show(client)
@@ -287,7 +348,12 @@ def main():
         print(f"\n🎭 Overall Average Rating: {overall_avg:.2f}/10 across {args.runs} shows")
         
         print("\n" + "=" * 80)
-        print("✅ All comedy shows complete! Check ZeroEval dashboard for detailed analytics.")
+        print("✅ All comedy shows complete!")
+        print("\n📊 View in ZeroEval Dashboard:")
+        print("   • Navigate to: Monitoring → A/B Testing → comedy_model_advanced_vs_mini")
+        print("   • Variant Performance: Compare 'show_quality' success rates between models")
+        print("   • Signal Impact: See how each variant performs on the quality metric")
+        print("   • Track which model consistently generates better-rated comedy")
         print("=" * 80)
 
 
