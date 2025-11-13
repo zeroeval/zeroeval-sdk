@@ -67,6 +67,8 @@ class Span:
     session_tags: dict[str, str] = field(default_factory=dict)
     # Signals attached to this span
     signals: dict[str, Any] = field(default_factory=dict)
+    # AB test choices made in this span's context
+    ab_choices: list[dict[str, Any]] = field(default_factory=list)
 
     def end(self) -> None:
         """Mark the span as completed with the current timestamp."""
@@ -139,6 +141,7 @@ class Span:
             "trace_tags": self.trace_tags,
             "session_tags": self.session_tags,
             "signals": signals_dict,
+            "ab_choices": self.ab_choices,
             "input_data": self.input_data,
             "output_data": self.output_data,
             "code": self.code,  # Added code field

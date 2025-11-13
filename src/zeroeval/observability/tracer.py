@@ -513,6 +513,7 @@ class Tracer:
             tags=tags or {},
             trace_tags=trace_tags or {},
             session_tags=session_tags or {},
+            ab_choices=parent_span.ab_choices.copy() if parent_span else []
         )
         
         # Apply global tags baseline (do not override explicitly provided keys)
