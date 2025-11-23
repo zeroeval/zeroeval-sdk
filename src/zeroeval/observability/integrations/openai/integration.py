@@ -67,9 +67,10 @@ def zeroeval_prompt(
     """
     Helper function to create a prompt with zeroeval metadata for tracing and observability.
     
-    IMPORTANT: This function does NOT create or update tasks in ZeroEval. It only adds
-    metadata to OpenAI API calls for tracing purposes. Tasks must be created separately
-    using Dataset.run() or Experiment.run().
+    When this prompt is used in an OpenAI API call, ZeroEval will automatically:
+    1. Extract the task metadata from the prompt
+    2. Link the span to the specified task
+    3. Create the task automatically if it doesn't exist yet
     
     Args:
         name: Required task identifier for this prompt
@@ -80,7 +81,6 @@ def zeroeval_prompt(
         A string with the format: <zeroeval>{JSON}</zeroeval>content
         
     Example:
-        >>> # This adds metadata but does NOT create a task
         >>> zeroeval_prompt(
         ...     name="custom-bot-5",
         ...     content="You are an assistant that helps users with {{task}}. Be {{tone}} in your responses.",
@@ -92,9 +92,8 @@ def zeroeval_prompt(
         '<zeroeval>{"task": "custom-bot-5", "variables": {"task": "coding questions", "tone": "helpful and concise"}}</zeroeval>You are an assistant that helps users with {{task}}. Be {{tone}} in your responses.'
         
     Note:
-        - The 'name' parameter is for linking OpenAI calls to existing tasks
-        - Tasks are created through Dataset.run() or Experiment.run()
         - Variables will be interpolated in the prompt when the OpenAI API is called
+        - The task will be automatically created in ZeroEval if it doesn't exist
     """
     metadata = {"task": name}
     
@@ -348,8 +347,8 @@ class OpenAIIntegration(Integration):
         if task_id:
             logger.info(
                 f"{context}: Task ID '{task_id}' added to span attributes. "
-                f"This enables tracing but does NOT create/update tasks. "
-                f"Ensure the task exists or will be created through Dataset/Experiment.run()."
+                f"The task will be automatically created if it doesn't exist yet, "
+                f"and this span will be linked to it for tracing and tuning."
             )
         logger.debug(f"{context}: Full zeroeval metadata added to span: {zeroeval_metadata}")
     
@@ -391,13 +390,12 @@ class OpenAIIntegration(Integration):
                 task_id = metadata.get('task')
                 logger.info(f"_process_messages_with_zeroeval: Successfully extracted metadata - task: '{task_id}', variables: {list(variables.keys()) if variables else 'none'}")
                 
-                # Important warning for users
+                # Log task linkage info
                 if task_id:
-                    logger.warning(
+                    logger.info(
                         f"_process_messages_with_zeroeval: Task ID '{task_id}' found in zeroeval_prompt. "
-                        f"Note: zeroeval_prompt does NOT automatically create or update tasks. "
-                        f"Tasks must be created separately using Dataset.run() or Experiment.run(). "
-                        f"This metadata is only used for tracing and observability."
+                        f"This span will be automatically linked to the task and the task will be "
+                        f"created if it doesn't exist yet."
                     )
             else:
                 logger.debug("_process_messages_with_zeroeval: No zeroeval metadata found in system message")
