@@ -180,6 +180,75 @@ class _PromptsNamespace:
 
 prompts = _PromptsNamespace()
 
+
+def log_completion(
+    *,
+    prompt_slug: str,
+    prompt_id: str,
+    prompt_version_id: str,
+    messages: list,
+    input_text: Optional[str] = None,
+    output_text: Optional[str] = None,
+    model_id: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    duration_ms: Optional[float] = None,
+    prompt_tokens: Optional[int] = None,
+    completion_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    cost: Optional[float] = None,
+    has_error: bool = False,
+    error_message: Optional[str] = None,
+    span_id: Optional[str] = None,
+):
+    """
+    Log a completion for a specific prompt.
+    
+    This automatically tracks prompt usage without requiring manual wrapping.
+    """
+    client = _ensure_prompt_client()
+    return client.log_completion(
+        prompt_slug=prompt_slug,
+        prompt_id=prompt_id,
+        prompt_version_id=prompt_version_id,
+        messages=messages,
+        input_text=input_text,
+        output_text=output_text,
+        model_id=model_id,
+        metadata=metadata,
+        duration_ms=duration_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        cost=cost,
+        has_error=has_error,
+        error_message=error_message,
+        span_id=span_id,
+    )
+
+
+def send_feedback(
+    *,
+    prompt_slug: str,
+    completion_id: str,
+    thumbs_up: bool,
+    reason: Optional[str] = None,
+    expected_output: Optional[str] = None,
+    metadata: Optional[dict] = None,
+):
+    """
+    Send feedback for a specific completion.
+    """
+    client = _ensure_prompt_client()
+    return client.send_feedback(
+        prompt_slug=prompt_slug,
+        completion_id=completion_id,
+        thumbs_up=thumbs_up,
+        reason=reason,
+        expected_output=expected_output,
+        metadata=metadata,
+    )
+
+
 # Define what's exported
 __all__ = [
     # Core functionality
@@ -192,7 +261,6 @@ __all__ = [
     # Providers
     "ZeroEvalOTLPProvider",
     "SingleProcessorProvider",
-
     # Observability
     "tracer",
     "span",
@@ -211,6 +279,9 @@ __all__ = [
     "PromptClient",
     "get_prompt",
     "prompts",
+    # Completion logging and feedback
+    "log_completion",
+    "send_feedback",
 ]
 
 # Version info

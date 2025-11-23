@@ -14,6 +14,10 @@ This directory contains organized, focused examples for ZeroEval SDK features.
   - Weighted variant selection
   - Automatic choice tracking
 
+- **`tuning/`** - Examples for Prompt Tuning and Optimization
+  - Customer support agent with feedback loop
+  - Prompt versioning with ze.prompt()
+
 ## Getting Started
 
 1. **Install dependencies**:
