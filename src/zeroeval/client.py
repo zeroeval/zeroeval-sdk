@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any, Dict, Optional, Tuple
@@ -16,6 +17,8 @@ from .utils.hash import normalize_prompt_text
 
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 _TAG_RE = re.compile(r"^[a-z0-9-]+$")
+
+logger = logging.getLogger(__name__)
 
 
 class ZeroEval:
@@ -321,5 +324,147 @@ class ZeroEval:
             )
             return decorated
         return prompt
+
+    # ---- New Prompt Completion and Feedback API ----
+
+    def log_completion(
+        self,
+        *,
+        prompt_slug: str,
+        prompt_id: str,
+        prompt_version_id: str,
+        messages: list[dict[str, Any]],
+        input_text: Optional[str] = None,
+        output_text: Optional[str] = None,
+        model_id: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        duration_ms: Optional[float] = None,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        total_tokens: Optional[int] = None,
+        cost: Optional[float] = None,
+        has_error: bool = False,
+        error_message: Optional[str] = None,
+        span_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Log a completion for a specific prompt and version.
+        This is used to track prompt usage automatically.
+        
+        Args:
+            prompt_slug: The slug of the prompt
+            prompt_id: UUID of the prompt
+            prompt_version_id: UUID of the prompt version
+            messages: Array of message objects in OpenAI format
+            input_text: Optional text representation of input
+            output_text: Optional text representation of output
+            model_id: Optional model identifier used
+            metadata: Optional additional metadata
+            duration_ms: Optional execution duration in milliseconds
+            prompt_tokens: Optional number of prompt tokens
+            completion_tokens: Optional number of completion tokens
+            total_tokens: Optional total token count
+            cost: Optional cost in USD
+            has_error: Whether the completion had an error
+            error_message: Optional error message
+            span_id: Optional span ID for trace linking
+            
+        Returns:
+            The created completion record
+        """
+        # Extract project_id from API key context (handled by backend)
+        url = f"{self._base_url}/projects/{{project_id}}/prompts/{prompt_slug}/completions"
+        
+        payload = {
+            "prompt_id": prompt_id,
+            "prompt_version_id": prompt_version_id,
+            "model_id": model_id,
+            "messages": messages,
+            "input_text": input_text,
+            "output_text": output_text,
+            "metadata": metadata or {},
+            "duration_ms": duration_ms,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "cost": cost,
+            "has_error": has_error,
+            "error_message": error_message,
+            "span_id": span_id,
+        }
+        
+        # Remove None values
+        payload = {k: v for k, v in payload.items() if v is not None}
+        
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
+        if resp.status_code >= 400:
+            raise PromptRequestError(
+                f"log_completion failed: {resp.text}", status=resp.status_code
+            )
+        return resp.json()
+
+    def send_feedback(
+        self,
+        *,
+        prompt_slug: str,
+        completion_id: str,
+        thumbs_up: bool,
+        reason: Optional[str] = None,
+        expected_output: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Send feedback for a specific completion.
+        
+        Args:
+            prompt_slug: The slug of the prompt
+            completion_id: UUID of the completion to provide feedback on
+            thumbs_up: True for positive feedback, False for negative
+            reason: Optional explanation of the feedback
+            expected_output: Optional description of what the expected output should be
+            metadata: Optional additional metadata
+            
+        Returns:
+            The created feedback record
+        """
+        url = f"{self._base_url}/v1/prompts/{prompt_slug}/completions/{completion_id}/feedback"
+        
+        logger.debug(
+            f"[SDK] Sending feedback for completion_id={completion_id}, prompt_slug={prompt_slug}",
+            extra={
+                "completion_id": completion_id,
+                "prompt_slug": prompt_slug,
+                "thumbs_up": thumbs_up,
+                "url": url
+            }
+        )
+        
+        payload = {
+            "thumbs_up": thumbs_up,
+        }
+        
+        # Add optional fields only if provided
+        if reason is not None:
+            payload["reason"] = reason
+        if expected_output is not None:
+            payload["expected_output"] = expected_output
+        if metadata is not None:
+            payload["metadata"] = metadata
+        
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
+        
+        logger.debug(
+            f"[SDK] Feedback response status={resp.status_code}",
+            extra={
+                "status_code": resp.status_code,
+                "response_text": resp.text[:500] if resp.text else None
+            }
+        )
+        
+        if resp.status_code >= 400:
+            raise PromptRequestError(
+                f"send_feedback failed: {resp.text}", status=resp.status_code
+            )
+        return resp.json()
 
 

@@ -284,6 +284,55 @@ run = run.score([check_keywords], expected_keywords="expected_keywords")
 
 ---
 
+## Saving Completion Feedback
+
+Track user feedback on prompt completions to improve your prompts with DSPy optimization:
+
+```python
+import zeroeval as ze
+
+# Initialize client
+ze.init()
+
+# Send positive feedback
+feedback = ze.send_feedback(
+    prompt_slug="customer-support",
+    completion_id="completion-uuid-123",
+    thumbs_up=True,
+    reason="Excellent response, very helpful"
+)
+
+# Send negative feedback with expected output
+feedback = ze.send_feedback(
+    prompt_slug="customer-support", 
+    completion_id="completion-uuid-456",
+    thumbs_up=False,
+    reason="Response was too formal",
+    expected_output="Should be more casual and friendly",
+    metadata={"user_id": "user-789", "source": "production"}
+)
+```
+
+### Parameters
+
+- **prompt_slug** _(str, required)_ – The slug of the prompt
+- **completion_id** _(str, required)_ – UUID of the completion to provide feedback on
+- **thumbs_up** _(bool, required)_ – True for positive feedback, False for negative
+- **reason** _(str, optional)_ – Explanation of the feedback
+- **expected_output** _(str, optional)_ – Description of what the expected output should be. This field is automatically used by ZeroEval for **tuning datasets and DSPy prompt optimization** to create stronger training examples.
+- **metadata** _(dict, optional)_ – Additional metadata to attach to the feedback
+
+### Integration with Prompt Tuning
+
+Feedback submitted via `send_feedback` is automatically linked to the prompt version used for the completion. When you provide both `reason` and `expected_output`, ZeroEval creates stronger training examples for DSPy optimization:
+
+- **`reason`** helps the optimizer understand what makes a response good or bad
+- **`expected_output`** provides a concrete example of the ideal response, which DSPy uses to generate improved prompts
+
+If the completion was traced with a `span_id`, the feedback is mirrored to your tuning datasets automatically, making it available for prompt optimization runs in the ZeroEval platform.
+
+---
+
 ## Streaming & tracing
 
 • **Streaming responses** – streaming guide: https://docs.zeroeval.com/streaming (coming soon)
