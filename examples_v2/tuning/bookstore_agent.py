@@ -30,7 +30,7 @@ import zeroeval as ze
 # Ensure you have ZEROEVAL_API_KEY and ZEROEVAL_API_URL set in your environment
 ze.init(
     api_key=os.getenv("ZEROEVAL_API_KEY"),
-    api_url=os.getenv("ZEROEVAL_API_URL", "http://localhost:8000"),
+    api_url=os.getenv("ZEROEVAL_API_URL", "http://localhost:8000")
 )
 
 def customer_support_agent(user_query: str, user_context: dict = None, conversation_history: list = None):
