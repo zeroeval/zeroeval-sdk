@@ -35,10 +35,12 @@ def ensure_env():
     """Load and validate environment variables."""
     env_path = Path(__file__).parent.parent / ".env"
     load_dotenv(env_path)
-    
+
+    # # PROD
     zeroeval_key = os.getenv("ZEROEVAL_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    
+    zeroeval_api_url = os.getenv("ZEROEVAL_API_URL", "https://api.zeroeval.com")
+    llm_base_url = os.getenv("ZEROEVAL_LLM_BASE_URL", "https://api.zeroeval.com/v1")
+
     if not zeroeval_key:
         raise RuntimeError(
             "Missing ZEROEVAL_API_KEY. Please set it in your .env file or environment."
