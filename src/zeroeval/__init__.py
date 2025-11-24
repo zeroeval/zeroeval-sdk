@@ -74,9 +74,14 @@ def prompt(
     """
     Version-aware prompt helper integrated with Prompt Library.
 
-    Exactly one of `content` or `from` must be provided. If `from` is "latest",
-    fetch the latest version for the task-attached prompt. Otherwise `from` must be
-    a 64-char lowercase hex SHA-256 content hash.
+    When `content` is provided alone, it serves as a fallback - the SDK will automatically
+    fetch the latest optimized version from the backend if one exists. This allows you
+    to hardcode a default prompt while seamlessly using tuned versions in production.
+
+    If `from_` is specified, it controls version behavior:
+    - `from_="latest"` explicitly fetches the latest version (fails if none exists)
+    - `from_="explicit"` always uses the provided `content` (bypasses auto-optimization, requires `content`)
+    - `from_="<hash>"` fetches a specific version by its 64-char SHA-256 content hash
 
     For backward compatibility, `from_` is still accepted and behaves the same as `from`.
     """
@@ -88,17 +93,31 @@ def prompt(
             from_ = kwargs.pop("from")
         if kwargs:
             raise TypeError("Unexpected keyword arguments: " + ", ".join(kwargs.keys()))
-    if (content is None and from_ is None) or (content is not None and from_ is not None):
-        raise ValueError("Provide exactly one of 'content' or 'from'")
+    
+    if content is None and from_ is None:
+        raise ValueError("Must provide either 'content' or 'from'")
+    
+    # Validate that explicit requires content
+    if from_ == "explicit" and content is None:
+        raise ValueError("from='explicit' requires 'content' to be provided")
 
     client = _ensure_prompt_client()
+    content_hash = None
 
-    # Ensure/fetch the prompt version via backend
-    if content is not None:
+    # Priority order:
+    # 1. If from_="explicit", always use the provided content (bypass auto-optimization)
+    # 2. If from_ is specified (latest or hash), use it (strict mode)
+    # 3. If only content is provided, try to fetch latest first, fall back to ensuring content
+    if from_ == "explicit":
+        # Explicit mode: always use the provided content, no auto-optimization
         content_hash = sha256_hex(content)
-        prompt_obj = client.ensure_task_prompt_version(task_name=name, content=content, content_hash=content_hash)
-    else:
-        assert from_ is not None
+        prompt_obj = client.ensure_task_prompt_version(
+            task_name=name,
+            content=content,
+            content_hash=content_hash
+        )
+    elif from_ is not None:
+        # Explicit from_ takes priority - strict mode for latest or hash
         if from_ == "latest":
             try:
                 prompt_obj = client.get_task_prompt_latest(task_name=name)
@@ -109,8 +128,20 @@ def prompt(
                 )
         else:
             if not re.fullmatch(r"[0-9a-f]{64}", from_):
-                raise ValueError("from must be 'latest' or a 64-char lowercase hex SHA-256 hash")
+                raise ValueError("from must be 'latest', 'explicit', or a 64-char lowercase hex SHA-256 hash")
             prompt_obj = client.get_task_prompt_version_by_hash(task_name=name, content_hash=from_)
+    elif content is not None:
+        # Auto-tune mode: try latest first, fall back to content
+        content_hash = sha256_hex(content)
+        try:
+            prompt_obj = client.get_task_prompt_latest(task_name=name)
+        except (PromptNotFoundError, PromptRequestError):
+            # No latest version exists, ensure the provided content as a version
+            prompt_obj = client.ensure_task_prompt_version(
+                task_name=name, 
+                content=content, 
+                content_hash=content_hash
+            )
 
     # Pull linkage metadata for decoration
     prompt_slug = None
@@ -129,7 +160,7 @@ def prompt(
         prompt_slug=prompt_slug,
         prompt_version=prompt_obj.version,
         prompt_version_id=getattr(prompt_obj, "version_id", None),
-        content_hash=content_hash if content is not None else None,
+        content_hash=content_hash,
     )
 
 # Prompt library convenience wrappers
@@ -180,6 +211,75 @@ class _PromptsNamespace:
 
 prompts = _PromptsNamespace()
 
+
+def log_completion(
+    *,
+    prompt_slug: str,
+    prompt_id: str,
+    prompt_version_id: str,
+    messages: list,
+    input_text: Optional[str] = None,
+    output_text: Optional[str] = None,
+    model_id: Optional[str] = None,
+    metadata: Optional[dict] = None,
+    duration_ms: Optional[float] = None,
+    prompt_tokens: Optional[int] = None,
+    completion_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    cost: Optional[float] = None,
+    has_error: bool = False,
+    error_message: Optional[str] = None,
+    span_id: Optional[str] = None,
+):
+    """
+    Log a completion for a specific prompt.
+    
+    This automatically tracks prompt usage without requiring manual wrapping.
+    """
+    client = _ensure_prompt_client()
+    return client.log_completion(
+        prompt_slug=prompt_slug,
+        prompt_id=prompt_id,
+        prompt_version_id=prompt_version_id,
+        messages=messages,
+        input_text=input_text,
+        output_text=output_text,
+        model_id=model_id,
+        metadata=metadata,
+        duration_ms=duration_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        cost=cost,
+        has_error=has_error,
+        error_message=error_message,
+        span_id=span_id,
+    )
+
+
+def send_feedback(
+    *,
+    prompt_slug: str,
+    completion_id: str,
+    thumbs_up: bool,
+    reason: Optional[str] = None,
+    expected_output: Optional[str] = None,
+    metadata: Optional[dict] = None,
+):
+    """
+    Send feedback for a specific completion.
+    """
+    client = _ensure_prompt_client()
+    return client.send_feedback(
+        prompt_slug=prompt_slug,
+        completion_id=completion_id,
+        thumbs_up=thumbs_up,
+        reason=reason,
+        expected_output=expected_output,
+        metadata=metadata,
+    )
+
+
 # Define what's exported
 __all__ = [
     # Core functionality
@@ -192,7 +292,6 @@ __all__ = [
     # Providers
     "ZeroEvalOTLPProvider",
     "SingleProcessorProvider",
-
     # Observability
     "tracer",
     "span",
@@ -211,6 +310,9 @@ __all__ = [
     "PromptClient",
     "get_prompt",
     "prompts",
+    # Completion logging and feedback
+    "log_completion",
+    "send_feedback",
 ]
 
 # Version info
