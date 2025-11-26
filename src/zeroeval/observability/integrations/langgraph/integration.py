@@ -41,22 +41,32 @@ class LangGraphIntegration(Integration):
         """
         logger = logging.getLogger(__name__)
         
-        from langgraph.graph.graph import Graph  # type: ignore
         from langgraph.graph.state import StateGraph  # type: ignore
         
-        logger.debug("[LangGraph] Successfully imported Graph and StateGraph")
+        # Graph class is optional - deprecated/moved in newer LangGraph versions
+        Graph = None
+        try:
+            from langgraph.graph.graph import Graph  # type: ignore
+        except ImportError:
+            try:
+                from langgraph.graph import Graph  # type: ignore
+            except ImportError:
+                logger.debug("[LangGraph] Graph class not available (using StateGraph only)")
+        
+        logger.debug("[LangGraph] Successfully imported StateGraph")
         
         # Debug: Check what we're about to patch
-        logger.debug(f"[LangGraph] Graph.compile exists: {hasattr(Graph, 'compile')}")
+        if Graph:
+            logger.debug(f"[LangGraph] Graph.compile exists: {hasattr(Graph, 'compile')}")
         logger.debug(f"[LangGraph] StateGraph.compile exists: {hasattr(StateGraph, 'compile')}")
         
-        # Patch *both* compile methods (Graph + StateGraph inherit separate
-        # compile implementations).
-        try:
-            self._patch_method(Graph, "compile", self._wrap_compile)
-            logger.debug("[LangGraph] Successfully patched Graph.compile")
-        except Exception as e:
-            logger.error(f"[LangGraph] Failed to patch Graph.compile: {e}")
+        # Patch compile methods - StateGraph is primary, Graph is optional for older versions
+        if Graph:
+            try:
+                self._patch_method(Graph, "compile", self._wrap_compile)
+                logger.debug("[LangGraph] Successfully patched Graph.compile")
+            except Exception as e:
+                logger.debug(f"[LangGraph] Could not patch Graph.compile: {e}")
             
         try:
             self._patch_method(StateGraph, "compile", self._wrap_compile)
