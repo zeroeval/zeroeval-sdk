@@ -63,6 +63,9 @@ def set_tag(target, tags):
 span = _SpanClass
 
 # Version-aware prompt wrapper
+import logging as _logging
+_prompt_logger = _logging.getLogger("zeroeval.prompt")
+
 def prompt(
     name: str,
     *,
@@ -85,63 +88,94 @@ def prompt(
 
     For backward compatibility, `from_` is still accepted and behaves the same as `from`.
     """
+    _prompt_logger.debug(f"=== ze.prompt() called ===")
+    _prompt_logger.debug(f"  name: {name!r}")
+    _prompt_logger.debug(f"  content provided: {content is not None} (length: {len(content) if content else 0})")
+    _prompt_logger.debug(f"  variables: {list(variables.keys()) if variables else None}")
+    _prompt_logger.debug(f"  from_: {from_!r}")
+    
     # Accept `from` via kwargs and map to `from_`
     if kwargs:
         if "from" in kwargs:
             if from_ is not None:
+                _prompt_logger.error("Both 'from' and 'from_' provided - this is an error")
                 raise ValueError("Provide only one of 'from' or 'from_'")
             from_ = kwargs.pop("from")
+            _prompt_logger.debug(f"  from_ (via kwargs): {from_!r}")
         if kwargs:
+            _prompt_logger.error(f"Unexpected keyword arguments: {list(kwargs.keys())}")
             raise TypeError("Unexpected keyword arguments: " + ", ".join(kwargs.keys()))
     
     if content is None and from_ is None:
+        _prompt_logger.error("Neither 'content' nor 'from' provided")
         raise ValueError("Must provide either 'content' or 'from'")
     
     # Validate that explicit requires content
     if from_ == "explicit" and content is None:
+        _prompt_logger.error("from='explicit' requires 'content' to be provided")
         raise ValueError("from='explicit' requires 'content' to be provided")
 
     client = _ensure_prompt_client()
     content_hash = None
+    prompt_obj = None
 
     # Priority order:
     # 1. If from_="explicit", always use the provided content (bypass auto-optimization)
     # 2. If from_ is specified (latest or hash), use it (strict mode)
     # 3. If only content is provided, try to fetch latest first, fall back to ensuring content
-    if from_ == "explicit":
-        # Explicit mode: always use the provided content, no auto-optimization
-        content_hash = sha256_hex(content)
-        prompt_obj = client.ensure_task_prompt_version(
-            task_name=name,
-            content=content,
-            content_hash=content_hash
-        )
-    elif from_ is not None:
-        # Explicit from_ takes priority - strict mode for latest or hash
-        if from_ == "latest":
-            try:
-                prompt_obj = client.get_task_prompt_latest(task_name=name)
-            except PromptNotFoundError as _e:
-                raise PromptRequestError(
-                    f"No prompt versions found for task '{name}'. "
-                    f"Create one with ze.prompt(name, content=...) or publish a version in the Prompt Library."
-                )
-        else:
-            if not re.fullmatch(r"[0-9a-f]{64}", from_):
-                raise ValueError("from must be 'latest', 'explicit', or a 64-char lowercase hex SHA-256 hash")
-            prompt_obj = client.get_task_prompt_version_by_hash(task_name=name, content_hash=from_)
-    elif content is not None:
-        # Auto-tune mode: try latest first, fall back to content
-        content_hash = sha256_hex(content)
-        try:
-            prompt_obj = client.get_task_prompt_latest(task_name=name)
-        except (PromptNotFoundError, PromptRequestError):
-            # No latest version exists, ensure the provided content as a version
+    try:
+        if from_ == "explicit":
+            # Explicit mode: always use the provided content, no auto-optimization
+            _prompt_logger.info(f"Mode: EXPLICIT - using provided content directly for task '{name}'")
+            content_hash = sha256_hex(content)
+            _prompt_logger.debug(f"  content_hash: {content_hash}")
             prompt_obj = client.ensure_task_prompt_version(
-                task_name=name, 
-                content=content, 
+                task_name=name,
+                content=content,
                 content_hash=content_hash
             )
+            _prompt_logger.debug(f"  prompt version ensured: version={getattr(prompt_obj, 'version', 'N/A')}")
+        elif from_ is not None:
+            # Explicit from_ takes priority - strict mode for latest or hash
+            if from_ == "latest":
+                _prompt_logger.info(f"Mode: LATEST - fetching latest version for task '{name}'")
+                try:
+                    prompt_obj = client.get_task_prompt_latest(task_name=name)
+                    _prompt_logger.debug(f"  latest version fetched: version={getattr(prompt_obj, 'version', 'N/A')}")
+                except PromptNotFoundError as _e:
+                    _prompt_logger.error(f"No prompt versions found for task '{name}'")
+                    raise PromptRequestError(
+                        f"No prompt versions found for task '{name}'. "
+                        f"Create one with ze.prompt(name, content=...) or publish a version in the Prompt Library."
+                    )
+            else:
+                if not re.fullmatch(r"[0-9a-f]{64}", from_):
+                    _prompt_logger.error(f"Invalid hash format: {from_}")
+                    raise ValueError("from must be 'latest', 'explicit', or a 64-char lowercase hex SHA-256 hash")
+                _prompt_logger.info(f"Mode: HASH - fetching specific version by hash for task '{name}'")
+                _prompt_logger.debug(f"  hash: {from_}")
+                prompt_obj = client.get_task_prompt_version_by_hash(task_name=name, content_hash=from_)
+                _prompt_logger.debug(f"  version fetched by hash: version={getattr(prompt_obj, 'version', 'N/A')}")
+        elif content is not None:
+            # Auto-tune mode: try latest first, fall back to content
+            _prompt_logger.info(f"Mode: AUTO-TUNE - trying latest, falling back to provided content for task '{name}'")
+            content_hash = sha256_hex(content)
+            _prompt_logger.debug(f"  content_hash: {content_hash}")
+            try:
+                prompt_obj = client.get_task_prompt_latest(task_name=name)
+                _prompt_logger.info(f"  SUCCESS: Using TUNED version {getattr(prompt_obj, 'version', 'N/A')} for task '{name}'")
+            except (PromptNotFoundError, PromptRequestError) as e:
+                _prompt_logger.debug(f"  No latest version found ({type(e).__name__}), ensuring provided content")
+                # No latest version exists, ensure the provided content as a version
+                prompt_obj = client.ensure_task_prompt_version(
+                    task_name=name, 
+                    content=content, 
+                    content_hash=content_hash
+                )
+                _prompt_logger.info(f"  Using FALLBACK content for task '{name}' (version={getattr(prompt_obj, 'version', 'N/A')})")
+    except Exception as e:
+        _prompt_logger.error(f"Error fetching/ensuring prompt for task '{name}': {type(e).__name__}: {e}")
+        raise
 
     # Pull linkage metadata for decoration
     prompt_slug = None
@@ -150,18 +184,35 @@ def prompt(
         prompt_slug = (prompt_obj.metadata or {}).get("prompt_slug")
         if not prompt_slug:
             prompt_slug = (prompt_obj.metadata or {}).get("prompt")
-    except Exception:
+        _prompt_logger.debug(f"  prompt_slug: {prompt_slug!r}")
+    except Exception as e:
+        _prompt_logger.warning(f"  Could not extract prompt_slug from metadata: {e}")
         prompt_slug = None
 
-    return zeroeval_prompt(
+    # Log the final prompt metadata that will be embedded
+    version_id = getattr(prompt_obj, "version_id", None)
+    _prompt_logger.info(f"=== ze.prompt() result for task '{name}' ===")
+    _prompt_logger.info(f"  prompt_version: {prompt_obj.version}")
+    _prompt_logger.info(f"  prompt_version_id: {version_id}")
+    _prompt_logger.info(f"  prompt_slug: {prompt_slug}")
+    _prompt_logger.info(f"  content_hash: {content_hash}")
+    _prompt_logger.info(f"  content length: {len(prompt_obj.content)} chars")
+    _prompt_logger.debug(f"  content preview: {prompt_obj.content[:100]}..." if len(prompt_obj.content) > 100 else f"  content: {prompt_obj.content}")
+
+    result = zeroeval_prompt(
         name=name,
         content=prompt_obj.content,
         variables=variables,
         prompt_slug=prompt_slug,
         prompt_version=prompt_obj.version,
-        prompt_version_id=getattr(prompt_obj, "version_id", None),
+        prompt_version_id=version_id,
         content_hash=content_hash,
     )
+    
+    _prompt_logger.debug(f"  zeroeval_prompt returned string of length {len(result)}")
+    _prompt_logger.debug(f"  result preview: {result[:150]}..." if len(result) > 150 else f"  result: {result}")
+    
+    return result
 
 # Prompt library convenience wrappers
 from typing import Optional

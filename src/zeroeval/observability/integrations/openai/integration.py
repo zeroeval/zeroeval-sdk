@@ -94,28 +94,46 @@ def zeroeval_prompt(
     Note:
         - Variables will be interpolated in the prompt when the OpenAI API is called
         - The task will be automatically created in ZeroEval if it doesn't exist
+        - The returned string MUST be included in your OpenAI messages for tuning span linkage to work
     """
+    logger.info(f"=== zeroeval_prompt() called ===")
+    logger.info(f"  task name: '{name}'")
+    logger.debug(f"  content length: {len(content)} chars")
+    logger.debug(f"  variables: {list(variables.keys()) if variables else None}")
+    logger.debug(f"  prompt_slug: {prompt_slug}")
+    logger.debug(f"  prompt_version: {prompt_version}")
+    logger.debug(f"  prompt_version_id: {prompt_version_id}")
+    logger.debug(f"  content_hash: {content_hash}")
+    
     metadata = {"task": name}
     
     if variables:
         metadata["variables"] = variables
-        logger.debug(f"zeroeval_prompt: Adding variables to metadata: {variables}")
-    # Optional prompt linkage metadata
+        logger.debug(f"zeroeval_prompt: Adding {len(variables)} variables to metadata")
+    
+    # Optional prompt linkage metadata - these are CRITICAL for tuning span creation
     if prompt_slug:
         metadata["prompt_slug"] = prompt_slug
     if prompt_version is not None:
         metadata["prompt_version"] = int(prompt_version)
     if prompt_version_id:
         metadata["prompt_version_id"] = str(prompt_version_id)
+        logger.info(f"zeroeval_prompt: prompt_version_id={prompt_version_id} - this enables tuning span linkage")
+    else:
+        logger.warning(f"zeroeval_prompt: No prompt_version_id provided - tuning span linkage may not work!")
     if content_hash:
         metadata["content_hash"] = str(content_hash)
     
-    logger.info(f"zeroeval_prompt: Creating prompt with task ID: '{name}'")
-    
     metadata_json = json.dumps(metadata)
-    logger.debug(f"zeroeval_prompt: Full metadata: {metadata_json}")
     formatted_prompt = f'<zeroeval>{metadata_json}</zeroeval>{content}'
-    logger.debug(f"zeroeval_prompt: Formatted prompt preview (first 100 chars): {formatted_prompt[:100]}...")
+    
+    logger.info(f"=== zeroeval_prompt() result ===")
+    logger.info(f"  Metadata embedded: task='{name}', version_id={prompt_version_id}, version={prompt_version}")
+    logger.debug(f"  Full metadata JSON: {metadata_json}")
+    logger.debug(f"  Formatted prompt length: {len(formatted_prompt)} chars")
+    logger.debug(f"  Formatted prompt preview: {formatted_prompt[:150]}..." if len(formatted_prompt) > 150 else f"  Formatted prompt: {formatted_prompt}")
+    logger.info(f"  IMPORTANT: This string must be included in your OpenAI messages for tuning to work!")
+    
     return formatted_prompt
 
 
@@ -275,6 +293,7 @@ class OpenAIIntegration(Integration):
             - Tuple of (metadata dict or None, cleaned content string)
         """
         logger.debug(f"_extract_zeroeval_metadata: Searching for metadata in content (length: {len(content)} chars)")
+        logger.debug(f"_extract_zeroeval_metadata: Content preview: {content[:200]}..." if len(content) > 200 else f"_extract_zeroeval_metadata: Content: {content}")
         
         # Look for <zeroeval>...</zeroeval> tags
         pattern = r'<zeroeval>(.*?)</zeroeval>'
@@ -282,6 +301,11 @@ class OpenAIIntegration(Integration):
         
         if not match:
             logger.debug("_extract_zeroeval_metadata: No <zeroeval> tags found in content")
+            # Additional debug: check if there's a partial match that might indicate an issue
+            if "<zeroeval" in content:
+                logger.warning("_extract_zeroeval_metadata: Found '<zeroeval' but no complete tag - possible malformed tag")
+            if "</zeroeval>" in content:
+                logger.warning("_extract_zeroeval_metadata: Found '</zeroeval>' but no opening tag")
             return None, content
         
         logger.info("_extract_zeroeval_metadata: Found <zeroeval> tags, extracting metadata")
@@ -292,17 +316,26 @@ class OpenAIIntegration(Integration):
             logger.debug(f"_extract_zeroeval_metadata: Raw JSON string: {json_str}")
             
             metadata = json.loads(json_str)
-            logger.info(f"_extract_zeroeval_metadata: Successfully parsed metadata: {metadata}")
             
             # Validate required fields
             if not isinstance(metadata, dict):
                 raise ValueError("Metadata must be a JSON object")
             
-            # Log specific metadata fields
-            if "task" in metadata:
-                logger.info(f"_extract_zeroeval_metadata: Task ID found: '{metadata['task']}'")
+            # Log ALL metadata fields important for tuning span creation
+            logger.info(f"_extract_zeroeval_metadata: === PARSED METADATA ===")
+            logger.info(f"  task: {metadata.get('task', 'NOT SET')}")
+            logger.info(f"  prompt_version: {metadata.get('prompt_version', 'NOT SET')}")
+            logger.info(f"  prompt_version_id: {metadata.get('prompt_version_id', 'NOT SET')}")
+            logger.info(f"  prompt_slug: {metadata.get('prompt_slug', 'NOT SET')}")
+            logger.info(f"  content_hash: {metadata.get('content_hash', 'NOT SET')}")
             if "variables" in metadata:
-                logger.debug(f"_extract_zeroeval_metadata: Variables found: {metadata['variables']}")
+                logger.debug(f"  variables: {list(metadata['variables'].keys())}")
+            
+            # Warn if critical fields for tuning are missing
+            if not metadata.get('task'):
+                logger.warning("_extract_zeroeval_metadata: 'task' field is missing - tuning span will NOT be created!")
+            if not metadata.get('prompt_version_id'):
+                logger.warning("_extract_zeroeval_metadata: 'prompt_version_id' is missing - tuning span linkage may fail!")
             
             # Remove the <zeroeval> tags from content
             cleaned_content = re.sub(pattern, '', content, count=1).strip()
@@ -356,6 +389,12 @@ class OpenAIIntegration(Integration):
         """
         Process messages to extract zeroeval metadata and interpolate variables.
         
+        This function searches ALL messages for <zeroeval> tags, not just the first
+        system message. This ensures ze.prompt() works regardless of:
+        - Whether the prompt is in a system or user message
+        - The position of the message in the array
+        - Whether the message is the first one or not
+        
         Returns:
             - Tuple of (processed messages, zeroeval metadata)
         """
@@ -363,44 +402,84 @@ class OpenAIIntegration(Integration):
             logger.debug("_process_messages_with_zeroeval: No messages to process")
             return messages, None
         
-        logger.debug(f"_process_messages_with_zeroeval: Processing {len(messages)} messages")
+        logger.info(f"_process_messages_with_zeroeval: Processing {len(messages)} messages")
+        logger.debug(f"_process_messages_with_zeroeval: Message roles: {[m.get('role') for m in messages]}")
         
         # Deep copy messages to avoid modifying the original
         import copy
         processed_messages = copy.deepcopy(messages)
         zeroeval_metadata = None
         variables = {}
+        metadata_found_in_message_idx = None
         
-        # Check if first message is a system message with zeroeval tags
-        if processed_messages and processed_messages[0].get("role") == "system":
-            content = processed_messages[0].get("content", "")
-            logger.debug(f"_process_messages_with_zeroeval: Checking system message for zeroeval tags")
+        # Search ALL messages for zeroeval tags (not just first system message)
+        for i, msg in enumerate(processed_messages):
+            content = msg.get("content", "")
+            role = msg.get("role", "unknown")
             
-            # Extract zeroeval metadata
-            metadata, cleaned_content = self._extract_zeroeval_metadata(content)
+            # Skip if no content
+            if not content:
+                logger.debug(f"_process_messages_with_zeroeval: Message {i} ({role}) has no content, skipping")
+                continue
             
-            if metadata:
-                zeroeval_metadata = metadata
-                variables = metadata.get("variables", {})
+            # Check if this message contains <zeroeval> tags
+            if "<zeroeval>" in content:
+                logger.info(f"_process_messages_with_zeroeval: Found <zeroeval> tag in message {i} (role: {role})")
                 
-                # Update the first message with cleaned content
-                processed_messages[0]["content"] = cleaned_content
+                # Extract zeroeval metadata
+                metadata, cleaned_content = self._extract_zeroeval_metadata(content)
                 
-                # Log extraction
-                task_id = metadata.get('task')
-                logger.info(f"_process_messages_with_zeroeval: Successfully extracted metadata - task: '{task_id}', variables: {list(variables.keys()) if variables else 'none'}")
-                
-                # Log task linkage info
-                if task_id:
-                    logger.info(
-                        f"_process_messages_with_zeroeval: Task ID '{task_id}' found in zeroeval_prompt. "
-                        f"This span will be automatically linked to the task and the task will be "
-                        f"created if it doesn't exist yet."
-                    )
+                if metadata:
+                    if zeroeval_metadata is not None:
+                        # Already found metadata in a previous message - warn but use the first one
+                        logger.warning(
+                            f"_process_messages_with_zeroeval: Multiple <zeroeval> tags found! "
+                            f"Using metadata from message {metadata_found_in_message_idx}, ignoring message {i}"
+                        )
+                    else:
+                        zeroeval_metadata = metadata
+                        variables = metadata.get("variables", {})
+                        metadata_found_in_message_idx = i
+                        
+                        # Update this message with cleaned content
+                        processed_messages[i]["content"] = cleaned_content
+                        
+                        # Log extraction details
+                        task_id = metadata.get('task')
+                        prompt_version = metadata.get('prompt_version')
+                        prompt_version_id = metadata.get('prompt_version_id')
+                        content_hash = metadata.get('content_hash')
+                        prompt_slug = metadata.get('prompt_slug')
+                        
+                        logger.info(f"_process_messages_with_zeroeval: === ZEROEVAL METADATA EXTRACTED ===")
+                        logger.info(f"  - Found in: message {i} (role: {role})")
+                        logger.info(f"  - Task ID: '{task_id}'")
+                        logger.info(f"  - Prompt Version: {prompt_version}")
+                        logger.info(f"  - Prompt Version ID: {prompt_version_id}")
+                        logger.info(f"  - Content Hash: {content_hash}")
+                        logger.info(f"  - Prompt Slug: {prompt_slug}")
+                        logger.info(f"  - Variables: {list(variables.keys()) if variables else 'none'}")
+                        
+                        # Log task linkage info
+                        if task_id:
+                            logger.info(
+                                f"_process_messages_with_zeroeval: Task '{task_id}' will be linked to this span. "
+                                f"Tuning span should be created with version_id={prompt_version_id}"
+                            )
+                        else:
+                            logger.warning(
+                                f"_process_messages_with_zeroeval: No task ID in metadata - tuning span linking may fail!"
+                            )
             else:
-                logger.debug("_process_messages_with_zeroeval: No zeroeval metadata found in system message")
-        else:
-            logger.debug("_process_messages_with_zeroeval: First message is not a system message or no messages present")
+                logger.debug(f"_process_messages_with_zeroeval: Message {i} ({role}) has no <zeroeval> tags")
+        
+        # Log if no metadata was found
+        if zeroeval_metadata is None:
+            logger.warning(
+                f"_process_messages_with_zeroeval: No <zeroeval> metadata found in any of the {len(messages)} messages. "
+                f"If you used ze.prompt(), ensure the returned string is included in your messages. "
+                f"Message contents preview: {[m.get('content', '')[:50] + '...' if m.get('content') and len(m.get('content', '')) > 50 else m.get('content', '') for m in messages]}"
+            )
         
         # Interpolate variables in all messages if we have any
         if variables:
