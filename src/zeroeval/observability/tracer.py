@@ -167,10 +167,14 @@ class Tracer:
         from .integrations.langchain.integration import LangChainIntegration
         from .integrations.langgraph.integration import LangGraphIntegration
         from .integrations.openai.integration import OpenAIIntegration
+        from .integrations.pydanticai.integration import PydanticAIIntegration
         from .integrations.vocode.integration import VocodeIntegration
         
         # List of all integration classes
+        # Note: PydanticAIIntegration should be set up BEFORE OpenAIIntegration
+        # so that the parent agent span is created before any OpenAI calls
         integration_classes = [
+            PydanticAIIntegration, # Auto-instrument PydanticAI agents (must be before OpenAI)
             OpenAIIntegration,
             GeminiIntegration,     # Auto-instrument Gemini
             HttpxIntegration,      # Auto-instrument httpx for network-level tracing
@@ -386,7 +390,8 @@ class Tracer:
         tags: Optional[dict[str, str]] = None,
         trace_tags: Optional[dict[str, str]] = None,
         session_tags: Optional[dict[str, str]] = None,
-        is_new_trace: bool = False
+        is_new_trace: bool = False,
+        trace_id: Optional[str] = None
     ) -> Span:
         """Start a new span; roots may create a session automatically."""
         # Ensure integrations are initialized before starting any spans
@@ -525,8 +530,11 @@ class Tracer:
         
         logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
         
-        # Set trace ID based on context
-        if otel_trace_id:
+        # Set trace ID based on context (priority: explicit > OTEL > parent > new)
+        if trace_id:
+            # Explicitly provided trace ID takes highest priority
+            span.trace_id = trace_id
+        elif otel_trace_id:
             # Use OTEL trace ID if we found one
             span.trace_id = otel_trace_id
             if attributes is None:

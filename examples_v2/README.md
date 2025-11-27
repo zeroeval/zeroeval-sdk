@@ -18,6 +18,11 @@ This directory contains organized, focused examples for ZeroEval SDK features.
   - Customer support agent with feedback loop
   - Prompt versioning with ze.prompt()
 
+- **`structured_outputs/`** - Examples for PydanticAI agents
+  - Customer support agent with typed outputs using `agent.iter()`
+  - Tool definitions and streaming execution chunks
+  - Structured action suggestions and sentiment detection
+
 ## Getting Started
 
 1. **Install dependencies**:
