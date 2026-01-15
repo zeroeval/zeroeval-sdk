@@ -424,7 +424,6 @@ class Tracer:
         """Start a new span; roots may create a session automatically."""
         # Ensure integrations are initialized before starting any spans
         self.ensure_integrations_initialized()
-
         if self.is_shutting_down():
             logger.warning("Tracer is shutting down. Discarding new span.")
             # Return a no-op span if tracer is shutting down
@@ -432,13 +431,11 @@ class Tracer:
 
         stack = self._active_spans_ctx.get()
         parent_span = stack[-1] if stack else None
-
         # Check for OpenTelemetry context if no ZeroEval parent
         otel_trace_id = None
         otel_parent_id = None
         otel_session_id = None
         otel_session_name = None
-
         if not parent_span and HAS_OTEL:
             otel_span = otel_trace.get_current_span()
             if otel_span and otel_span.is_recording():
@@ -449,7 +446,6 @@ class Tracer:
                     # OTEL trace ID is 128-bit, convert to UUID format
                     otel_trace_hex = format(span_context.trace_id, '032x')
                     otel_trace_id = str(uuid.UUID(otel_trace_hex))
-
                     # OTEL span ID is only 64-bit, we'll store as hex in parent_id
                     # but need to convert to UUID format for database
                     otel_span_hex = format(span_context.span_id, '016x')
@@ -473,7 +469,6 @@ class Tracer:
                                 otel_session_id = str(otel_span.attributes[attr])
                                 # Found session ID in OTEL attributes
                                 break
-
                         # Check for session name
                         name_attrs = ['zeroeval.session.name', 'session.name', 'session_name']
                         for attr in name_attrs:
@@ -481,7 +476,6 @@ class Tracer:
                                 otel_session_name = str(otel_span.attributes[attr])
                                 # Found session name in OTEL attributes
                                 break
-
                     # If no session ID found, try to get it from baggage
                     if not otel_session_id and HAS_OTEL:
                         try:
@@ -493,7 +487,6 @@ class Tracer:
                                 # Found session ID in baggage
                         except Exception:
                             pass  # Could not extract baggage
-
                     # If still no session ID, check if we have a session for this trace ID
                     if not otel_session_id and otel_trace_id:
                         # Check if we've seen this trace before and have a session for it
