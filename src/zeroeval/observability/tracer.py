@@ -38,7 +38,7 @@ class Signal:
     name: str
     value: Union[str, bool, int, float]
     signal_type: str = "boolean"  # "boolean" or "numerical"
-    
+
     def __post_init__(self):
         # Auto-detect signal type and normalize value
         if isinstance(self.value, bool):
@@ -59,6 +59,34 @@ class Signal:
                 self.value = str(self.value)
 
 
+def _normalize_session_id(session_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """
+    Normalize a session_id to UUID format.
+
+    If the session_id is already a valid UUID, it's returned as-is.
+    If it's a custom string, it's deterministically converted to a UUIDv5.
+
+    Args:
+        session_id: The original session ID (can be UUID or custom string)
+
+    Returns:
+        A tuple of (normalized_session_id, original_session_id_as_name).
+        The second value is only set if the session_id was not a UUID and can
+        be used as the session_name if no explicit name was provided.
+    """
+    if not session_id:
+        return None, None
+
+    try:
+        # Check if it's already a valid UUID
+        uuid.UUID(str(session_id))
+        return str(session_id), None
+    except ValueError:
+        # Not a UUID - deterministically derive a UUIDv5 from the string
+        normalized = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(session_id)))
+        return normalized, str(session_id)
+
+
 class Tracer:
     """
     Singleton tracer that manages spans, buffering, and flushing to writers.
@@ -67,16 +95,16 @@ class Tracer:
     """
     _instance = None
     _lock = threading.Lock()
-    
+
     _active_spans_ctx: ContextVar[list[Span]] = ContextVar("active_spans", default=[])
-    
+
     def __new__(cls):
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
                 cls._instance._initialize()
             return cls._instance
-    
+
     def _initialize(self) -> None:
         """Initialize the tracer's internal state and register for graceful shutdown."""
         self._spans: list[dict[str, Any]] = []
@@ -88,7 +116,7 @@ class Tracer:
         self._max_spans: int = 20
         self._flush_lock = threading.Lock()
         self._integrations: dict[str, Any] = {}
-        
+
         # Sampling rate configuration (0.0 to 1.0, where 1.0 means sample everything)
         sampling_env = os.environ.get("ZEROEVAL_SAMPLING_RATE", "1.0")
         try:
@@ -97,11 +125,11 @@ class Tracer:
         except ValueError:
             logger.warning(f"Invalid ZEROEVAL_SAMPLING_RATE value: {sampling_env}. Using default 1.0")
             self._sampling_rate = 1.0
-        
+
         # Async signal writer (optional)
         self._async_signal_enabled = False
         self._signal_writer = None
-        
+
         # Config for integrations, read from environment variable first
         self._integrations_config: dict[str, bool] = {}
         disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
@@ -114,17 +142,17 @@ class Tracer:
         self.collect_code_details: bool = True
         self._shutdown_called: bool = False
         self._shutdown_lock = threading.Lock()
-        
+
         # Global tags applied to all spans/traces/sessions
         self._global_tags: dict[str, str] = {}
-        
+
         # Containers for trace- and session-level tags
         self._trace_level_tags: dict[str, dict[str, str]] = {}
         self._session_level_tags: dict[str, dict[str, str]] = {}
-        
+
         # Map trace ID to session info for OTEL context propagation
         self._trace_to_session: dict[str, dict[str, str]] = {}
-        
+
         logger.info("Initializing tracer for streaming...")
         logger.info(f"Tracer config: flush_interval={self._flush_interval}s, max_spans={self._max_spans}, sampling_rate={self._sampling_rate}")
 
@@ -134,7 +162,7 @@ class Tracer:
 
         # Don't auto-setup integrations here - wait for init() to be called
         self._integrations_initialized = False
-        
+
         # Register shutdown hook
         atexit.register(self.shutdown)
 
@@ -155,10 +183,10 @@ class Tracer:
                 for name in disabled_names:
                     self._integrations_config[name] = False
                 logger.info(f"Integrations disabled via environment variable: {disabled_names}")
-            
+
             self._setup_available_integrations()
             self._integrations_initialized = True
-    
+
     def _setup_available_integrations(self) -> None:
         """Automatically set up all available integrations."""
         # Import here to avoid circular imports
@@ -169,7 +197,7 @@ class Tracer:
         from .integrations.openai.integration import OpenAIIntegration
         from .integrations.pydanticai.integration import PydanticAIIntegration
         from .integrations.vocode.integration import VocodeIntegration
-        
+
         # List of all integration classes
         # Note: PydanticAIIntegration should be set up BEFORE OpenAIIntegration
         # so that the parent agent span is created before any OpenAI calls
@@ -182,7 +210,7 @@ class Tracer:
             LangGraphIntegration,  # Auto-instrument LangGraph
             VocodeIntegration,     # Auto-instrument Vocode voice SDK
         ]
-        
+
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
         # Setup each available integration
         for integration_class in integration_classes:
@@ -191,12 +219,12 @@ class Tracer:
             if self._integrations_config.get(integration_name) is False:
                 logger.info(f"Skipping disabled integration as per configuration: {integration_name}")
                 continue
-            
+
             if integration_class.is_available():
                 try:
                     logger.info(f"Setting up integration: {integration_name}")
                     integration = integration_class(self)
-                    
+
                     # Use safe setup method with better error handling
                     if integration.safe_setup():
                         self._integrations[integration_name] = integration
@@ -210,16 +238,16 @@ class Tracer:
                     self._print_user_friendly_error(integration_name, exc)
             else:
                 logger.info(f"Integration not available: {integration_name}")
-        
+
         if self._integrations:
             logger.info(f"Active integrations: {list(self._integrations.keys())}")
         else:
             logger.info("No active integrations found.")
-    
+
     def reinitialize_integrations(self):
         """Reinitialize integrations. Useful after init() sets up logging."""
         logger.info("Reinitializing integrations...")
-        
+
         # Properly teardown existing integrations before clearing
         for integration_name, integration in self._integrations.items():
             try:
@@ -227,14 +255,14 @@ class Tracer:
                 integration.teardown()
             except Exception as e:
                 logger.error(f"Failed to teardown integration {integration_name}: {e}")
-        
+
         self._integrations.clear()
         self._setup_available_integrations()
 
     def _print_user_friendly_error(self, integration_name: str, error: Exception) -> None:
         """Print user-friendly error messages for common integration issues."""
         error_str = str(error)
-        
+
         if "builtin_function_or_method" in error_str and "__get__" in error_str:
             print(f"\n[ZeroEval] ❌ {integration_name} failed due to Python compatibility issue.")
             print("This often happens with Python 3.13+ and certain library versions.")
@@ -273,36 +301,36 @@ class Tracer:
             if self._shutdown_called:
                 return
             self._shutdown_called = True
-            
+
         logger.info("Program exiting. Performing final flush of all remaining traces...")
-        
+
         # Stop async signal writer if enabled
         if self._async_signal_enabled and self._signal_writer:
             try:
                 import asyncio
 
                 from .signal_writer import SignalWriterManager
-                
+
                 # Stop the signal writer
                 def stop_writer():
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                     loop.run_until_complete(SignalWriterManager.stop_writer())
-                    
+
                 stop_thread = threading.Thread(target=stop_writer)
                 stop_thread.start()
                 stop_thread.join(timeout=5.0)  # Wait up to 5 seconds
-                
+
             except Exception as e:
                 logger.error(f"Error stopping signal writer: {e}")
-        
+
         # Teardown integrations safely
         for integration_name, integration in self._integrations.items():
             try:
                 integration.teardown()
             except Exception:
                 logger.error(f"Failed to teardown integration {integration_name}", exc_info=True)
-        
+
         # Final flush for any remaining spans in the buffer
         self.flush()
 
@@ -311,15 +339,15 @@ class Tracer:
         for integration in self._integrations.values():
             with contextlib.suppress(builtins.BaseException):
                 integration.teardown()
-    
-    def configure(self, 
+
+    def configure(self,
                   flush_interval: Optional[float] = None,
                   max_spans: Optional[int] = None,
                   collect_code_details: Optional[bool] = None,
                   integrations: Optional[dict[str, bool]] = None,
                   sampling_rate: Optional[float] = None) -> None:
         """Configure the tracer with custom settings.
-        
+
         Args:
             flush_interval: How often to flush spans to the backend (seconds)
             max_spans: Maximum number of spans to buffer before forcing a flush
@@ -344,7 +372,7 @@ class Tracer:
         if sampling_rate is not None:
             self._sampling_rate = max(0.0, min(1.0, sampling_rate))  # Clamp to [0, 1]
             logger.info(f"Tracer sampling_rate configured to {self._sampling_rate}.")
-    
+
     def set_global_tags(self, tags: dict[str, str]) -> None:
         """Set global tags that are applied to all spans, traces, and sessions.
 
@@ -379,7 +407,7 @@ class Tracer:
         for sid in active_session_ids:
             if sid:
                 self._session_level_tags.setdefault(sid, {}).update(filtered)
-    
+
     def start_span(
         self,
         name: str,
@@ -396,7 +424,7 @@ class Tracer:
         """Start a new span; roots may create a session automatically."""
         # Ensure integrations are initialized before starting any spans
         self.ensure_integrations_initialized()
-        
+
         if self.is_shutting_down():
             logger.warning("Tracer is shutting down. Discarding new span.")
             # Return a no-op span if tracer is shutting down
@@ -404,13 +432,13 @@ class Tracer:
 
         stack = self._active_spans_ctx.get()
         parent_span = stack[-1] if stack else None
-        
+
         # Check for OpenTelemetry context if no ZeroEval parent
         otel_trace_id = None
         otel_parent_id = None
         otel_session_id = None
         otel_session_name = None
-        
+
         if not parent_span and HAS_OTEL:
             otel_span = otel_trace.get_current_span()
             if otel_span and otel_span.is_recording():
@@ -421,7 +449,7 @@ class Tracer:
                     # OTEL trace ID is 128-bit, convert to UUID format
                     otel_trace_hex = format(span_context.trace_id, '032x')
                     otel_trace_id = str(uuid.UUID(otel_trace_hex))
-                    
+
                     # OTEL span ID is only 64-bit, we'll store as hex in parent_id
                     # but need to convert to UUID format for database
                     otel_span_hex = format(span_context.span_id, '016x')
@@ -429,9 +457,9 @@ class Tracer:
                     # Use the span ID as the first 16 chars, pad with zeros
                     padded_hex = otel_span_hex + '0' * 16
                     otel_parent_id = str(uuid.UUID(padded_hex))
-                    
+
                     is_new_trace = False  # We're continuing an existing OTEL trace
-                    
+
                     # Extract session information from OTEL span attributes or baggage
                     if hasattr(otel_span, 'attributes') and otel_span.attributes:
                         # Check for session ID in span attributes
@@ -445,7 +473,7 @@ class Tracer:
                                 otel_session_id = str(otel_span.attributes[attr])
                                 # Found session ID in OTEL attributes
                                 break
-                        
+
                         # Check for session name
                         name_attrs = ['zeroeval.session.name', 'session.name', 'session_name']
                         for attr in name_attrs:
@@ -453,7 +481,7 @@ class Tracer:
                                 otel_session_name = str(otel_span.attributes[attr])
                                 # Found session name in OTEL attributes
                                 break
-                    
+
                     # If no session ID found, try to get it from baggage
                     if not otel_session_id and HAS_OTEL:
                         try:
@@ -465,7 +493,7 @@ class Tracer:
                                 # Found session ID in baggage
                         except Exception:
                             pass  # Could not extract baggage
-                    
+
                     # If still no session ID, check if we have a session for this trace ID
                     if not otel_session_id and otel_trace_id:
                         # Check if we've seen this trace before and have a session for it
@@ -474,39 +502,45 @@ class Tracer:
                             otel_session_id = existing_session['id']
                             otel_session_name = existing_session.get('name')
                             # Found existing session for this trace
-                    
+
                     # Log for debugging
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Found OTEL context - trace_id: {otel_trace_id}, parent_id: {otel_parent_id}")
-        
+
         # If is_new_trace is True, ignore parent span for creating a new trace
         if is_new_trace:
             parent_span = None
-        
+
         # --- decide final session id and name -------------------------------------
+        # Session IDs are normalized to UUIDs at creation time to ensure consistency
+        # between what get_current_span() returns and what's stored in the database.
         if session_id:
-            # Explicitly provided session ID takes precedence
-            final_session_id = session_id
-            final_session_name = session_name  # Use provided name or None
+            # Explicitly provided session ID takes precedence - normalize it
+            normalized_id, original_as_name = _normalize_session_id(session_id)
+            final_session_id = normalized_id
+            # Use provided name, or fall back to original string if it was normalized
+            final_session_name = session_name if session_name else original_as_name
         elif parent_span:
-            # Inherit from parent span
+            # Inherit from parent span (already normalized)
             final_session_id = parent_span.session_id
             final_session_name = parent_span.session_name  # Inherit parent's name
         elif otel_session_id:
-            # Use session ID from OTEL context if available
-            final_session_id = otel_session_id
-            final_session_name = otel_session_name or session_name  # Use OTEL name or provided name
-            # Using session from OTEL context
+            # Use session ID from OTEL context if available - normalize it
+            normalized_id, original_as_name = _normalize_session_id(otel_session_id)
+            final_session_id = normalized_id
+            final_session_name = otel_session_name or session_name or original_as_name
         else:
             # Create or reuse process-level session for root span without any context
             env_sid = os.environ.get("ZEROEVAL_SESSION_ID")
             if not env_sid:
                 env_sid = str(uuid.uuid4())
                 os.environ["ZEROEVAL_SESSION_ID"] = env_sid
-            final_session_id = env_sid
-            final_session_name = session_name or os.environ.get("ZEROEVAL_SESSION_NAME")
+            # Normalize env session ID as well
+            normalized_id, original_as_name = _normalize_session_id(env_sid)
+            final_session_id = normalized_id
+            final_session_name = session_name or os.environ.get("ZEROEVAL_SESSION_NAME") or original_as_name
         # -----------------------------------------------------------------
-        
+
         # Create new span
         span = Span(
             name=name,
@@ -520,16 +554,16 @@ class Tracer:
             session_tags=session_tags or {},
             ab_choices=parent_span.ab_choices.copy() if parent_span else []
         )
-        
+
         # Apply global tags baseline (do not override explicitly provided keys)
         if self._global_tags:
             for k, v in self._global_tags.items():
                 span.tags.setdefault(k, v)
                 span.trace_tags.setdefault(k, v)
                 span.session_tags.setdefault(k, v)
-        
+
         logger.info(f"Starting span: {span.name} (new_trace={is_new_trace})")
-        
+
         # Set trace ID based on context (priority: explicit > OTEL > parent > new)
         if trace_id:
             # Explicitly provided trace ID takes highest priority
@@ -543,7 +577,7 @@ class Tracer:
         elif parent_span and not is_new_trace:
             # Otherwise inherit from parent span
             span.trace_id = parent_span.trace_id
-        
+
         # ---------------------------------------------------------------
         # Inherit/bubble tags from parent span, trace-level, session-level
         # ---------------------------------------------------------------
@@ -561,10 +595,10 @@ class Tracer:
             inherited_sess = self._session_level_tags[span.session_id]
             span.session_tags.update(inherited_sess)
             span.tags.update(inherited_sess)
-        
+
         # Add this span to the stack for this thread
         self._active_spans_ctx.set(stack + [span])
-        
+
         # --- Reference counting for the trace -------------------
         trace_id = span.trace_id
         if trace_id not in self._traces:
@@ -579,7 +613,7 @@ class Tracer:
                     logger.debug(f"Trace {trace_id} not sampled (sampling_rate={self._sampling_rate})")
         # Increment ref count for every started span in the trace
         self._traces[trace_id].ref_count += 1
-        
+
         # Store trace-to-session mapping for OTEL context propagation
         if trace_id and span.session_id:
             self._trace_to_session[trace_id] = {
@@ -587,32 +621,32 @@ class Tracer:
                 'name': span.session_name
             }
             # Mapped trace to session for OTEL context propagation
-        
+
         return span
-    
+
     def end_span(self, span: Span) -> None:
         """Ends the span, adds it to the buffer, and triggers a flush if needed."""
         if not span.end_time:
             span.end()
-            
+
         if self.is_shutting_down() or span.name == "noop_span":
             return # Discard spans if shutting down or if it's a no-op span
 
         trace_id = span.trace_id
-        
+
         # Always remove from active spans stack (even for unsampled traces)
         stack = self._active_spans_ctx.get()
         if stack and stack[-1].span_id == span.span_id:
             self._active_spans_ctx.set(stack[:-1])
-        
+
         # Check sampling decision before cleanup
         is_sampled = True  # Default to sampled if trace not in registry
         if trace_id in self._traces:
             is_sampled = self._traces[trace_id].is_sampled
-            
+
             # Decrement reference count for trace cleanup
             self._traces[trace_id].ref_count -= 1
-            
+
             # Clean up trace if no more active spans
             if self._traces[trace_id].ref_count <= 0:
                 logger.debug(f"Cleaning up trace {trace_id} (ref_count=0, sampled={is_sampled})")
@@ -631,10 +665,10 @@ class Tracer:
             f"Ending span: {span.name} (status: {span.status}, duration: {duration:.2f}ms)"
             if duration else f"Ending span: {span.name} (status: {span.status})"
         )
-        
+
         with self._flush_lock:
             self._spans.append(span.to_dict())
-            
+
             # Trigger flush if buffer is full
             if len(self._spans) >= self._max_spans:
                 logger.info(f"Span buffer at max capacity ({self._max_spans}). Triggering flush.")
@@ -656,7 +690,7 @@ class Tracer:
             self._last_flush_time = time.time()
 
             logger.info(f"=== TRACER FLUSH: Starting flush of {len(spans_to_flush)} spans ===")
-            
+
             # Log span summaries being flushed
             logger.info("Spans being flushed:")
             for i, span in enumerate(spans_to_flush):
@@ -666,11 +700,11 @@ class Tracer:
                 logger.info(f"       - session_id: {span.get('session_id')}")
                 logger.info(f"       - status: {span.get('status')}")
                 logger.info(f"       - duration_ms: {span.get('duration_ms')}")
-            
+
             # Call writer and capture the result
             try:
                 result = self.writer.write(spans_to_flush)
-                
+
                 # Log the writer result
                 logger.info(f"=== TRACER FLUSH RESULT ===")
                 if result:
@@ -690,26 +724,26 @@ class Tracer:
                             logger.error(f"  - Error response: {result.get('response_body')}")
                 else:
                     logger.warning("Writer returned no result information")
-                    
+
                 logger.info(f"=== TRACER FLUSH COMPLETE ===")
-                
+
             except Exception as e:
                 logger.error(f"=== TRACER FLUSH EXCEPTION ===")
                 logger.error(f"Unexpected error during flush: {e}")
                 logger.error(f"Exception type: {type(e).__name__}")
                 logger.error(f"Exception details: {str(e)}", exc_info=True)
-            
+
         if in_lock:
             _do_flush()
         else:
             with self._flush_lock:
                 _do_flush()
-    
+
     def _flush_periodically(self) -> None:
         """Background thread that flushes spans based on time interval."""
         while not self.is_shutting_down():
             time.sleep(self._flush_interval)
-            
+
             # Check if it's time to flush based on interval
             with self._flush_lock:
                 is_buffer_non_empty = bool(self._spans)
@@ -744,12 +778,12 @@ class Tracer:
         """Attach *tags* to every span within a session."""
         if not tags:
             return
-        
+
         # Filter out None values from tags
         filtered_tags = {k: v for k, v in tags.items() if v is not None}
         if not filtered_tags:
             return
-            
+
         self._session_level_tags.setdefault(session_id, {}).update(filtered_tags)
         # Update active spans only.
         stack = self._active_spans_ctx.get()
