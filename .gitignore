@@ -22,3 +22,4 @@ examples/
 
 # Example files with hardcoded credentials
 examples_v2/tracing/html_page_generator.py
+examples_v2/judges/

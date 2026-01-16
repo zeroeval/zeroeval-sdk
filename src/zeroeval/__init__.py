@@ -280,6 +280,67 @@ def send_feedback(
     )
 
 
+def get_behavior_evaluations(
+    project_id: str,
+    judge_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    evaluation_result: Optional[bool] = None,
+    feedback_state: Optional[str] = None,
+) -> dict:
+    """
+    Fetch paginated judge evaluations for a specific judge.
+
+    Args:
+        project_id: The project UUID.
+        judge_id: The judge (signal automation) UUID.
+        limit: Max results per page (1-500, default 100).
+        offset: Pagination offset (default 0).
+        start_date: ISO datetime string to filter evaluations created after.
+        end_date: ISO datetime string to filter evaluations created before.
+        evaluation_result: Filter by True (positive) or False (negative).
+        feedback_state: Filter by 'with_user_feedback' or 'without_user_feedback'.
+
+    Returns:
+        Dict with keys: evaluations (list), total, offset, limit.
+    """
+    client = _ensure_prompt_client()
+    return client.get_behavior_evaluations(
+        project_id=project_id,
+        judge_id=judge_id,
+        limit=limit,
+        offset=offset,
+        start_date=start_date,
+        end_date=end_date,
+        evaluation_result=evaluation_result,
+        feedback_state=feedback_state,
+    )
+
+
+def get_span_evaluations(
+    project_id: str,
+    span_id: str,
+) -> dict:
+    """
+    Fetch all judge evaluations for a specific span.
+
+    Args:
+        project_id: The project UUID.
+        span_id: The span UUID.
+
+    Returns:
+        Dict with keys: span_id, evaluations (list of judge evaluation objects).
+    """
+    client = _ensure_prompt_client()
+    return client.get_span_evaluations(
+        project_id=project_id,
+        span_id=span_id,
+    )
+
+
 # Define what's exported
 __all__ = [
     # Core functionality
@@ -313,7 +374,10 @@ __all__ = [
     # Completion logging and feedback
     "log_completion",
     "send_feedback",
+    # Judge evaluations
+    "get_behavior_evaluations",
+    "get_span_evaluations",
 ]
 
 # Version info
-__version__ = "0.6.119"
+__version__ = "0.6.120"

@@ -467,4 +467,84 @@ class ZeroEval:
             )
         return resp.json()
 
+    # ---- Judge Evaluations API ----
+
+    def get_behavior_evaluations(
+        self,
+        project_id: str,
+        judge_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        evaluation_result: Optional[bool] = None,
+        feedback_state: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch paginated judge evaluations for a specific judge.
+
+        Args:
+            project_id: The project UUID.
+            judge_id: The judge (signal automation) UUID.
+            limit: Max results per page (1-500, default 100).
+            offset: Pagination offset (default 0).
+            start_date: ISO datetime string to filter evaluations created after.
+            end_date: ISO datetime string to filter evaluations created before.
+            evaluation_result: Filter by True (positive) or False (negative).
+            feedback_state: Filter by 'with_user_feedback' or 'without_user_feedback'.
+
+        Returns:
+            Dict with keys: evaluations (list), total, offset, limit.
+        """
+        url = f"{self._base_url}/projects/{project_id}/judges/{judge_id}/evaluations"
+        params: Dict[str, Any] = {"limit": limit, "offset": offset}
+        if start_date is not None:
+            params["start_date"] = start_date
+        if end_date is not None:
+            params["end_date"] = end_date
+        if evaluation_result is not None:
+            params["evaluation_result"] = str(evaluation_result).lower()
+        if feedback_state is not None:
+            params["feedback_state"] = feedback_state
+
+        try:
+            resp = requests.get(url, headers=self._headers(), params=params, timeout=self._timeout)
+        except requests.RequestException as e:
+            raise PromptRequestError(str(e), status=None)
+
+        if resp.status_code >= 400:
+            raise PromptRequestError(
+                f"get_behavior_evaluations failed: {resp.text}", status=resp.status_code
+            )
+        return resp.json()
+
+    def get_span_evaluations(
+        self,
+        project_id: str,
+        span_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Fetch all judge evaluations for a specific span.
+
+        Args:
+            project_id: The project UUID.
+            span_id: The span UUID.
+
+        Returns:
+            Dict with keys: span_id, evaluations (list of judge evaluation objects).
+        """
+        url = f"{self._base_url}/projects/{project_id}/spans/{span_id}/evaluations"
+
+        try:
+            resp = requests.get(url, headers=self._headers(), timeout=self._timeout)
+        except requests.RequestException as e:
+            raise PromptRequestError(str(e), status=None)
+
+        if resp.status_code >= 400:
+            raise PromptRequestError(
+                f"get_span_evaluations failed: {resp.text}", status=resp.status_code
+            )
+        return resp.json()
+
 

@@ -41,7 +41,11 @@ class LangGraphIntegration(Integration):
         """
         logger = logging.getLogger(__name__)
         
-        from langgraph.graph.state import StateGraph  # type: ignore
+        try:
+            from langgraph.graph.state import StateGraph  # type: ignore
+        except ImportError as e:
+            logger.debug(f"[LangGraph] Could not import StateGraph: {e}")
+            return  # Can't proceed without StateGraph
         
         # Graph class is optional - deprecated/moved in newer LangGraph versions
         Graph = None
@@ -75,48 +79,69 @@ class LangGraphIntegration(Integration):
             logger.error(f"[LangGraph] Failed to patch StateGraph.compile: {e}")
         
         # Try to patch node execution if available
-        try:
-            from langgraph.pregel import Pregel  # type: ignore
-            logger.debug("[LangGraph] Pregel module imported")
-            
-            # List all Pregel methods for debugging
-            pregel_methods = [attr for attr in dir(Pregel) if not attr.startswith('__')]
-            logger.debug(f"[LangGraph] Pregel methods available: {pregel_methods}")
-            
-            # Patch the internal node execution method
-            if hasattr(Pregel, "_run_node"):
-                self._patch_method(Pregel, "_run_node", self._wrap_node_execution)
-                logger.debug("[LangGraph] Patched Pregel._run_node")
-            else:
-                logger.debug("[LangGraph] Pregel._run_node not found")
-                
-            if hasattr(Pregel, "_arun_node"):
-                self._patch_method(Pregel, "_arun_node", self._wrap_node_execution)
-                logger.debug("[LangGraph] Patched Pregel._arun_node")
-            else:
-                logger.debug("[LangGraph] Pregel._arun_node not found")
-                
-            # Try other potential node execution methods
-            for method_name in ["run", "arun", "_exec", "_aexec", "execute", "aexecute"]:
-                if hasattr(Pregel, method_name):
-                    logger.debug(f"[LangGraph] Found Pregel.{method_name} - considering for patching")
-                    
-        except ImportError as e:
-            logger.warning(f"[LangGraph] Could not import Pregel: {e}")
-            pass  # Older versions might not have these internals
+        # NOTE: This is optional and may fail on newer LangGraph versions where 
+        # the Pregel internals have changed. The core compile() patching above
+        # is sufficient for graph-level tracing.
+        self._try_patch_pregel(logger)
             
         # Try to patch checkpointing if available
+        # NOTE: This is optional - checkpointing may not be used or may have
+        # different APIs in different LangGraph versions
         try:
             from langgraph.checkpoint.base import BaseCheckpointSaver  # type: ignore
             if hasattr(BaseCheckpointSaver, "put"):
-                self._patch_method(BaseCheckpointSaver, "put", self._wrap_checkpoint_put)
-                logger.debug("[LangGraph] Patched BaseCheckpointSaver.put")
+                try:
+                    self._patch_method(BaseCheckpointSaver, "put", self._wrap_checkpoint_put)
+                    logger.debug("[LangGraph] Patched BaseCheckpointSaver.put")
+                except Exception as e:
+                    logger.debug(f"[LangGraph] Could not patch checkpoint put: {e}")
             if hasattr(BaseCheckpointSaver, "get"):
-                self._patch_method(BaseCheckpointSaver, "get", self._wrap_checkpoint_get)
-                logger.debug("[LangGraph] Patched BaseCheckpointSaver.get")
+                try:
+                    self._patch_method(BaseCheckpointSaver, "get", self._wrap_checkpoint_get)
+                    logger.debug("[LangGraph] Patched BaseCheckpointSaver.get")
+                except Exception as e:
+                    logger.debug(f"[LangGraph] Could not patch checkpoint get: {e}")
         except ImportError:
-            logger.warning("[LangGraph] Could not import checkpoint module")
-            pass  # Checkpointing might not be used
+            logger.debug("[LangGraph] Checkpoint module not available")
+        except Exception as e:
+            logger.debug(f"[LangGraph] Checkpoint patching failed (non-critical): {e}")
+
+    # ------------------------------------------------------------------
+    # Internal – Pregel patching (optional, for node-level tracing)
+    # ------------------------------------------------------------------
+    def _try_patch_pregel(self, logger) -> None:
+        """Attempt to patch Pregel internals for node-level tracing.
+        
+        This is optional and may fail on newer LangGraph versions where
+        the Pregel internals have changed. Failures are logged but don't
+        prevent the integration from working at the graph level.
+        """
+        try:
+            from langgraph.pregel import Pregel  # type: ignore
+            logger.debug("[LangGraph] Pregel module imported")
+        except ImportError as e:
+            logger.debug(f"[LangGraph] Could not import Pregel: {e}")
+            return
+        except Exception as e:
+            logger.debug(f"[LangGraph] Pregel import failed: {e}")
+            return
+        
+        # Try to list Pregel methods for debugging (may fail on some versions)
+        try:
+            pregel_methods = [attr for attr in dir(Pregel) if not attr.startswith('__')]
+            logger.debug(f"[LangGraph] Pregel methods available: {pregel_methods}")
+        except Exception as e:
+            logger.debug(f"[LangGraph] Could not inspect Pregel: {e}")
+            return
+        
+        # Patch node execution methods if they exist
+        for method_name in ["_run_node", "_arun_node"]:
+            try:
+                if hasattr(Pregel, method_name):
+                    self._patch_method(Pregel, method_name, self._wrap_node_execution)
+                    logger.debug(f"[LangGraph] Patched Pregel.{method_name}")
+            except Exception as e:
+                logger.debug(f"[LangGraph] Could not patch Pregel.{method_name}: {e}")
 
     # ------------------------------------------------------------------
     # Internal – compile wrapper
