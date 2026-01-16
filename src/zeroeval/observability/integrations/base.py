@@ -11,7 +11,9 @@ class Integration(ABC):
     
     def __init__(self, tracer):
         self.tracer = tracer
-        self._original_functions: dict[str, Callable] = {}
+        # Store originals by object identity so teardown can reliably restore,
+        # even for dynamically created classes (e.g. LangChain Runnables).
+        self._original_functions: dict[tuple[Any, str], Callable] = {}
         self._setup_attempted = False
         self._setup_successful = False
         self._setup_error = None
@@ -53,12 +55,10 @@ class Integration(ABC):
 
     def teardown(self) -> None:
         """Teardown the integration by removing all patches."""
-        for key, original_func in self._original_functions.items():
-            obj_name, method_name = key.rsplit('.', 1)
+        for (target_object, method_name), original_func in list(self._original_functions.items()):
             try:
-                obj = self._get_object_by_path(obj_name)
-                setattr(obj, method_name, original_func)
-            except:
+                setattr(target_object, method_name, original_func)
+            except Exception:
                 pass
         self._original_functions.clear()
 
@@ -70,13 +70,7 @@ class Integration(ABC):
         if getattr(original, "__ze_patched__", False):
             return
 
-        # Identify the patched object name in a readable / unique way.
-        if isinstance(target_object, type):
-            obj_name = target_object.__name__  # class name
-        else:
-            obj_name = target_object.__class__.__name__  # instance name
-
-        self._original_functions[f"{obj_name}.{method_name}"] = original
+        self._original_functions[(target_object, method_name)] = original
 
         patched = wrapper(original)
         # Mark so we can recognise it later and avoid double wrapping
@@ -86,7 +80,7 @@ class Integration(ABC):
 
     def _unpatch_method(self, target_object: Any, method_name: str) -> None:
         """Helper method to restore an object's original method."""
-        key = f"{target_object.__class__.__name__}.{method_name}"
+        key = (target_object, method_name)
         if key in self._original_functions:
             setattr(target_object, method_name, self._original_functions[key])
             del self._original_functions[key]

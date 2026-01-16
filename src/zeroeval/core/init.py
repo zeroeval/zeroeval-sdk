@@ -168,6 +168,10 @@ def init(
         disabled_actual = all_integrations - enabled_actual
         os.environ["ZEROEVAL_DISABLED_INTEGRATIONS"] = ",".join(disabled_actual)
 
+        # Also configure the tracer directly so reinitialize_integrations() cannot
+        # accidentally re-add disabled integrations in lazy-init / early-init flows.
+        tracer.configure(integrations={name: False for name in disabled_actual})
+
     # Set disabled integrations in environment variable for tracer to pick up
     elif disabled_integrations:
         # Convert user-friendly names to actual class names
@@ -177,6 +181,10 @@ def init(
             actual_names.append(actual_name)
 
         os.environ["ZEROEVAL_DISABLED_INTEGRATIONS"] = ",".join(actual_names)
+
+        # Also configure the tracer directly so reinitialize_integrations() cannot
+        # accidentally re-add disabled integrations in lazy-init / early-init flows.
+        tracer.configure(integrations={name: False for name in actual_names})
 
     # Configure logging
     logger = logging.getLogger("zeroeval")

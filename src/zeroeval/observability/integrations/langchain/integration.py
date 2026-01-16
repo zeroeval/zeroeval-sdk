@@ -46,6 +46,9 @@ class LangChainIntegration(Integration):
         from langchain_core.runnables.base import (
             Runnable,  # pylint: disable=import-error
         )
+        # Track direct patches (not done via _patch_method) so teardown can restore.
+        if not hasattr(self, "_direct_patches"):
+            self._direct_patches = {}
 
         # Gather the base class and *all* subclasses so that overrides on custom
         # Runnables (e.g. RunnableSequence) are instrumented as well.
@@ -134,6 +137,8 @@ class LangChainIntegration(Integration):
         # Avoid double-hooking if someone else already replaced it
         if getattr(Runnable.__init_subclass__, "__ze_patched__", False) is False:
             _ze_init_subclass.__ze_patched__ = True
+            # Store original so we can undo on teardown
+            self._direct_patches[(Runnable, "__init_subclass__")] = original_init_subclass
             Runnable.__init_subclass__ = _ze_init_subclass
 
         # ------------------------------------------------------------------
@@ -416,4 +421,24 @@ class LangChainIntegration(Integration):
 
         if getattr(base_cls.__init_subclass__, "__ze_patched__", False) is False:
             _ze_init_subclass.__ze_patched__ = True
-            base_cls.__init_subclass__ = _ze_init_subclass 
+            # Store original so we can undo on teardown
+            if not hasattr(self, "_direct_patches"):
+                self._direct_patches = {}
+            self._direct_patches[(base_cls, "__init_subclass__")] = original_init_subclass
+            base_cls.__init_subclass__ = _ze_init_subclass
+
+    def teardown(self) -> None:
+        # Restore any direct patches (e.g. __init_subclass__) first
+        direct = getattr(self, "_direct_patches", None) or {}
+        for (target_object, attr_name), original in list(direct.items()):
+            try:
+                setattr(target_object, attr_name, original)
+            except Exception:
+                pass
+        try:
+            direct.clear()
+        except Exception:
+            pass
+
+        # Then restore standard method patches
+        super().teardown()

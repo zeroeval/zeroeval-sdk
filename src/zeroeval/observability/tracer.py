@@ -184,6 +184,18 @@ class Tracer:
                     self._integrations_config[name] = False
                 logger.info(f"Integrations disabled via environment variable: {disabled_names}")
 
+                # If integrations were already set up before init() (common in long-running apps),
+                # proactively tear down anything that is now disabled so patches stop firing.
+                for integration_name, integration in list(self._integrations.items()):
+                    if self._integrations_config.get(integration_name) is False:
+                        try:
+                            logger.info(f"Tearing down disabled integration: {integration_name}")
+                            integration.teardown()
+                        except Exception as e:
+                            logger.error(f"Failed to teardown disabled integration {integration_name}: {e}")
+                        finally:
+                            self._integrations.pop(integration_name, None)
+
             self._setup_available_integrations()
             self._integrations_initialized = True
 
@@ -212,6 +224,8 @@ class Tracer:
         ]
 
         logger.info(f"Checking for available integrations: {[i.__name__ for i in integration_classes]}")
+        logger.debug(f"Disabled integrations config: {self._integrations_config}")
+
         # Setup each available integration
         for integration_class in integration_classes:
             integration_name = integration_class.__name__
@@ -248,6 +262,9 @@ class Tracer:
         """Reinitialize integrations. Useful after init() sets up logging."""
         logger.info("Reinitializing integrations...")
 
+        # Mark as not initialized during the transition to avoid races / double-setup.
+        self._integrations_initialized = False
+
         # Properly teardown existing integrations before clearing
         for integration_name, integration in self._integrations.items():
             try:
@@ -257,7 +274,20 @@ class Tracer:
                 logger.error(f"Failed to teardown integration {integration_name}: {e}")
 
         self._integrations.clear()
+
+        # Re-read disabled integrations from environment in case they were set by init()
+        # This is critical: init() sets the env var AFTER tracer._initialize() runs,
+        # so we must re-read it here before setting up integrations again.
+        disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
+        if disabled_env:
+            disabled_names = {name.strip() for name in disabled_env.split(',') if name.strip()}
+            for name in disabled_names:
+                self._integrations_config[name] = False
+            logger.info(f"Integrations disabled via environment variable: {disabled_names}")
+
         self._setup_available_integrations()
+        # After a successful reinitialize, integrations are considered initialized.
+        self._integrations_initialized = True
 
     def _print_user_friendly_error(self, integration_name: str, error: Exception) -> None:
         """Print user-friendly error messages for common integration issues."""
