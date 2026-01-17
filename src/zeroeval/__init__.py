@@ -98,10 +98,10 @@ def prompt(
             from_ = kwargs.pop("from")
         if kwargs:
             raise TypeError("Unexpected keyword arguments: " + ", ".join(kwargs.keys()))
-    
+
     if content is None and from_ is None:
         raise ValueError("Must provide either 'content' or 'from'")
-    
+
     # Validate that explicit requires content
     if from_ == "explicit" and content is None:
         raise ValueError("from='explicit' requires 'content' to be provided")
@@ -143,8 +143,8 @@ def prompt(
         except (PromptNotFoundError, PromptRequestError):
             # No latest version exists, ensure the provided content as a version
             prompt_obj = client.ensure_task_prompt_version(
-                task_name=name, 
-                content=content, 
+                task_name=name,
+                content=content,
                 content_hash=content_hash
             )
 
@@ -238,7 +238,7 @@ def log_completion(
 ):
     """
     Log a completion for a specific prompt.
-    
+
     This automatically tracks prompt usage without requiring manual wrapping.
     """
     client = _ensure_prompt_client()
@@ -387,4 +387,4 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "0.6.120"
+__version__ = "0.6.128"
