@@ -14,8 +14,8 @@ class LangGraphIntegration(Integration):
     The integration instruments compiled graphs (``CompiledGraph`` and
     ``CompiledStateGraph`` instances) produced by ``graph.compile()`` so that
     each invocation (``invoke``/``ainvoke``) and streaming run
-    (``stream``/``astream``) is wrapped in a ZeroEval span.  
-    
+    (``stream``/``astream``) is wrapped in a ZeroEval span.
+
     Additionally, this integration traces:
     - Individual node executions
     - Edge transitions between nodes
@@ -40,13 +40,15 @@ class LangGraphIntegration(Integration):
         returned compiled graph instances. Also patch node execution and edges.
         """
         logger = logging.getLogger(__name__)
-        
+
         try:
             from langgraph.graph.state import StateGraph  # type: ignore
         except ImportError as e:
-            logger.debug(f"[LangGraph] Could not import StateGraph: {e}")
-            return  # Can't proceed without StateGraph
-        
+            # Can't proceed without StateGraph. Raise so safe_setup() correctly
+            # treats this as a setup failure (and we don't report a "successful"
+            # integration that applied no patches).
+            raise ImportError(f"LangGraph integration could not import StateGraph: {e}") from e
+
         # Graph class is optional - deprecated/moved in newer LangGraph versions
         Graph = None
         try:
@@ -56,14 +58,14 @@ class LangGraphIntegration(Integration):
                 from langgraph.graph import Graph  # type: ignore
             except ImportError:
                 logger.debug("[LangGraph] Graph class not available (using StateGraph only)")
-        
+
         logger.debug("[LangGraph] Successfully imported StateGraph")
-        
+
         # Debug: Check what we're about to patch
         if Graph:
             logger.debug(f"[LangGraph] Graph.compile exists: {hasattr(Graph, 'compile')}")
         logger.debug(f"[LangGraph] StateGraph.compile exists: {hasattr(StateGraph, 'compile')}")
-        
+
         # Patch compile methods - StateGraph is primary, Graph is optional for older versions
         if Graph:
             try:
@@ -71,19 +73,21 @@ class LangGraphIntegration(Integration):
                 logger.debug("[LangGraph] Successfully patched Graph.compile")
             except Exception as e:
                 logger.debug(f"[LangGraph] Could not patch Graph.compile: {e}")
-            
+
         try:
             self._patch_method(StateGraph, "compile", self._wrap_compile)
             logger.debug("[LangGraph] Successfully patched StateGraph.compile")
         except Exception as e:
-            logger.error(f"[LangGraph] Failed to patch StateGraph.compile: {e}")
-        
+            # StateGraph.compile patching is required for the integration to work.
+            # Raise so safe_setup() marks the integration as failed.
+            raise RuntimeError(f"LangGraph integration failed to patch StateGraph.compile: {e}") from e
+
         # Try to patch node execution if available
-        # NOTE: This is optional and may fail on newer LangGraph versions where 
+        # NOTE: This is optional and may fail on newer LangGraph versions where
         # the Pregel internals have changed. The core compile() patching above
         # is sufficient for graph-level tracing.
         self._try_patch_pregel(logger)
-            
+
         # Try to patch checkpointing if available
         # NOTE: This is optional - checkpointing may not be used or may have
         # different APIs in different LangGraph versions
@@ -111,7 +115,7 @@ class LangGraphIntegration(Integration):
     # ------------------------------------------------------------------
     def _try_patch_pregel(self, logger) -> None:
         """Attempt to patch Pregel internals for node-level tracing.
-        
+
         This is optional and may fail on newer LangGraph versions where
         the Pregel internals have changed. Failures are logged but don't
         prevent the integration from working at the graph level.
@@ -125,7 +129,7 @@ class LangGraphIntegration(Integration):
         except Exception as e:
             logger.debug(f"[LangGraph] Pregel import failed: {e}")
             return
-        
+
         # Try to list Pregel methods for debugging (may fail on some versions)
         try:
             pregel_methods = [attr for attr in dir(Pregel) if not attr.startswith('__')]
@@ -133,7 +137,7 @@ class LangGraphIntegration(Integration):
         except Exception as e:
             logger.debug(f"[LangGraph] Could not inspect Pregel: {e}")
             return
-        
+
         # Patch node execution methods if they exist
         for method_name in ["_run_node", "_arun_node"]:
             try:
@@ -167,14 +171,14 @@ class LangGraphIntegration(Integration):
             # IMPORTANT: We need to patch AFTER the object is created because
             # LangChain integration might also patch these methods.
             # By patching at the instance level, we override class-level patches.
-            
+
             # Get the actual methods (which might already be wrapped by LangChain)
             for method_name in ("invoke", "ainvoke", "stream", "astream"):
                 if hasattr(compiled_graph, method_name):
                     try:
                         # Get the method (might be wrapped by LangChain already)
                         method = getattr(compiled_graph, method_name)
-                        
+
                         # If it's already wrapped by LangChain, we need to get the original
                         # and wrap it with our wrapper that creates langgraph.* spans
                         if hasattr(method, '__wrapped__'):
@@ -186,10 +190,10 @@ class LangGraphIntegration(Integration):
                         else:
                             # Use it as-is
                             original_method = method
-                        
+
                         # Create our wrapper with the correct method name
                         wrapper_func = self._build_graph_wrapper(original_method, method_name)
-                        
+
                         # Apply it to the instance
                         if hasattr(method, '__self__'):
                             # It's a bound method, rebind with our wrapper
@@ -198,7 +202,7 @@ class LangGraphIntegration(Integration):
                         else:
                             # Just set it
                             setattr(compiled_graph, method_name, wrapper_func)
-                            
+
                         logger.debug(f"[LangGraph] Successfully patched {method_name} on compiled graph instance")
                     except Exception as e:
                         logger.error(f"[LangGraph] Failed to patch {method_name} on instance: {e}")
@@ -220,14 +224,14 @@ class LangGraphIntegration(Integration):
             "conditional_edges": [],
             "entry_point": None,
         }
-        
+
         try:
             # Extract nodes
             if hasattr(graph_self, "nodes"):
                 metadata["nodes"] = list(graph_self.nodes.keys())
             elif hasattr(graph_self, "_nodes"):
                 metadata["nodes"] = list(graph_self._nodes.keys())
-                
+
             # Extract edges
             if hasattr(graph_self, "edges"):
                 for source, targets in graph_self.edges.items():
@@ -241,7 +245,7 @@ class LangGraphIntegration(Integration):
                 for edge_info in graph_self._edges:
                     if isinstance(edge_info, tuple) and len(edge_info) >= 2:
                         metadata["edges"].append({"from": edge_info[0], "to": edge_info[1]})
-                        
+
             # Extract conditional edges
             if hasattr(graph_self, "conditional_edges"):
                 for source, condition_info in graph_self.conditional_edges.items():
@@ -249,17 +253,17 @@ class LangGraphIntegration(Integration):
                         "from": source,
                         "condition": str(condition_info) if condition_info else "unknown"
                     })
-                    
+
             # Extract entry point
             if hasattr(graph_self, "entry_point"):
                 metadata["entry_point"] = graph_self.entry_point
             elif hasattr(compiled_graph, "input"):
                 metadata["entry_point"] = str(compiled_graph.input)
-                
+
         except Exception:
             # Best effort extraction
             pass
-            
+
         return metadata
 
     # ------------------------------------------------------------------
@@ -268,12 +272,12 @@ class LangGraphIntegration(Integration):
     def _wrap_node_execution(self, original: Callable) -> Callable:
         """Wrap individual node execution to create spans for each node."""
         is_async = inspect.iscoroutinefunction(original)
-        
+
         if is_async:
             async def async_wrapper(pregel_self, node_name: str, *args: Any, **kwargs: Any):  # type: ignore
                 # Get parent graph span if available
                 parent_span = getattr(self._thread_local, 'current_graph_span', None)
-                
+
                 span = self.tracer.start_span(
                     name=f"langgraph.node.{node_name}",
                     attributes={
@@ -284,15 +288,15 @@ class LangGraphIntegration(Integration):
                     },
                     tags={"integration": "langgraph"}
                 )
-                
+
                 if parent_span:
                     span.parent_id = parent_span.span_id
                     span.trace_id = parent_span.trace_id
-                
+
                 start_time = time.time()
                 try:
                     result = await original(pregel_self, node_name, *args, **kwargs)
-                    
+
                     # Try to capture state changes
                     try:
                         if len(args) > 0:
@@ -300,7 +304,7 @@ class LangGraphIntegration(Integration):
                             span.set_io(input_data=input_state, output_data=str(result)[:500])
                     except Exception:
                         pass
-                        
+
                     elapsed = time.time() - start_time
                     span.attributes["latency"] = round(elapsed, 4)
                     self.tracer.end_span(span)
@@ -313,32 +317,32 @@ class LangGraphIntegration(Integration):
                     )
                     self.tracer.end_span(span)
                     raise
-                    
+
             return async_wrapper
         else:
             def sync_wrapper(pregel_self, node_name: str, *args: Any, **kwargs: Any):  # type: ignore
                 # Get parent graph span if available
                 parent_span = getattr(self._thread_local, 'current_graph_span', None)
-                
+
                 span = self.tracer.start_span(
                     name=f"langgraph.node.{node_name}",
                     attributes={
                         "service.name": "langgraph",
-                        "kind": "node", 
+                        "kind": "node",
                         "node_name": node_name,
                         "graph_id": getattr(pregel_self, "graph_id", None),
                     },
                     tags={"integration": "langgraph"}
                 )
-                
+
                 if parent_span:
                     span.parent_id = parent_span.span_id
                     span.trace_id = parent_span.trace_id
-                
+
                 start_time = time.time()
                 try:
                     result = original(pregel_self, node_name, *args, **kwargs)
-                    
+
                     # Try to capture state changes
                     try:
                         if len(args) > 0:
@@ -346,7 +350,7 @@ class LangGraphIntegration(Integration):
                             span.set_io(input_data=input_state, output_data=str(result)[:500])
                     except Exception:
                         pass
-                        
+
                     elapsed = time.time() - start_time
                     span.attributes["latency"] = round(elapsed, 4)
                     self.tracer.end_span(span)
@@ -359,7 +363,7 @@ class LangGraphIntegration(Integration):
                     )
                     self.tracer.end_span(span)
                     raise
-                    
+
             return sync_wrapper
 
     # ------------------------------------------------------------------
@@ -378,7 +382,7 @@ class LangGraphIntegration(Integration):
                 },
                 tags={"integration": "langgraph"}
             )
-            
+
             start_time = time.time()
             try:
                 result = original(checkpoint_self, *args, **kwargs)
@@ -394,9 +398,9 @@ class LangGraphIntegration(Integration):
                 )
                 self.tracer.end_span(span)
                 raise
-                
+
         return wrapper
-        
+
     def _wrap_checkpoint_get(self, original: Callable) -> Callable:
         """Wrap checkpoint load operations."""
         @wraps(original)
@@ -410,7 +414,7 @@ class LangGraphIntegration(Integration):
                 },
                 tags={"integration": "langgraph"}
             )
-            
+
             start_time = time.time()
             try:
                 result = original(checkpoint_self, *args, **kwargs)
@@ -426,7 +430,7 @@ class LangGraphIntegration(Integration):
                 )
                 self.tracer.end_span(span)
                 raise
-                
+
         return wrapper
 
     # ------------------------------------------------------------------
@@ -455,10 +459,10 @@ class LangGraphIntegration(Integration):
             async def async_wrapper(compiled_self, *args: Any, **kwargs: Any):  # type: ignore  # noqa: ANN001
                 start_time = time.time()
                 span = self._start_span(compiled_self, method_name)
-                
+
                 # Store current graph span in thread-local for node tracing
                 self._thread_local.current_graph_span = span
-                
+
                 try:
                     result = await original(compiled_self, *args, **kwargs)
 
@@ -485,10 +489,10 @@ class LangGraphIntegration(Integration):
         def sync_wrapper(compiled_self, *args: Any, **kwargs: Any):  # type: ignore  # noqa: ANN001
             start_time = time.time()
             span = self._start_span(compiled_self, method_name)
-            
+
             # Store current graph span in thread-local for node tracing
             self._thread_local.current_graph_span = span
-            
+
             try:
                 result = original(compiled_self, *args, **kwargs)
 
@@ -525,14 +529,14 @@ class LangGraphIntegration(Integration):
             if hasattr(compiled_self, attr):
                 attributes[attr] = getattr(compiled_self, attr)
                 break
-                
+
         # Add graph metadata if available
         if hasattr(compiled_self, "_ze_graph_metadata"):
             metadata = compiled_self._ze_graph_metadata
             attributes["node_count"] = len(metadata.get("nodes", []))
             attributes["edge_count"] = len(metadata.get("edges", []))
             attributes["has_conditionals"] = len(metadata.get("conditional_edges", [])) > 0
-            
+
             # Include node names for better visibility
             if metadata.get("nodes"):
                 attributes["nodes"] = ",".join(metadata["nodes"][:10])  # Limit to first 10
@@ -547,7 +551,7 @@ class LangGraphIntegration(Integration):
             # Try to extract more meaningful I/O data
             input_data = None
             output_data = None
-            
+
             if args and len(args) > 0:
                 # First arg is usually the state/input
                 input_data = str(args[0])[:1000]  # Limit size
@@ -557,7 +561,7 @@ class LangGraphIntegration(Integration):
                     if key in kwargs:
                         input_data = str(kwargs[key])[:1000]
                         break
-                        
+
             if output:
                 # Try to extract output data
                 if isinstance(output, dict):
@@ -570,7 +574,7 @@ class LangGraphIntegration(Integration):
                         output_data = str(output)[:1000]
                 else:
                     output_data = str(output)[:1000]
-                    
+
             span.set_io(input_data=input_data or "<no input>", output_data=output_data or "<no output>")
         except Exception:
             span.set_io(input_data="<unserialisable>", output_data="<unserialisable>")
@@ -599,7 +603,7 @@ class LangGraphIntegration(Integration):
                     if first_chunk_time is None:
                         first_chunk_time = time.time()
                         span.attributes["time_to_first_chunk"] = round(first_chunk_time - start_time, 4)
-                        
+
                     # Try to extract node information from streaming chunks
                     try:
                         if isinstance(chunk, dict):
@@ -610,7 +614,7 @@ class LangGraphIntegration(Integration):
                                         node_sequence.append(key)
                     except Exception:
                         pass
-                        
+
                     yield chunk
             except Exception as exc:
                 self._record_error(span, exc)
@@ -634,7 +638,7 @@ class LangGraphIntegration(Integration):
                     if first_chunk_time is None:
                         first_chunk_time = time.time()
                         span.attributes["time_to_first_chunk"] = round(first_chunk_time - start_time, 4)
-                        
+
                     # Try to extract node information from streaming chunks
                     try:
                         if isinstance(chunk, dict):
@@ -645,7 +649,7 @@ class LangGraphIntegration(Integration):
                                         node_sequence.append(key)
                     except Exception:
                         pass
-                        
+
                     yield chunk
             except Exception as exc:
                 self._record_error(span, exc)
@@ -656,4 +660,4 @@ class LangGraphIntegration(Integration):
                     span.attributes["node_sequence"] = ",".join(node_sequence)
                 self._finalise_span(span, start_time, None, None, "<stream>")
 
-        return _async_generator() 
+        return _async_generator()

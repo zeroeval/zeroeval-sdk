@@ -31,7 +31,12 @@ from .types import Prompt
 from .client import ZeroEval as PromptClient
 from .utils.hash import sha256_hex
 import re
+import sys as _sys
 from .errors import PromptNotFoundError, PromptRequestError
+
+# Backwards-compatible alias so users/tests can do `from zeroeval import ze`
+# and then call `ze.init(...)`, `ze.tracer`, etc.
+ze = _sys.modules[__name__]
 
 # Create convenience functions that match the expected API
 def start_span(name: str, **kwargs):
@@ -374,6 +379,8 @@ __all__ = [
     # Completion logging and feedback
     "log_completion",
     "send_feedback",
+    # Module alias
+    "ze",
     # Judge evaluations
     "get_behavior_evaluations",
     "get_span_evaluations",
