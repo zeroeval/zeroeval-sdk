@@ -20,13 +20,17 @@ class Integration(ABC):
 
     @classmethod
     def is_available(cls) -> bool:
-        """Check if the required package is installed."""
+        """Check if the required package is installed and can be imported."""
         if cls.PACKAGE_NAME is None:
             return False
         try:
             importlib.import_module(cls.PACKAGE_NAME)
             return True
         except ImportError:
+            return False
+        except Exception:
+            # Catch any other errors that might occur during import
+            # (e.g., incompatible versions, missing dependencies)
             return False
 
     @abstractmethod

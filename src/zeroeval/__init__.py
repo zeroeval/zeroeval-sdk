@@ -31,7 +31,12 @@ from .types import Prompt
 from .client import ZeroEval as PromptClient
 from .utils.hash import sha256_hex
 import re
+import sys as _sys
 from .errors import PromptNotFoundError, PromptRequestError
+
+# Backwards-compatible alias so users/tests can do `from zeroeval import ze`
+# and then call `ze.init(...)`, `ze.tracer`, etc.
+ze = _sys.modules[__name__]
 
 # Create convenience functions that match the expected API
 def start_span(name: str, **kwargs):
@@ -93,10 +98,10 @@ def prompt(
             from_ = kwargs.pop("from")
         if kwargs:
             raise TypeError("Unexpected keyword arguments: " + ", ".join(kwargs.keys()))
-    
+
     if content is None and from_ is None:
         raise ValueError("Must provide either 'content' or 'from'")
-    
+
     # Validate that explicit requires content
     if from_ == "explicit" and content is None:
         raise ValueError("from='explicit' requires 'content' to be provided")
@@ -138,8 +143,8 @@ def prompt(
         except (PromptNotFoundError, PromptRequestError):
             # No latest version exists, ensure the provided content as a version
             prompt_obj = client.ensure_task_prompt_version(
-                task_name=name, 
-                content=content, 
+                task_name=name,
+                content=content,
                 content_hash=content_hash
             )
 
@@ -233,7 +238,7 @@ def log_completion(
 ):
     """
     Log a completion for a specific prompt.
-    
+
     This automatically tracks prompt usage without requiring manual wrapping.
     """
     client = _ensure_prompt_client()
@@ -280,6 +285,67 @@ def send_feedback(
     )
 
 
+def get_behavior_evaluations(
+    project_id: str,
+    judge_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    evaluation_result: Optional[bool] = None,
+    feedback_state: Optional[str] = None,
+) -> dict:
+    """
+    Fetch paginated judge evaluations for a specific judge.
+
+    Args:
+        project_id: The project UUID.
+        judge_id: The judge (signal automation) UUID.
+        limit: Max results per page (1-500, default 100).
+        offset: Pagination offset (default 0).
+        start_date: ISO datetime string to filter evaluations created after.
+        end_date: ISO datetime string to filter evaluations created before.
+        evaluation_result: Filter by True (positive) or False (negative).
+        feedback_state: Filter by 'with_user_feedback' or 'without_user_feedback'.
+
+    Returns:
+        Dict with keys: evaluations (list), total, offset, limit.
+    """
+    client = _ensure_prompt_client()
+    return client.get_behavior_evaluations(
+        project_id=project_id,
+        judge_id=judge_id,
+        limit=limit,
+        offset=offset,
+        start_date=start_date,
+        end_date=end_date,
+        evaluation_result=evaluation_result,
+        feedback_state=feedback_state,
+    )
+
+
+def get_span_evaluations(
+    project_id: str,
+    span_id: str,
+) -> dict:
+    """
+    Fetch all judge evaluations for a specific span.
+
+    Args:
+        project_id: The project UUID.
+        span_id: The span UUID.
+
+    Returns:
+        Dict with keys: span_id, evaluations (list of judge evaluation objects).
+    """
+    client = _ensure_prompt_client()
+    return client.get_span_evaluations(
+        project_id=project_id,
+        span_id=span_id,
+    )
+
+
 # Define what's exported
 __all__ = [
     # Core functionality
@@ -313,7 +379,12 @@ __all__ = [
     # Completion logging and feedback
     "log_completion",
     "send_feedback",
+    # Module alias
+    "ze",
+    # Judge evaluations
+    "get_behavior_evaluations",
+    "get_span_evaluations",
 ]
 
 # Version info
-__version__ = "0.6.119"
+__version__ = "0.6.128"

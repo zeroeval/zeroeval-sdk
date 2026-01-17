@@ -23,6 +23,11 @@ This directory contains organized, focused examples for ZeroEval SDK features.
   - Tool definitions and streaming execution chunks
   - Structured action suggestions and sentiment detection
 
+- **`judges/`** - Examples for Calibrated Judge Evaluations
+  - Pull evaluations via SDK and REST API
+  - Pagination for large result sets
+  - Integration patterns for reporting and CI/CD
+
 ## Getting Started
 
 1. **Install dependencies**:
