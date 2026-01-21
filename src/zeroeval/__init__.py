@@ -285,7 +285,7 @@ def send_feedback(
     )
 
 
-def get_behavior_evaluations(
+def get_judge_evaluations(
     project_id: str,
     judge_id: str,
     *,
@@ -313,7 +313,7 @@ def get_behavior_evaluations(
         Dict with keys: evaluations (list), total, offset, limit.
     """
     client = _ensure_prompt_client()
-    return client.get_behavior_evaluations(
+    return client.get_judge_evaluations(
         project_id=project_id,
         judge_id=judge_id,
         limit=limit,
@@ -382,7 +382,7 @@ __all__ = [
     # Module alias
     "ze",
     # Judge evaluations
-    "get_behavior_evaluations",
+    "get_judge_evaluations",
     "get_span_evaluations",
 ]
 

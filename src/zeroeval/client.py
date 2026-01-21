@@ -469,7 +469,7 @@ class ZeroEval:
 
     # ---- Judge Evaluations API ----
 
-    def get_behavior_evaluations(
+    def get_judge_evaluations(
         self,
         project_id: str,
         judge_id: str,
@@ -515,7 +515,7 @@ class ZeroEval:
 
         if resp.status_code >= 400:
             raise PromptRequestError(
-                f"get_behavior_evaluations failed: {resp.text}", status=resp.status_code
+                f"get_judge_evaluations failed: {resp.text}", status=resp.status_code
             )
         return resp.json()
 
