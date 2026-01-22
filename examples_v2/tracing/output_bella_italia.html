@@ -3,110 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bella Italia - Authentic Italian Restaurant</title>
+    <title>Bella Italia - Italian Restaurant</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
             color: #333;
-            background-color: #fff;
         }
         header {
             background-color: #d4145a;
             color: white;
-            padding: 1rem;
+            padding: 20px 0;
             text-align: center;
         }
         .hero {
-            background-image: url('https://via.placeholder.com/1200x400');
-            background-size: cover;
+            background: url('https://via.placeholder.com/1200x400') no-repeat center center/cover;
+            height: 400px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
             color: white;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
             text-align: center;
-            padding: 4rem 2rem;
         }
         .about, .best-sellers, .reviews, .contact {
-            padding: 2rem;
-            text-align: center;
+            padding: 20px;
+            max-width: 800px;
+            margin: auto;
         }
-        .best-sellers div, .reviews div {
-            margin: 1rem auto;
-            max-width: 300px;
-            border: 1px solid #d4145a;
+        h2 {
+            color: #d4145a;
+        }
+        .best-sellers {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .item {
+            background: #fbb034;
             border-radius: 8px;
-            padding: 1rem;
+            padding: 15px;
+            margin: 10px;
+            flex: 1 1 calc(30% - 20px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .reviews {
+            background: #f9f9f9;
+            border-left: 5px solid #d4145a;
+            padding: 15px;
+            margin: 20px 0;
         }
         footer {
             background-color: #d4145a;
             color: white;
             text-align: center;
-            padding: 1rem;
+            padding: 10px 0;
         }
         @media (max-width: 600px) {
-            .hero {
-                padding: 2rem 1rem;
+            .best-sellers {
+                flex-direction: column;
             }
-            .best-sellers div, .reviews div {
-                max-width: 100%;
+            .item {
+                flex: 1 1 100%;
             }
         }
     </style>
 </head>
 <body>
-
-<header>
-    <h1>Bella Italia</h1>
-    <p>Authentic Italian Restaurant</p>
-</header>
-
-<section class="hero">
-    <h2>Welcome to Bella Italia</h2>
-    <p>Experience authentic Italian cuisine in the heart of the city.</p>
-</section>
-
-<section class="about">
-    <h2>About Us</h2>
-    <p>Fresh pasta, wood-fired pizza, and traditional recipes.</p>
-</section>
-
-<section class="best-sellers">
-    <h2>Our Best-Sellers</h2>
-    <div>
-        <h3>Margherita Pizza</h3>
-        <p>Fresh mozzarella, San Marzano tomatoes, basil</p>
-    </div>
-    <div>
-        <h3>Spaghetti Carbonara</h3>
-        <p>Traditional Roman pasta with guanciale</p>
-    </div>
-    <div>
-        <h3>Osso Buco</h3>
-        <p>Braised veal shanks with risotto</p>
-    </div>
-</section>
-
-<section class="reviews">
-    <h2>Customer Reviews</h2>
-    <div>
-        <p>"Amazing authentic Italian food!"</p>
-        <p>- Maria G. ★★★★★</p>
-    </div>
-    <div>
-        <p>"Best pasta in town!"</p>
-        <p>- John D. ★★★★★</p>
-    </div>
-</section>
-
-<section class="contact">
-    <h2>Contact Us</h2>
-    <p>Address: 123 Main Street, Downtown</p>
-    <p>Phone: (555) 123-4567</p>
-    <p>Hours: Tuesday-Sunday, 11:30 AM - 10:00 PM</p>
-</section>
-
-<footer>
-    <p>&copy; 2023 Bella Italia. All Rights Reserved.</p>
-</footer>
-
+    <header>
+        <h1>Bella Italia</h1>
+        <p>Authentic Italian Restaurant</p>
+    </header>
+    <section class="hero">
+        <h2>Welcome to Bella Italia</h2>
+        <p>Experience the taste of Italy in the heart of the city.</p>
+    </section>
+    <section class="about">
+        <h2>About Us</h2>
+        <p>At Bella Italia, we pride ourselves on serving authentic Italian cuisine. From our fresh pasta to our wood-fired pizzas, every dish is crafted with love and traditional recipes.</p>
+    </section>
+    <section class="best-sellers">
+        <h2>Best Sellers</h2>
+        <div class="item">
+            <h3>Margherita Pizza</h3>
+            <p>Fresh mozzarella, San Marzano tomatoes, basil</p>
+        </div>
+        <div class="item">
+            <h3>Spaghetti Carbonara</h3>
+            <p>Traditional Roman pasta with guanciale</p>
+        </div>
+        <div class="item">
+            <h3>Osso Buco</h3>
+            <p>Braised veal shanks with risotto</p>
+        </div>
+    </section>
+    <section class="reviews">
+        <h2>Customer Reviews</h2>
+        <blockquote>
+            <p>"Amazing authentic Italian food!"</p>
+            <footer>- Maria G. <strong>(5 stars)</strong></footer>
+        </blockquote>
+        <blockquote>
+            <p>"Best pasta in town!"</p>
+            <footer>- John D. <strong>(5 stars)</strong></footer>
+        </blockquote>
+    </section>
+    <section class="contact">
+        <h2>Contact Us</h2>
+        <p><strong>Address:</strong> 123 Main Street, Downtown</p>
+        <p><strong>Phone:</strong> (555) 123-4567</p>
+        <p><strong>Hours:</strong> Tuesday-Sunday, 11:30 AM - 10:00 PM</p>
+    </section>
+    <footer>
+        <p>&copy; 2023 Bella Italia. All rights reserved.</p>
+    </footer>
 </body>
 </html>

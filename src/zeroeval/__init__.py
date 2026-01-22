@@ -32,6 +32,7 @@ from .client import ZeroEval as PromptClient
 from .utils.hash import sha256_hex
 import re
 import sys as _sys
+import warnings as _warnings
 from .errors import PromptNotFoundError, PromptRequestError
 
 # Backwards-compatible alias so users/tests can do `from zeroeval import ze`
@@ -270,9 +271,26 @@ def send_feedback(
     reason: Optional[str] = None,
     expected_output: Optional[str] = None,
     metadata: Optional[dict] = None,
+    judge_id: Optional[str] = None,
+    behavior_id: Optional[str] = None,
 ):
     """
     Send feedback for a specific completion.
+
+    Args:
+        prompt_slug: The slug of the prompt (or task name for judges).
+        completion_id: UUID of the span to provide feedback on.
+        thumbs_up: True for positive feedback, False for negative.
+        reason: Optional explanation of the feedback.
+        expected_output: Optional description of what the expected output should be.
+        metadata: Optional additional metadata.
+        judge_id: Optional judge automation ID. When provided, feedback is
+                  associated with the judge's evaluation span instead of the
+                  original span. Required when providing feedback for judge evaluations.
+        behavior_id: Deprecated. Use judge_id instead.
+
+    Returns:
+        The created feedback record.
     """
     client = _ensure_prompt_client()
     return client.send_feedback(
@@ -282,10 +300,12 @@ def send_feedback(
         reason=reason,
         expected_output=expected_output,
         metadata=metadata,
+        judge_id=judge_id,
+        behavior_id=behavior_id,
     )
 
 
-def get_behavior_evaluations(
+def get_judge_evaluations(
     project_id: str,
     judge_id: str,
     *,
@@ -313,7 +333,7 @@ def get_behavior_evaluations(
         Dict with keys: evaluations (list), total, offset, limit.
     """
     client = _ensure_prompt_client()
-    return client.get_behavior_evaluations(
+    return client.get_judge_evaluations(
         project_id=project_id,
         judge_id=judge_id,
         limit=limit,
@@ -343,6 +363,41 @@ def get_span_evaluations(
     return client.get_span_evaluations(
         project_id=project_id,
         span_id=span_id,
+    )
+
+
+# ---- Deprecated Backwards Compatibility ----
+
+def get_behavior_evaluations(
+    project_id: str,
+    behavior_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    evaluation_result: Optional[bool] = None,
+    feedback_state: Optional[str] = None,
+) -> dict:
+    """
+    Deprecated: Use get_judge_evaluations instead.
+
+    Fetch paginated behavior evaluations for a specific behavior.
+    """
+    _warnings.warn(
+        "get_behavior_evaluations is deprecated, use get_judge_evaluations instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_judge_evaluations(
+        project_id=project_id,
+        judge_id=behavior_id,
+        limit=limit,
+        offset=offset,
+        start_date=start_date,
+        end_date=end_date,
+        evaluation_result=evaluation_result,
+        feedback_state=feedback_state,
     )
 
 
@@ -382,9 +437,11 @@ __all__ = [
     # Module alias
     "ze",
     # Judge evaluations
-    "get_behavior_evaluations",
+    "get_judge_evaluations",
     "get_span_evaluations",
+    # Deprecated backwards compatibility
+    "get_behavior_evaluations",
 ]
 
 # Version info
-__version__ = "0.6.128"
+__version__ = "0.6.129"
