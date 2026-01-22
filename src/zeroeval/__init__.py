@@ -32,6 +32,7 @@ from .client import ZeroEval as PromptClient
 from .utils.hash import sha256_hex
 import re
 import sys as _sys
+import warnings as _warnings
 from .errors import PromptNotFoundError, PromptRequestError
 
 # Backwards-compatible alias so users/tests can do `from zeroeval import ze`
@@ -346,6 +347,41 @@ def get_span_evaluations(
     )
 
 
+# ---- Deprecated Backwards Compatibility ----
+
+def get_behavior_evaluations(
+    project_id: str,
+    behavior_id: str,
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    evaluation_result: Optional[bool] = None,
+    feedback_state: Optional[str] = None,
+) -> dict:
+    """
+    Deprecated: Use get_judge_evaluations instead.
+
+    Fetch paginated behavior evaluations for a specific behavior.
+    """
+    _warnings.warn(
+        "get_behavior_evaluations is deprecated, use get_judge_evaluations instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_judge_evaluations(
+        project_id=project_id,
+        judge_id=behavior_id,
+        limit=limit,
+        offset=offset,
+        start_date=start_date,
+        end_date=end_date,
+        evaluation_result=evaluation_result,
+        feedback_state=feedback_state,
+    )
+
+
 # Define what's exported
 __all__ = [
     # Core functionality
@@ -384,7 +420,9 @@ __all__ = [
     # Judge evaluations
     "get_judge_evaluations",
     "get_span_evaluations",
+    # Deprecated backwards compatibility
+    "get_behavior_evaluations",
 ]
 
 # Version info
-__version__ = "0.6.128"
+__version__ = "0.6.129"

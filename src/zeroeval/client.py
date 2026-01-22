@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import requests
@@ -413,6 +414,7 @@ class ZeroEval:
         expected_output: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
         judge_id: Optional[str] = None,
+        behavior_id: Optional[str] = None,  # Deprecated: use judge_id instead
     ) -> dict[str, Any]:
         """
         Send feedback for a specific completion.
@@ -427,10 +429,21 @@ class ZeroEval:
             judge_id: Optional judge automation ID. When provided, feedback is
                       associated with the judge's evaluation span instead of the
                       original span. Required when providing feedback for judge evaluations.
+            behavior_id: Deprecated. Use judge_id instead.
             
         Returns:
             The created feedback record
         """
+        # Handle deprecated behavior_id parameter
+        if behavior_id is not None:
+            warnings.warn(
+                "behavior_id is deprecated, use judge_id instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if judge_id is None:
+                judge_id = behavior_id
+        
         url = f"{self._base_url}/v1/prompts/{prompt_slug}/completions/{completion_id}/feedback"
         
         logger.debug(
@@ -553,5 +566,40 @@ class ZeroEval:
                 f"get_span_evaluations failed: {resp.text}", status=resp.status_code
             )
         return resp.json()
+
+    # ---- Deprecated Backwards Compatibility ----
+
+    def get_behavior_evaluations(
+        self,
+        project_id: str,
+        behavior_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        evaluation_result: Optional[bool] = None,
+        feedback_state: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Deprecated: Use get_judge_evaluations instead.
+
+        Fetch paginated behavior evaluations for a specific behavior.
+        """
+        warnings.warn(
+            "get_behavior_evaluations is deprecated, use get_judge_evaluations instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_judge_evaluations(
+            project_id=project_id,
+            judge_id=behavior_id,
+            limit=limit,
+            offset=offset,
+            start_date=start_date,
+            end_date=end_date,
+            evaluation_result=evaluation_result,
+            feedback_state=feedback_state,
+        )
 
 
