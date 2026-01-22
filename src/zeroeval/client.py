@@ -412,17 +412,21 @@ class ZeroEval:
         reason: Optional[str] = None,
         expected_output: Optional[str] = None,
         metadata: Optional[dict[str, Any]] = None,
+        judge_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Send feedback for a specific completion.
         
         Args:
-            prompt_slug: The slug of the prompt
-            completion_id: UUID of the completion to provide feedback on
+            prompt_slug: The slug of the prompt (or task name for judges)
+            completion_id: UUID of the span to provide feedback on
             thumbs_up: True for positive feedback, False for negative
             reason: Optional explanation of the feedback
             expected_output: Optional description of what the expected output should be
             metadata: Optional additional metadata
+            judge_id: Optional judge automation ID. When provided, feedback is
+                      associated with the judge's evaluation span instead of the
+                      original span. Required when providing feedback for judge evaluations.
             
         Returns:
             The created feedback record
@@ -435,6 +439,7 @@ class ZeroEval:
                 "completion_id": completion_id,
                 "prompt_slug": prompt_slug,
                 "thumbs_up": thumbs_up,
+                "judge_id": judge_id,
                 "url": url
             }
         )
@@ -450,6 +455,8 @@ class ZeroEval:
             payload["expected_output"] = expected_output
         if metadata is not None:
             payload["metadata"] = metadata
+        if judge_id is not None:
+            payload["judge_id"] = judge_id
         
         resp = requests.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
         

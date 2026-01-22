@@ -201,3 +201,59 @@ def test_send_feedback_timeout(mock_post, client):
     
     assert "timeout" in str(exc_info.value).lower()
 
+
+@patch("zeroeval.client.requests.post")
+def test_send_feedback_with_judge_id(mock_post, client):
+    """Test feedback submission with judge_id for proper span resolution."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "id": "feedback-judge-123",
+        "completion_id": "original-span-id",
+        "thumbs_up": True,
+    }
+    mock_post.return_value = mock_response
+
+    result = client.send_feedback(
+        prompt_slug="my-judge-task",
+        completion_id="original-span-id",
+        thumbs_up=True,
+        reason="Judge correctly identified the issue",
+        judge_id="automation-uuid-123",
+    )
+
+    # Verify the request was made correctly
+    mock_post.assert_called_once()
+    call_args = mock_post.call_args
+    
+    # Check URL contains the task slug and span id
+    assert "my-judge-task" in call_args[0][0]
+    assert "original-span-id" in call_args[0][0]
+    
+    # Check payload includes judge_id
+    payload = call_args[1]["json"]
+    assert payload["thumbs_up"] is True
+    assert payload["reason"] == "Judge correctly identified the issue"
+    assert payload["judge_id"] == "automation-uuid-123"
+    
+    # Check response
+    assert result["id"] == "feedback-judge-123"
+
+
+@patch("zeroeval.client.requests.post")
+def test_send_feedback_without_judge_id(mock_post, client):
+    """Test feedback submission without judge_id omits it from payload."""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"id": "feedback-no-judge", "thumbs_up": True}
+    mock_post.return_value = mock_response
+
+    client.send_feedback(
+        prompt_slug="test-prompt",
+        completion_id="completion-456",
+        thumbs_up=False,
+    )
+
+    payload = mock_post.call_args[1]["json"]
+    assert "judge_id" not in payload
+    assert payload["thumbs_up"] is False
