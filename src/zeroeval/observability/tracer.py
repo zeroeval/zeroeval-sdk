@@ -162,6 +162,9 @@ class Tracer:
 
         # Don't auto-setup integrations here - wait for init() to be called
         self._integrations_initialized = False
+        
+        # Track if ze.init() was explicitly called - only auto-patch if configured
+        self._init_called = False
 
         # Register shutdown hook
         atexit.register(self.shutdown)
@@ -173,9 +176,22 @@ class Tracer:
             self._writer = SpanBackendWriter()
         return self._writer
 
+    def mark_initialized(self) -> None:
+        """Mark that ze.init() was explicitly called.
+        
+        This signals that the SDK should set up integrations. Without this,
+        integrations will only be initialized if ZEROEVAL_API_KEY is set.
+        """
+        self._init_called = True
+
     def ensure_integrations_initialized(self) -> None:
         """Ensure integrations are initialized, but only once."""
         if not self._integrations_initialized:
+            # Only auto-initialize integrations if SDK was explicitly configured
+            # This prevents patching LLM clients when zeroeval is just a transitive dependency
+            if not self._init_called and not os.environ.get("ZEROEVAL_API_KEY"):
+                return  # Skip - SDK not configured
+            
             # Re-read disabled integrations from environment in case they were set by init()
             disabled_env = os.environ.get("ZEROEVAL_DISABLED_INTEGRATIONS", "")
             if disabled_env:

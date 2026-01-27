@@ -6,45 +6,31 @@
     <title>Morning Brew - Coffee Shop</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
             margin: 0;
-            padding: 0;
+            font-family: Arial, sans-serif;
             background-color: #f5f5f5;
             color: #333;
         }
         header {
             background-color: #6F4E37;
             color: white;
-            padding: 20px 0;
+            padding: 20px;
             text-align: center;
         }
         .hero {
-            background-image: url('https://source.unsplash.com/1600x900/?coffee');
+            background-image: url('https://via.placeholder.com/1200x400?text=Cozy+Coffee+Shop');
             background-size: cover;
-            background-position: center;
-            height: 300px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             color: white;
+            padding: 100px 20px;
             text-align: center;
         }
-        .hero h1 {
-            font-size: 3rem;
-            margin: 0;
-        }
-        .hero p {
-            font-size: 1.5rem;
-            margin-top: 10px;
-        }
-        section {
-            padding: 20px;
+        .menu, .about, .contact {
             max-width: 800px;
-            margin: auto;
+            margin: 20px auto;
+            padding: 20px;
             background-color: white;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
         }
         h2 {
             color: #6F4E37;
@@ -52,25 +38,21 @@
         .menu-item {
             display: flex;
             justify-content: space-between;
-            padding: 10px 0;
             border-bottom: 1px solid #C4A484;
-        }
-        .contact-info {
-            text-align: center;
-            margin-top: 20px;
-        }
-        footer {
-            text-align: center;
             padding: 10px 0;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
             background-color: #6F4E37;
             color: white;
+            position: relative;
+            bottom: 0;
+            width: 100%;
         }
         @media (max-width: 600px) {
-            .hero h1 {
-                font-size: 2rem;
-            }
-            .hero p {
-                font-size: 1.2rem;
+            .hero {
+                padding: 50px 10px;
             }
         }
     </style>
@@ -79,16 +61,16 @@
 
 <header>
     <h1>Morning Brew</h1>
-    <p>Your Local Coffee Shop</p>
+    <h3>Artisanal Coffee Shop</h3>
 </header>
 
-<div class="hero">
+<section class="hero">
     <h1>Welcome to Morning Brew</h1>
     <p>Artisanal coffee and freshly baked pastries in a cozy atmosphere.</p>
-</div>
+</section>
 
-<section id="menu">
-    <h2>Menu</h2>
+<section class="menu">
+    <h2>Our Menu</h2>
     <div class="menu-item">
         <span>House Blend</span>
         <span>$3.50</span>
@@ -103,22 +85,20 @@
     </div>
 </section>
 
-<section id="about">
+<section class="about">
     <h2>About Us</h2>
-    <p>At Morning Brew, we believe in serving high-quality coffee sourced from the best beans around the world. Our pastries are freshly baked each day to provide you with a delightful experience in our cozy atmosphere.</p>
+    <p>At Morning Brew, we believe in the art of coffee-making. Our skilled baristas craft each cup with care, using high-quality beans sourced from sustainable farms. Join us for a relaxing experience in our cozy shop, where you can enjoy artisanal coffee and indulge in our freshly baked pastries.</p>
 </section>
 
-<section id="contact">
+<section class="contact">
     <h2>Contact Us</h2>
-    <div class="contact-info">
-        <p>Email: info@morningbrew.com</p>
-        <p>Phone: (123) 456-7890</p>
-        <p>Address: 123 Coffee Lane, Brewtown, CA 12345</p>
-    </div>
+    <p>Address: 123 Coffee Lane, Brewtown, CA 12345</p>
+    <p>Phone: (123) 456-7890</p>
+    <p>Email: contact@morningbrew.com</p>
 </section>
 
-<footer>
-    <p>&copy; 2023 Morning Brew. All Rights Reserved.</p>
+<footer class="footer">
+    <p>&copy; 2023 Morning Brew. All rights reserved.</p>
 </footer>
 
 </body>
