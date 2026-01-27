@@ -759,6 +759,20 @@ class OpenAIIntegration(Integration):
                                 args[0].api_key = ze_api_key
 
                     response = await original(*args, **kwargs)
+                    
+                    # Handle LegacyAPIResponse from with_raw_response calls (e.g., litellm)
+                    # These don't have .choices directly - skip detailed processing
+                    if hasattr(response, 'parse') and not hasattr(response, 'choices'):
+                        elapsed = time.time() - start_time
+                        span.attributes["raw_response"] = True
+                        span.attributes["duration_ms"] = round(elapsed * 1000, 2)
+                        span.set_io(
+                            input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
+                            output_data="[LegacyAPIResponse - raw response mode]",
+                        )
+                        tracer.end_span(span)
+                        return response
+                    
                     if is_streaming:
                         logger.debug("Async wrapper -> returning _StreamingResponseProxy (async)")
                         return _StreamingResponseProxy(
@@ -1094,6 +1108,20 @@ class OpenAIIntegration(Integration):
                                 completions_instance.api_key = ze_api_key
 
                     response = original(*args, **kwargs)
+                    
+                    # Handle LegacyAPIResponse from with_raw_response calls (e.g., litellm)
+                    # These don't have .choices directly - skip detailed processing
+                    if hasattr(response, 'parse') and not hasattr(response, 'choices'):
+                        elapsed = time.time() - start_time
+                        span.attributes["raw_response"] = True
+                        span.attributes["duration_ms"] = round(elapsed * 1000, 2)
+                        span.set_io(
+                            input_data=json.dumps(self._serialize_messages(kwargs.get("messages"))),
+                            output_data="[LegacyAPIResponse - raw response mode]",
+                        )
+                        tracer.end_span(span)
+                        return response
+                    
                     if is_streaming:
                         logger.debug("Sync wrapper -> returning _StreamingResponseProxy (sync)")
                         return _StreamingResponseProxy(

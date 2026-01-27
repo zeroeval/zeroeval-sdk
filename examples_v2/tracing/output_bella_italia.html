@@ -10,55 +10,74 @@
             margin: 0;
             padding: 0;
             color: #333;
+            line-height: 1.6;
         }
         header {
             background-color: #d4145a;
-            color: white;
+            color: #fff;
             padding: 20px 0;
             text-align: center;
         }
+        h1 {
+            margin: 0;
+            font-size: 2.5em;
+        }
+        nav {
+            margin-top: 10px;
+        }
+        nav a {
+            color: #fff;
+            margin: 0 15px;
+            text-decoration: none;
+        }
         .hero {
-            background: url('https://via.placeholder.com/1200x400') no-repeat center center/cover;
-            height: 400px;
+            background-image: url('https://example.com/hero-image.jpg');
+            background-size: cover;
+            background-position: center;
+            height: 50vh;
             display: flex;
-            justify-content: center;
             align-items: center;
-            color: white;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            justify-content: center;
+            color: #fff;
             text-align: center;
         }
-        .about, .best-sellers, .reviews, .contact {
+        .hero h2 {
+            font-size: 3em;
+            margin: 0;
+        }
+        section {
             padding: 20px;
             max-width: 800px;
             margin: auto;
         }
-        h2 {
-            color: #d4145a;
-        }
         .best-sellers {
             display: flex;
-            flex-wrap: wrap;
             justify-content: space-between;
+            flex-wrap: wrap;
         }
         .item {
-            background: #fbb034;
-            border-radius: 8px;
+            border: 1px solid #d4145a;
+            border-radius: 5px;
             padding: 15px;
             margin: 10px;
             flex: 1 1 calc(30% - 20px);
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
         }
         .reviews {
-            background: #f9f9f9;
-            border-left: 5px solid #d4145a;
+            background-color: #fbb034;
             padding: 15px;
             margin: 20px 0;
+            border-radius: 5px;
+        }
+        .review {
+            margin-bottom: 10px;
         }
         footer {
             background-color: #d4145a;
-            color: white;
+            color: #fff;
             text-align: center;
             padding: 10px 0;
+            position: relative;
         }
         @media (max-width: 600px) {
             .best-sellers {
@@ -67,24 +86,36 @@
             .item {
                 flex: 1 1 100%;
             }
+            h1, .hero h2 {
+                font-size: 2em;
+            }
         }
     </style>
 </head>
 <body>
-    <header>
-        <h1>Bella Italia</h1>
-        <p>Authentic Italian Restaurant</p>
-    </header>
-    <section class="hero">
-        <h2>Welcome to Bella Italia</h2>
-        <p>Experience the taste of Italy in the heart of the city.</p>
-    </section>
-    <section class="about">
-        <h2>About Us</h2>
-        <p>At Bella Italia, we pride ourselves on serving authentic Italian cuisine. From our fresh pasta to our wood-fired pizzas, every dish is crafted with love and traditional recipes.</p>
-    </section>
-    <section class="best-sellers">
-        <h2>Best Sellers</h2>
+
+<header>
+    <h1>Bella Italia</h1>
+    <nav>
+        <a href="#about">About</a>
+        <a href="#best-sellers">Best Sellers</a>
+        <a href="#reviews">Reviews</a>
+        <a href="#contact">Contact</a>
+    </nav>
+</header>
+
+<section class="hero">
+    <h2>Authentic Italian Cuisine</h2>
+</section>
+
+<section id="about">
+    <h2>About Us</h2>
+    <p>Welcome to Bella Italia, where we serve authentic Italian cuisine in the heart of the city. Enjoy fresh pasta, wood-fired pizza, and traditional recipes that will transport you straight to Italy.</p>
+</section>
+
+<section id="best-sellers">
+    <h2>Best Sellers</h2>
+    <div class="best-sellers">
         <div class="item">
             <h3>Margherita Pizza</h3>
             <p>Fresh mozzarella, San Marzano tomatoes, basil</p>
@@ -97,26 +128,33 @@
             <h3>Osso Buco</h3>
             <p>Braised veal shanks with risotto</p>
         </div>
-    </section>
-    <section class="reviews">
-        <h2>Customer Reviews</h2>
-        <blockquote>
-            <p>"Amazing authentic Italian food!"</p>
-            <footer>- Maria G. <strong>(5 stars)</strong></footer>
-        </blockquote>
-        <blockquote>
-            <p>"Best pasta in town!"</p>
-            <footer>- John D. <strong>(5 stars)</strong></footer>
-        </blockquote>
-    </section>
-    <section class="contact">
-        <h2>Contact Us</h2>
-        <p><strong>Address:</strong> 123 Main Street, Downtown</p>
-        <p><strong>Phone:</strong> (555) 123-4567</p>
-        <p><strong>Hours:</strong> Tuesday-Sunday, 11:30 AM - 10:00 PM</p>
-    </section>
-    <footer>
-        <p>&copy; 2023 Bella Italia. All rights reserved.</p>
-    </footer>
+    </div>
+</section>
+
+<section id="reviews">
+    <h2>Customer Reviews</h2>
+    <div class="reviews">
+        <div class="review">
+            <strong>Maria G.</strong> <span>⭐️⭐️⭐️⭐️⭐️</span>
+            <p>Amazing authentic Italian food!</p>
+        </div>
+        <div class="review">
+            <strong>John D.</strong> <span>⭐️⭐️⭐️⭐️⭐️</span>
+            <p>Best pasta in town!</p>
+        </div>
+    </div>
+</section>
+
+<section id="contact">
+    <h2>Contact Us</h2>
+    <p><strong>Address:</strong> 123 Main Street, Downtown</p>
+    <p><strong>Phone:</strong> (555) 123-4567</p>
+    <p><strong>Hours:</strong> Tuesday-Sunday, 11:30 AM - 10:00 PM</p>
+</section>
+
+<footer>
+    <p>&copy; 2023 Bella Italia. All rights reserved.</p>
+</footer>
+
 </body>
 </html>
