@@ -273,6 +273,8 @@ def send_feedback(
     metadata: Optional[dict] = None,
     judge_id: Optional[str] = None,
     behavior_id: Optional[str] = None,
+    expected_score: Optional[float] = None,
+    score_direction: Optional[str] = None,
 ):
     """
     Send feedback for a specific completion.
@@ -288,6 +290,10 @@ def send_feedback(
                   associated with the judge's evaluation span instead of the
                   original span. Required when providing feedback for judge evaluations.
         behavior_id: Deprecated. Use judge_id instead.
+        expected_score: Optional expected score for scored judge evaluations.
+                       Only valid when judge_id points to a scored judge.
+        score_direction: Optional direction indicating if score was "too_high" or "too_low".
+                        Only valid when judge_id points to a scored judge.
 
     Returns:
         The created feedback record.
@@ -302,6 +308,8 @@ def send_feedback(
         metadata=metadata,
         judge_id=judge_id,
         behavior_id=behavior_id,
+        expected_score=expected_score,
+        score_direction=score_direction,
     )
 
 
@@ -444,4 +452,4 @@ __all__ = [
 ]
 
 # Version info
-__version__ = "0.6.130"
+__version__ = "0.6.131"

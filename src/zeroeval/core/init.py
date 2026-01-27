@@ -72,6 +72,9 @@ def init(
     """
     # Import tracer once at the beginning
     from ..observability.tracer import tracer
+    
+    # Mark that ze.init() was explicitly called - this enables integration patching
+    tracer.mark_initialized()
 
     # Set organization name (prefer organization_name over workspace_name for backward compatibility)
     final_organization_name = organization_name if organization_name is not None else workspace_name

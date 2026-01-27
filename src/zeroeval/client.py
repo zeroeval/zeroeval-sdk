@@ -415,6 +415,8 @@ class ZeroEval:
         metadata: Optional[dict[str, Any]] = None,
         judge_id: Optional[str] = None,
         behavior_id: Optional[str] = None,  # Deprecated: use judge_id instead
+        expected_score: Optional[float] = None,
+        score_direction: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Send feedback for a specific completion.
@@ -430,6 +432,10 @@ class ZeroEval:
                       associated with the judge's evaluation span instead of the
                       original span. Required when providing feedback for judge evaluations.
             behavior_id: Deprecated. Use judge_id instead.
+            expected_score: Optional expected score for scored judge evaluations.
+                           Only valid when judge_id points to a scored judge.
+            score_direction: Optional direction indicating if score was "too_high" or "too_low".
+                            Only valid when judge_id points to a scored judge.
             
         Returns:
             The created feedback record
@@ -470,6 +476,10 @@ class ZeroEval:
             payload["metadata"] = metadata
         if judge_id is not None:
             payload["judge_id"] = judge_id
+        if expected_score is not None:
+            payload["expected_score"] = expected_score
+        if score_direction is not None:
+            payload["score_direction"] = score_direction
         
         resp = requests.post(url, headers=self._headers(), json=payload, timeout=self._timeout)
         
